@@ -104,10 +104,15 @@ export function revealOnScroll(selector) {
   for (const el of document.querySelectorAll(selector)) {
     if (touchesStage(el) || el.getBoundingClientRect().top < innerHeight * 0.92) continue;
     el.style.opacity = "0";
-    inView(el, () => {
+    // "Any part of it on screen" (a little above the bottom edge), not a
+    // fraction of it: a block several screens tall (the wearing diary on a
+    // phone) can never be 12% visible, and must never stay hidden.
+    const stop = inView(el, () => {
+      stop?.();
       const anim = animate(el, { opacity: [0, 1], y: [28, 0] }, SETTLE);
       settle(anim, [el]);
-    }, { amount: 0.12 });
+    }, { amount: "some", margin: "0px 0px -8% 0px" });
+    untilReduced(() => { stop?.(); clear(el); });
   }
 }
 
