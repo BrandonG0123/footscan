@@ -98,7 +98,15 @@ function mountLayout() {
   document.body.prepend(strip);
   document.body.append(footer);
   addPageGlow();
-  initReveal();
+  if (area === "customer") {
+    // Customer pages: springs, ripples and scroll reveals from Motion (fx.js).
+    import("./fx.js").then((fx) => {
+      fx.initPage();
+      fx.revealOnScroll("main > section, main > .layout, [data-reveal] > *");
+    });
+  } else {
+    initReveal();
+  }
 }
 
 mountLayout();

@@ -272,19 +272,15 @@ body.stage-locked { overflow: hidden; }
   /* fill: backwards, never both. A finished "both" animation leaves an
      identity transform behind, and a transformed ancestor turns the
      fullscreen camera's position: fixed into position: absolute. */
-  .view:not([hidden]):not(#v-scan):not(#v-saving) { animation: rise 0.45s cubic-bezier(0.2, 0.7, 0.2, 1) backwards; }
-  .stagger > * { animation: rise 0.5s cubic-bezier(0.2, 0.7, 0.2, 1) backwards; }
-  .stagger > *:nth-child(2) { animation-delay: 0.06s; }
-  .stagger > *:nth-child(3) { animation-delay: 0.12s; }
-  .stagger > *:nth-child(4) { animation-delay: 0.18s; }
-  .stagger > *:nth-child(5) { animation-delay: 0.24s; }
-  .stagger > *:nth-child(n + 6) { animation-delay: 0.3s; }
+  /* Customer pages: views and lists arrive with Motion springs (fx.js).
+     Studio pages keep this lighter CSS version. */
+  body[data-area="studio"] .view:not([hidden]) { animation: rise 0.45s cubic-bezier(0.2, 0.7, 0.2, 1) backwards; }
 
   .reveal { opacity: 0; transform: translateY(16px); transition: opacity 0.55s ease, transform 0.55s cubic-bezier(0.2, 0.7, 0.2, 1); }
   .reveal.in { opacity: 1; transform: none; }
 
-  .btn, .choice, .thumb, .download a { transition: transform 0.14s ease, box-shadow 0.2s ease, background 0.2s ease, border-color 0.2s ease; }
-  .btn:active, .choice:active { transform: translateY(1px) scale(0.995); }
+  .btn, .choice, .thumb, .download a { transition: box-shadow 0.2s ease, background 0.2s ease, border-color 0.2s ease; }
+  body[data-area="studio"] .btn:active, body[data-area="studio"] .choice:active { transform: translateY(1px) scale(0.995); }
   .card:not(.day) { transition: box-shadow 0.25s ease; }
   .bar > div { transition: width 0.4s cubic-bezier(0.2, 0.7, 0.2, 1); }
   .stage.is-mini, .stage.is-full { transition: none; }
@@ -292,7 +288,7 @@ body.stage-locked { overflow: hidden; }
   /* A slow drift behind the first screen, only where the browser can do it
      off the main thread. */
   @supports (animation-timeline: scroll()) {
-    .page-glow { animation: drift linear both; animation-timeline: scroll(root); animation-range: 0 60vh; }
+    body[data-area="studio"] .page-glow { animation: drift linear both; animation-timeline: scroll(root); animation-range: 0 60vh; }
   }
 }
 
@@ -333,3 +329,93 @@ body.stage-locked { overflow: hidden; }
   .site-header .nav::-webkit-scrollbar { display: none; }
   .site-header .nav a { white-space: nowrap; }
 }
+
+
+/* ---- Motion (motion.dev) pieces ------------------------------------------- */
+/* What the animations in fx.js, scene.js and ruler.js draw with. Everything
+   still looks right with no animation at all. */
+
+/* Ripples spread from where a finger or mouse pressed. */
+.btn, .choice, .ack label, .confirm, .segmented label, .foot-row { position: relative; overflow: hidden; }
+.ripple { position: absolute; border-radius: 50%; pointer-events: none; background: currentColor; opacity: 0; }
+.btn .ripple { background: #fff; }
+.btn.secondary .ripple, .choice .ripple, .ack .ripple, .confirm .ripple, .foot-row .ripple { background: var(--brand); }
+
+/* Segmented control: one sliding pill instead of a jumping background. */
+.segmented { position: relative; }
+.segmented.has-pill .seg-pill { position: absolute; top: 3px; bottom: 3px; left: 0; border-radius: 999px;
+  background: var(--brand); box-shadow: 0 4px 14px color-mix(in srgb, var(--brand) 35%, transparent); }
+.segmented.has-pill label { position: relative; z-index: 1; background: transparent !important; transition: color 0.2s; }
+.segmented.has-pill label:has(input:checked) { color: var(--brand-ink); }
+
+/* Tick boxes that draw their tick (the real checkbox stays, invisible, for
+   keyboards and screen readers). */
+.ack input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+.ack .tick { flex: none; width: 24px; height: 24px; border-radius: 7px; border: 2px solid var(--line);
+  background: var(--surface); display: grid; place-items: center; margin-top: 1px; transition: background 0.2s, border-color 0.2s; }
+.ack .tick svg { width: 18px; height: 18px; }
+.ack .tick path { fill: none; stroke: var(--brand-ink); stroke-width: 3; stroke-linecap: round; stroke-linejoin: round;
+  stroke-dasharray: 1; stroke-dashoffset: 1; transition: stroke-dashoffset 0.25s ease; }
+.ack input:checked + .tick { background: var(--brand); border-color: var(--brand); }
+.ack input:checked + .tick path { stroke-dashoffset: 0; }
+.ack input:focus-visible + .tick { outline: 3px solid color-mix(in srgb, var(--brand) 45%, transparent); outline-offset: 2px; }
+
+/* Cards that lean toward the mouse need a 3-D context. */
+.tilt { transform-style: preserve-3d; will-change: transform; }
+
+/* The welcome scene. */
+.hero-scene svg { width: 100%; height: auto; overflow: visible; }
+.hero-scene .orbit { fill: none; stroke: color-mix(in srgb, var(--brand) 35%, transparent); stroke-width: 1.5; stroke-dasharray: 4 6; }
+.hero-scene .seg { fill: none; stroke: var(--line); stroke-width: 7; stroke-linecap: round; }
+.hero-scene .seg.lit { stroke: var(--brand); }
+.hero-scene .sheet { fill: var(--surface); stroke: var(--line); }
+.hero-scene .seam { stroke: var(--brand); stroke-width: 1.2; stroke-dasharray: 3 3; }
+.hero-scene .markers rect { fill: var(--ink); }
+.hero-scene .sole { fill: var(--brand-soft); stroke: var(--brand); stroke-width: 3; }
+.hero-scene .toe { fill: var(--brand-soft); stroke: var(--brand); stroke-width: 3; transform-box: fill-box; transform-origin: center; }
+.hero-scene .insole-edge { fill: none; stroke: var(--brand); stroke-width: 5; stroke-dasharray: 1; }
+.hero-scene .insole-fill { fill-opacity: 1; }
+.hero-scene .insole { fill: color-mix(in srgb, var(--accent) 40%, var(--surface)); }
+.hero-scene .phone rect:first-child { fill: var(--ink); }
+.hero-scene .phone .screen { fill: color-mix(in srgb, var(--brand) 55%, #9ff); }
+.hero-scene .phone .cam { fill: var(--accent); }
+.hero-scene .flash { fill: var(--accent); transform-box: fill-box; transform-origin: center; }
+.hero-scene .badge { transform-box: fill-box; transform-origin: center; }
+.hero-scene .badge circle { fill: var(--ok); }
+.hero-scene .badge path { fill: none; stroke: #fff; stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; stroke-dasharray: 1; }
+
+/* The setup diagram's walking phones. */
+.diagram .walker rect { fill: var(--accent); stroke: var(--ink); stroke-width: 1.2; }
+.diagram .walker circle { fill: var(--ink); }
+
+/* The live ruler under the mat check. */
+.ruler-view { margin-top: 14px; }
+.ruler { width: 100%; height: auto; max-width: 520px; display: block; overflow: visible; }
+.ruler .ruler-body { fill: color-mix(in srgb, #f4d35e 75%, var(--surface)); stroke: color-mix(in srgb, #b8922a 70%, var(--line)); }
+.ruler .ticks line { stroke: #3d3420; stroke-width: 1; }
+.ruler .ticks line.major { stroke-width: 1.6; }
+.ruler .ticks text { font-size: 10px; fill: #3d3420; font-family: var(--mono); }
+.ruler .ticks .unit { font-weight: 700; }
+.ruler .printed { fill: var(--ink); transform-box: fill-box; transform-origin: left; }
+.ruler[data-status="ok"] .printed { fill: var(--ok); }
+.ruler .gap { fill: color-mix(in srgb, var(--stop) 55%, transparent); opacity: 0; }
+.ruler .target line { stroke: var(--brand); stroke-width: 2; stroke-dasharray: 3 2; }
+.ruler .target text { font-size: 10px; font-weight: 700; fill: var(--brand); }
+.ruler .ok-tick { transform-box: fill-box; transform-origin: center; }
+.ruler .ok-tick circle { fill: var(--ok); }
+.ruler .ok-tick path { fill: none; stroke: #fff; stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; stroke-dasharray: 1; }
+.ruler-note { margin: 8px 0 0; font-weight: 600; font-size: 0.95rem; color: var(--muted); }
+.ruler-note.ok { color: var(--ok); }
+.ruler-note.wrong, .ruler-note.unclear { color: var(--stop); }
+
+/* Your photos flying off to be saved. */
+.photo-deck { display: flex; align-items: center; justify-content: center; gap: 28px; min-height: 170px; }
+.deck-stack { position: relative; width: 110px; height: 150px; }
+.deck-card { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; border-radius: 12px;
+  border: 3px solid #fff; box-shadow: var(--shadow-lift); background: var(--surface-2); }
+.deck-cloud { width: 72px; }
+.deck-cloud svg { width: 100%; height: auto; }
+
+/* Confetti on the last page. */
+.confetti-layer { position: fixed; inset: 0; pointer-events: none; z-index: 80; overflow: hidden; }
+.confetti-layer i { position: absolute; display: block; }

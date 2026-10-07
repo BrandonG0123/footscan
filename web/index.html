@@ -10,8 +10,10 @@
     main.wrap { max-width: 760px; }
     .steps { display: flex; gap: 6px; list-style: none; padding: 0; margin: 0 0 22px; flex-wrap: wrap; }
     .steps li { flex: 1; min-width: 70px; font-size: 0.78rem; font-weight: 600; color: var(--muted); }
-    .steps li::before { content: ""; display: block; height: 4px; border-radius: 4px; background: var(--line); margin-bottom: 6px; }
-    .steps li.done::before, .steps li.current::before { background: var(--brand); }
+    .steps .track { display: block; height: 5px; border-radius: 5px; background: var(--line); margin-bottom: 7px; overflow: hidden; }
+    .steps .fill { display: block; height: 100%; background: var(--brand); border-radius: inherit; transform-origin: left; transform: scaleX(0); }
+    .steps li.done .fill, .steps li.current .fill { transform: scaleX(1); }
+    .steps li.current .fill { background: linear-gradient(90deg, var(--brand), color-mix(in srgb, var(--brand) 55%, var(--accent))); }
     .steps li.current { color: var(--ink); }
     .view { display: grid; gap: 18px; }
     .view h1 { font-size: clamp(1.7rem, 5vw, 2.3rem); margin: 0; }
@@ -82,25 +84,50 @@
     #plan-list li p { margin: 0; }
     .mat-card .howto { gap: 10px; }
     #plan-list .why { color: var(--muted); font-size: 0.93rem; }
-    .big-check { width: 64px; height: 64px; border-radius: 50%; background: var(--ok-soft); color: var(--ok); display: grid; place-items: center; font-size: 2rem; font-weight: 800; }
+    .big-check { width: 84px; height: 84px; }
+    .big-check svg { width: 100%; height: 100%; overflow: visible; }
+    .big-check circle { fill: var(--ok-soft); stroke: var(--ok); stroke-width: 3; }
+    .big-check path { fill: none; stroke: var(--ok); stroke-width: 5; stroke-linecap: round; stroke-linejoin: round; }
+
+    /* welcome: words and the animated picture side by side, stacked on phones */
+    .hero-intro { display: grid; grid-template-columns: 1.1fr 0.9fr; gap: 18px; align-items: center; }
+    .hero-copy { display: grid; gap: 14px; }
+    @media (max-width: 620px) { .hero-intro { grid-template-columns: 1fr; } .hero-scene { order: -1; max-width: 340px; justify-self: center; width: 100%; } }
+
+    .ack-count { margin-left: 8px; font-family: var(--mono); font-size: 0.85rem; color: var(--muted); font-weight: 600;
+      padding: 2px 8px; border-radius: 999px; background: var(--surface-2); }
+    .ack-count.all { color: var(--ok); background: var(--ok-soft); }
+    .btn.ready { box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 55%, transparent), 0 8px 24px color-mix(in srgb, var(--brand) 30%, transparent); }
+
+    .part-progress { display: flex; align-items: center; gap: 12px; }
+    .part-progress .eyebrow { margin: 0; }
+    .part-dots { display: flex; gap: 6px; }
+    .part-dots span { width: 22px; height: 6px; border-radius: 6px; background: var(--line); transition: background 0.3s, width 0.3s; }
+    .part-dots span.done { background: var(--brand); }
+    .part-dots span.current { background: var(--brand); width: 34px; }
   </style>
 </head>
 <body data-area="customer">
 <main class="wrap">
   <ol class="steps" id="steps" aria-label="Progress">
-    <li data-step="about">You</li>
-    <li data-step="survey">Questions</li>
-    <li data-step="scan">Scan</li>
-    <li data-step="send">Send</li>
+    <li data-step="about"><span class="track"><span class="fill"></span></span>You</li>
+    <li data-step="survey"><span class="track"><span class="fill"></span></span>Questions</li>
+    <li data-step="scan"><span class="track"><span class="fill"></span></span>Scan</li>
+    <li data-step="send"><span class="track"><span class="fill"></span></span>Send</li>
   </ol>
 
   <!-- 1. About you -->
   <section class="view" id="v-about" style="margin:0">
     <div class="callout warn" id="link-error" role="alert" hidden><p id="link-error-text" style="margin:0"></p></div>
-    <h1>Make an insole that fits your foot</h1>
-    <p class="lede">Your phone takes photos of your foot. Those photos are used to shape an insole for your shoe.
-      It takes about five minutes per foot.</p>
-    <ol class="howto card stagger">
+    <div class="hero-intro">
+      <div class="hero-copy">
+        <h1>Make an insole that fits your foot</h1>
+        <p class="lede">Your phone takes photos of your foot. Those photos are used to shape an insole for your shoe.
+          It takes about five minutes per foot.</p>
+      </div>
+      <div class="hero-scene" id="hero-scene"></div>
+    </div>
+    <ol class="howto card stagger tilt">
       <li><p><strong>Print the paper mat</strong> and put it on the floor.</p></li>
       <li><p><strong>Move your phone around your foot</strong> while it takes photos.</p></li>
       <li><p><strong>Send the photos</strong>, and your insole gets made.</p></li>
@@ -121,37 +148,38 @@
       </div>
 
       <fieldset style="border:0;padding:0;margin:0;display:grid;gap:10px">
-        <legend style="font-weight:650;margin-bottom:8px">Please read these and tick all four</legend>
+        <legend style="font-weight:650;margin-bottom:8px">Please read these and tick all four
+          <span class="ack-count" id="ack-count" aria-hidden="true"><b data-value="0">0</b>/4</span></legend>
         <div class="ack">
-          <label><input type="checkbox" name="not_medical_device">
+          <label><input type="checkbox" name="not_medical_device"><span class="tick" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 12.5l4.2 4.2L19 7" pathLength="1"/></svg></span>
             <span><strong>This is not a medical device.</strong> It is homemade. A doctor did not prescribe it, and it
               does not treat any illness or injury.</span></label>
-          <label><input type="checkbox" name="clinician_review">
+          <label><input type="checkbox" name="clinician_review"><span class="tick" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 12.5l4.2 4.2L19 7" pathLength="1"/></svg></span>
             <span><strong>Before I play sport in it, I will show it to a foot doctor</strong> (a podiatrist), a
               physical therapist, a sports doctor or an athletic trainer. The wrong shape under a foot can hurt your
               knees, hips or back.</span></label>
-          <label><input type="checkbox" name="break_in">
+          <label><input type="checkbox" name="break_in"><span class="tick" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 12.5l4.2 4.2L19 7" pathLength="1"/></svg></span>
             <span><strong>I will wear it a little at a time.</strong> One hour on the first day, then a bit more each
               day for two weeks. If anything starts to hurt, I stop wearing it. <a href="/care.html">See how</a>.</span></label>
-          <label><input type="checkbox" name="photo_consent">
+          <label><input type="checkbox" name="photo_consent"><span class="tick" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 12.5l4.2 4.2L19 7" pathLength="1"/></svg></span>
             <span><strong>You can keep the photos of my feet</strong> so you can make my insole.</span></label>
         </div>
       </fieldset>
       <p class="error" id="about-error" role="alert"></p>
-      <button class="btn" type="submit">Continue</button>
+      <button class="btn magnetic" type="submit" id="btn-about">Continue</button>
     </form>
   </section>
 
   <!-- 2. Survey -->
   <section class="view" id="v-survey" hidden style="margin:0">
-    <p class="eyebrow" id="survey-eyebrow">Part 1 of 3</p>
+    <div class="part-progress"><p class="eyebrow" id="survey-eyebrow">Part 1 of 3</p><div class="part-dots" id="part-dots" aria-hidden="true"></div></div>
     <h1 id="survey-title">Safety check</h1>
     <p class="lede" id="survey-intro"></p>
-    <form class="card form" id="survey-form" novalidate></form>
+    <form class="card form stagger" id="survey-form" novalidate></form>
     <p class="error" id="survey-error" role="alert"></p>
     <div class="action-bar">
       <button class="btn secondary" id="btn-survey-back" type="button">Back</button>
-      <button class="btn" id="btn-survey-next" type="button">Next</button>
+      <button class="btn magnetic" id="btn-survey-next" type="button">Next</button>
     </div>
   </section>
 
@@ -176,7 +204,7 @@
       <p><strong>See a foot doctor before you wear the insole at all</strong>, not just before sport. Here is why:</p>
       <ul id="plan-flag-list" style="margin:0;padding-left:1.2em"></ul>
     </div>
-    <ol class="card howto stagger" id="plan-list"></ol>
+    <ol class="card howto stagger tilt" id="plan-list"></ol>
     <p class="hint" id="plan-helper"></p>
 
     <div class="card mat-card">
@@ -202,11 +230,12 @@
         <input id="mat-check" type="number" inputmode="decimal" min="1" max="30" step="0.1">
         <span class="hint">It should be 10 on a cm ruler, or 4 on an inch ruler.</span>
       </div>
+      <div class="ruler-view" id="ruler-view"></div>
     </div>
     <p class="error" id="plan-error" role="alert"></p>
     <div class="action-bar">
       <button class="btn secondary" id="btn-plan-back" type="button">Change answers</button>
-      <button class="btn" id="btn-plan-start" type="button">Start scanning</button>
+      <button class="btn magnetic" id="btn-plan-start" type="button">Start scanning</button>
     </div>
   </section>
 
@@ -218,7 +247,7 @@
     <div class="diagram" id="path-diagram"></div>
     <p class="error" id="setup-error" role="alert"></p>
     <div class="action-bar">
-      <button class="btn" id="btn-open">Open the camera</button>
+      <button class="btn magnetic" id="btn-open">Open the camera</button>
       <button class="btn secondary" id="btn-demo" hidden>Use simulated camera</button>
     </div>
   </section>
@@ -255,6 +284,7 @@
   <!-- 3b. Saving a foot -->
   <section class="view" id="v-saving" hidden style="margin:0">
     <h1 id="saving-title">Saving your scan…</h1>
+    <div class="photo-deck" id="saving-deck" hidden aria-hidden="true"></div>
     <div class="scan-bar">
       <div class="bar-label"><span id="saving-label">Uploading photos</span><span class="mono" id="saving-count"></span></div>
       <div class="bar"><div id="saving-bar"></div></div>
@@ -272,16 +302,16 @@
     <p class="lede">Check the list, then send your photos.</p>
     <div class="foot-rows stagger" id="foot-rows"></div>
     <p class="error" id="send-error" role="alert"></p>
-    <div class="action-bar"><button class="btn" id="btn-send">Send my scans</button></div>
+    <div class="action-bar"><button class="btn magnetic" id="btn-send">Send my scans</button></div>
   </section>
 
   <!-- 5. Done -->
   <section class="view" id="v-done" hidden style="margin:0">
-    <div class="big-check" aria-hidden="true">✓</div>
+    <div class="big-check" id="big-check" aria-hidden="true"><svg viewBox="0 0 64 64"><circle cx="32" cy="32" r="29" pathLength="1"/><path d="M19 33l9 9 18-20" pathLength="1"/></svg></div>
     <h1>Sent. Thank you!</h1>
     <p class="lede">Your code is <strong class="mono" id="done-ref"></strong>. Keep it, so you know which insole is
       yours.</p>
-    <div class="card">
+    <div class="card tilt">
       <h3>What happens now</h3>
       <ol class="howto">
         <li><p>Someone checks your photos. If they didn't work, you'll be asked to scan again.</p></li>
@@ -295,6 +325,7 @@
     <p class="hint">Want your photos deleted? Tell the person making your insole and give them your code.</p>
   </section>
 </main>
+<script src="/vendor/motion/motion.js"></script>
 <script src="/vendor/js-aruco2/cv.js"></script>
 <script src="/vendor/js-aruco2/aruco.js"></script>
 <script type="module" src="/assets/layout.js"></script>

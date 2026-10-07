@@ -7,6 +7,9 @@ import { createStageView } from "./stage-view.js";
 import { renderSteer, wireSoundToggle } from "./scan-ui.js";
 import { DIAGRAM_CSS, matDiagram, phonePathDiagram } from "./diagrams.js";
 import { unlockAudio } from "./cues.js";
+import * as fx from "./fx.js";
+import { animatePathDiagram, mountScene } from "./scene.js";
+import { mountRuler } from "./ruler.js";
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
@@ -19,6 +22,9 @@ const DEMO = new URLSearchParams(location.search).has("demo");
 $("map-css").textContent = DIAGRAM_CSS;
 $("mat-diagram").innerHTML = matDiagram();
 $("path-diagram").innerHTML = phonePathDiagram();
+mountScene($("hero-scene"));
+animatePathDiagram($("path-diagram"));
+fx.updateSteps($("steps"), 0); // first step: you
 
 const flow = {
   name: "", feet: [], acks: {},
@@ -33,15 +39,22 @@ const flow = {
 };
 const currentScan = () => flow.evaluation.plan[flow.scanIndex];
 
-function show(view, step) {
+// Views in the order a person meets them, so moving between them can slide
+// the right way: forward comes in from the right, back from the left.
+const VIEW_ORDER = ["about", "survey", "stopped", "plan", "setup", "scan", "saving", "send", "done"];
+let currentView = "about";
+
+function show(view, step, dir) {
+  const from = currentView;
+  currentView = view;
   for (const el of document.querySelectorAll("main > .view")) el.hidden = el.id !== `v-${view}`;
   const order = ["about", "survey", "scan", "send"];
-  const at = order.indexOf(step);
-  document.querySelectorAll("#steps li").forEach((li, i) => {
-    li.className = i < at ? "done" : i === at ? "current" : "";
-    li.toggleAttribute("aria-current", i === at);
-  });
+  fx.updateSteps($("steps"), order.indexOf(step));
   window.scrollTo({ top: 0 });
+  // The camera view is left alone: it starts the scanner straight away.
+  if (view === "scan") return;
+  const d = dir ?? Math.sign(VIEW_ORDER.indexOf(view) - VIEW_ORDER.indexOf(from));
+  fx.enterView($(`v-${view}`), d);
 }
 
 async function api(path, { method = "POST", json, body, headers = {} } = {}) {
@@ -57,6 +70,20 @@ async function api(path, { method = "POST", json, body, headers = {} } = {}) {
 // =========================================================================
 // 1. About you
 // =========================================================================
+const ACK_KEYS = ["not_medical_device", "clinician_review", "break_in", "photo_consent"];
+let aboutReady = false;
+function syncAbout() {
+  const f = $("about-form");
+  const ticked = ACK_KEYS.filter((k) => f[k].checked).length;
+  fx.countTo($("ack-count").querySelector("b"), ticked, { duration: 0.3 });
+  $("ack-count").classList.toggle("all", ticked === ACK_KEYS.length);
+  const ready = ticked === ACK_KEYS.length && $("name").value.trim() !== "";
+  $("btn-about").classList.toggle("ready", ready);
+  if (ready && !aboutReady) fx.bounce($("btn-about"), { scale: 1.06 });
+  aboutReady = ready;
+}
+$("about-form").addEventListener("input", syncAbout);
+$("about-form").addEventListener("change", syncAbout);
 $("about-form").addEventListener("submit", async (e) => {
   e.preventDefault();
   const f = e.target;
@@ -68,7 +95,11 @@ $("about-form").addEventListener("submit", async (e) => {
   if (!flow.name) errors.push("Please type your name.");
   if (!Object.values(flow.acks).every(Boolean)) errors.push("Please tick all four boxes to carry on.");
   $("about-error").textContent = errors.join(" ");
-  if (errors.length) return;
+  if (errors.length) {
+    if (!flow.name) fx.shake($("name").closest(".field"));
+    for (const label of f.querySelectorAll(".ack label")) if (!label.querySelector("input").checked) fx.shake(label);
+    return;
+  }
 
   if (!flow.sections) {
     try {
@@ -87,9 +118,14 @@ $("about-form").addEventListener("submit", async (e) => {
 // =========================================================================
 const applies = (q) => Object.entries(q.show_if || {}).every(([k, vals]) => vals.includes(flow.answers[k]));
 
+let lastSection = -1;
 function renderSection() {
   const section = flow.sections[flow.sectionIndex];
+  const dir = currentView === "survey" ? Math.sign(flow.sectionIndex - lastSection) : undefined;
+  lastSection = flow.sectionIndex;
   $("survey-eyebrow").textContent = `Part ${flow.sectionIndex + 1} of ${flow.sections.length}`;
+  $("part-dots").innerHTML = flow.sections.map((_, i) =>
+    `<span class="${i < flow.sectionIndex ? "done" : i === flow.sectionIndex ? "current" : ""}"></span>`).join("");
   $("survey-title").textContent = section.title;
   $("survey-intro").textContent = section.intro || "";
   $("survey-error").textContent = "";
@@ -116,7 +152,7 @@ function renderSection() {
       <input id="q-${q.id}" name="${q.id}" ${attrs} value="${esc(a ?? "")}"><p class="q-error"></p></div>`;
   }).join("");
   syncVisibility();
-  show("survey", "survey");
+  show("survey", "survey", dir);
 }
 
 function readAnswer(q) {
@@ -132,8 +168,11 @@ function syncVisibility() {
   for (const q of flow.sections[flow.sectionIndex].questions) {
     flow.answers[q.id] = readAnswer(q);
     const el = $("survey-form").querySelector(`[data-q="${q.id}"]`);
+    const wasHidden = el.hidden;
     el.hidden = !applies(q);
     if (el.hidden) delete flow.answers[q.id];
+    // A follow-up question that appears because of an answer slides in.
+    else if (wasHidden && currentView === "survey") fx.enter([el], { blur: false, distance: 14 });
   }
 }
 
@@ -174,6 +213,7 @@ function showErrors(errors) {
     const msg = errors[el.dataset.q];
     el.classList.toggle("invalid", !!msg);
     el.querySelector(".q-error").textContent = msg || "";
+    if (msg) fx.shake(el);
     if (msg && !first) first = el;
   }
   first?.scrollIntoView({ block: "center", behavior: "smooth" });
@@ -181,7 +221,7 @@ function showErrors(errors) {
 
 $("btn-survey-back").addEventListener("click", () => {
   syncVisibility();
-  if (flow.sectionIndex === 0) return show("about", "about");
+  if (flow.sectionIndex === 0) return show("about", "about", -1);
   flow.sectionIndex--;
   renderSection();
 });
@@ -240,8 +280,19 @@ function renderPlan() {
   $("plan-error").textContent = "";
   loadMatBars().then(() => {
     if (DEMO && !$("mat-check").value) $("mat-check").value = "10";
+    ruler.update();
   });
   show("plan", "survey");
+  popMatDiagram();
+}
+
+const ruler = mountRuler($("ruler-view"), $("mat-check"), () => matBars);
+
+// The mat drawing assembles itself: sheets, then the black squares one by one.
+function popMatDiagram() {
+  if (!fx.enabled()) return;
+  const squares = [...$("mat-diagram").querySelectorAll("rect[width='9']")];
+  fx.enter(squares, { each: 0.018, distance: 6, blur: false, delay: 0.3 });
 }
 
 
@@ -302,6 +353,7 @@ $("btn-plan-start").addEventListener("click", async () => {
   if (!check.ok) {
     $("plan-error").textContent = check.message;
     $("mat-check").focus();
+    fx.shake($("mat-check").closest(".field"));
     return;
   }
   flow.matCheck = { value: Number($("mat-check").value), unit: check.bar.unit };
@@ -406,19 +458,22 @@ async function startScan(simulated) {
   $("demo-ribbon").hidden = !simulated;
   flow.matSeenSince = null;
   flow.matLostAt = null;
+  flow.doneShown = false;
   const boards = await loadBoards();
   const scanner = new Scanner({
     stage: $("stage"), simulated, boards, requireMat: true, foot: scan.foot,
     onUpdate: (s) => {
       const waiting = autoStart(s, scanner);
       const g = waiting ?? s.guidance;
-      $("guidance").textContent = g.text;
+      fx.setText($("guidance"), g.text);
       $("guidance").className = `guidance ${g.tone}`;
       $("progress-label").textContent = `${Math.round(100 * s.progress)}%`;
       $("progress-bar").style.width = `${100 * s.progress}%`;
       renderSteer(s, scanner);
       $("btn-finish").disabled = s.kept < MIN_FRAMES;
       $("btn-finish").className = s.done ? "btn accent" : "btn secondary";
+      // Done: the Finish button says so with a bounce, once.
+      if (s.done && !flow.doneShown) { flow.doneShown = true; fx.bounce($("btn-finish"), { scale: 1.08 }); }
     },
   });
   try {
@@ -475,23 +530,35 @@ async function saveScan() {
   try {
     await scanner.ready();
     const kept = scanner.keptFrames();
+    const deck = fx.photoDeck($("saving-deck"), kept.map((f) => f.url).filter(Boolean));
     if (!DEMO) {
       const base = `/submissions/${flow.submission.id}/scans/${scan.key}`;
       await api(`${base}/start`);
       for (let i = 0; i < kept.length; i++) {
         progress(i, kept.length, "Uploading photos");
         await api(`${base}/frames/${i + 1}`, { method: "PUT", body: kept[i].blob, headers: { "Content-Type": "image/jpeg" } });
+        deck.advance(i + 1);
       }
       await api(`${base}/complete`, {
         json: { frames: scanner.frameRecords(), summary: scanner.summary() },
       });
+    } else {
+      // Demo: nothing is sent, but show the photos leaving so the flow reads the
+      // same (about two and a half seconds however many photos there are).
+      const pause = Math.min(30, 2500 / Math.max(1, kept.length));
+      for (let i = 0; i < kept.length; i++) {
+        progress(i + 1, kept.length, "Demo: nothing is sent");
+        deck.advance(i + 1);
+        if (fx.enabled()) await new Promise((r) => setTimeout(r, pause));
+      }
     }
+    deck.done();
     progress(kept.length, kept.length, DEMO ? "Demo: nothing uploaded" : "Saved");
     flow.results[scan.key] = kept.length;
     scanner.close();
     flow.scanner = null;
     flow.scanIndex++;
-    setTimeout(() => (flow.scanIndex < flow.evaluation.plan.length ? openSetup() : openSend()), 500);
+    setTimeout(() => (flow.scanIndex < flow.evaluation.plan.length ? openSetup() : openSend()), fx.enabled() ? 1100 : 500);
   } catch (err) {
     $("saving-error").textContent = `The photos did not send (${err.message}). Check your Wi-Fi, then tap Try again.`;
     $("saving-actions").hidden = false;
@@ -511,8 +578,9 @@ $("btn-rescan").addEventListener("click", () => {
 // =========================================================================
 function openSend() {
   $("foot-rows").innerHTML = flow.evaluation.plan.map((p) =>
-    `<div class="card foot-row"><strong>${esc(p.label)}</strong>
-      <span class="badge ok">${flow.results[p.key]} photos</span></div>`).join("");
+    `<div class="card foot-row tilt"><strong>${esc(p.label)}</strong>
+      <span class="badge ok"><span class="count" data-n="${flow.results[p.key]}">${flow.results[p.key]}</span> photos</span></div>`).join("");
+  for (const c of $("foot-rows").querySelectorAll(".count")) fx.countTo(c, Number(c.dataset.n), { from: 0, duration: 0.9 });
   $("send-error").textContent = DEMO ? "Demo mode: sending is disabled." : "";
   $("btn-send").disabled = DEMO;
   show("send", "send");
@@ -531,8 +599,17 @@ $("btn-send").addEventListener("click", async () => {
   $("done-ref").textContent = flow.submission.id.replace(/^sub-/, "");
   flow.submission = null;
   show("done", "send");
-  document.querySelectorAll("#steps li").forEach((li) => (li.className = "done"));
+  fx.updateSteps($("steps"), 4);
+  celebrate();
 });
+
+// The finish: the tick draws itself, then confetti from it.
+function celebrate() {
+  const check = $("big-check");
+  fx.draw(check.querySelector("circle"), { duration: 0.6 });
+  fx.draw(check.querySelector("path"), { delay: 0.45, duration: 0.4 });
+  setTimeout(() => fx.confetti(check), 700);
+}
 
 // Leaving mid-scan: release the camera.
 window.addEventListener("pagehide", () => flow.scanner?.close());
