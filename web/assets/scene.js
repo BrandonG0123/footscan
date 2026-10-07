@@ -20,7 +20,7 @@
 // It only runs while it is on screen, and with "reduce motion" on it is a
 // still picture of the finished insole.
 import { animate, inView } from "./motion.js";
-import { enabled, POP, SOFT } from "./fx.js";
+import { enabled, POP, SOFT, untilReduced } from "./fx.js";
 import { FOOT_PATH, TOES } from "./layout.js";
 import { arcSegment, orbitParam, orbitPoint, segmentAt, segmentsSwept, shortestDelta } from "./scene-math.js";
 
@@ -111,7 +111,9 @@ export function mountScene(host) {
   new ResizeObserver(measure).observe(svg);
 
   let phoneT = 0;
+  let frozen = false; // the still picture is showing: a late animation frame can't move the phone
   const placePhone = (t) => {
+    if (frozen) return orbitPoint(CX, CY, ORBIT.rx, ORBIT.ry, phoneT);
     phoneT = ((t % 1) + 1) % 1;
     const p = orbitPoint(CX, CY, ORBIT.rx, ORBIT.ry, phoneT);
     parts.phoneAt.setAttribute("transform", `translate(${p.x.toFixed(1)} ${p.y.toFixed(1)}) rotate(${(p.facing + 180).toFixed(1)})`);
@@ -119,14 +121,39 @@ export function mountScene(host) {
     return p;
   };
 
-  if (!enabled()) {
-    // Still picture: the finished result, with the phone resting at one side.
+  // Still picture: the finished result, with the phone resting at one side.
+  // Also what the scene settles into if reduced motion is switched on while
+  // it plays, so it clears anything an animation left half-done.
+  const drawn = (path) => {
+    path.setAttribute("stroke-dashoffset", "0");
+    path.style.strokeDashoffset = "0";
+  };
+  function showStill() {
+    frozen = false;
     placePhone(0.62);
-    parts.segs.forEach((s) => s.classList.add("lit"));
+    frozen = true;
+    for (const el of [...parts.far, parts.near, parts.insole, parts.badge, parts.scan, parts.flash, ...parts.toes, ...parts.segs]) {
+      el.style.removeProperty("transform");
+    }
+    parts.segs.forEach((s) => { s.classList.add("lit"); s.style.opacity = "1"; s.style.removeProperty("stroke-width"); });
     parts.toes.forEach((t) => (t.style.opacity = "0.25"));
+    parts.sole.style.removeProperty("opacity");
+    parts.fill.style.removeProperty("opacity");
     parts.insole.setAttribute("opacity", "1");
+    parts.insole.style.opacity = "1";
+    parts.insole.removeAttribute("filter");
     parts.badge.setAttribute("opacity", "1");
+    parts.badge.style.opacity = "1";
+    drawn(parts.edge);
+    drawn(parts.badge.querySelector("path"));
+    parts.scan.style.opacity = "0";
+    parts.flash.style.opacity = "0";
     parts.hint.hidden = true;
+    parts.grip.hidden = true;
+  }
+
+  if (!enabled()) {
+    showStill();
     return () => {};
   }
 
@@ -310,13 +337,13 @@ export function mountScene(host) {
   let press = null;
   const inScene = (el) => el === parts.grip || svg.contains(el);
   host.addEventListener("pointerdown", (e) => {
-    if (e.button > 0 || !inScene(e.target)) return;
+    if (e.button > 0 || !inScene(e.target) || mode === "still") return;
     const grip = e.target === parts.grip;
     press = { id: e.pointerId, x: e.clientX, y: e.clientY, dragging: false, grip };
     if (e.pointerType === "mouse" || grip) host.setPointerCapture?.(e.pointerId);
   });
   host.addEventListener("pointermove", (e) => {
-    if (!press || e.pointerId !== press.id || mode === "done") return;
+    if (!press || e.pointerId !== press.id || mode === "done" || mode === "still") return;
     if (!press.dragging) {
       const dx = Math.abs(e.clientX - press.x), dy = Math.abs(e.clientY - press.y);
       if (Math.hypot(dx, dy) < DRAG_START_PX) return;
@@ -358,7 +385,7 @@ export function mountScene(host) {
   svg.setAttribute("aria-label", `${label}. Press the left and right arrow keys to walk the phone round the foot yourself.`);
   svg.addEventListener("keydown", (e) => {
     const dir = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 }[e.key];
-    if (!dir || mode === "done") return;
+    if (!dir || mode === "done" || mode === "still") return;
     e.preventDefault();
     takeOver();
     goTo(phoneT + dir / N, { smooth: true });
@@ -379,8 +406,9 @@ export function mountScene(host) {
 
   // ---- depth: the two layers drift apart with the mouse, or the phone's tilt
   const shift = (fx, fy) => {
-    for (const el of parts.far) animate(el, { x: fx * -5, y: fy * -4 }, SOFT);
-    animate(parts.near, { x: fx * 4, y: fy * 3 }, SOFT);
+    if (mode === "still") return;
+    for (const el of parts.far) track(animate(el, { x: fx * -5, y: fy * -4 }, SOFT));
+    track(animate(parts.near, { x: fx * 4, y: fy * 3 }, SOFT));
   };
   const fine = matchMedia("(hover: hover) and (pointer: fine)");
   addEventListener("pointermove", (e) => {
@@ -413,7 +441,7 @@ export function mountScene(host) {
   // Run while the picture is visible; stop (and leave it tidy) when it isn't.
   const stopWatching = inView(host, () => {
     alive = true;
-    if (mode === "auto") autoplay(gen);
+    if (mode === "auto" && enabled()) autoplay(gen);
     return () => {
       alive = false;
       clearTimeout(idleTimer);
@@ -422,6 +450,14 @@ export function mountScene(host) {
       hint(HINT_INVITE, "invite");
     };
   }, { amount: 0.25 });
+  // Reduced motion switched on mid-play: stop everything, show the still.
+  untilReduced(() => {
+    stopWatching();
+    clearTimeout(idleTimer);
+    interrupt();
+    mode = "still";
+    showStill();
+  });
   return stopWatching;
 }
 
@@ -468,6 +504,14 @@ export function animatePathDiagram(host) {
     stop = false;
     go();
     return () => { stop = true; live.forEach((a) => a.stop?.()); };
+  });
+  // Reduced motion switched on: the walkers stop and leave the plain diagram.
+  untilReduced(() => {
+    stopWatching();
+    stop = true;
+    live.forEach((a) => a.stop?.());
+    around.remove();
+    climb.remove();
   });
   return stopWatching;
 }

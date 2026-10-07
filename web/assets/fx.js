@@ -16,6 +16,37 @@ const fineQuery = matchMedia("(hover: hover) and (pointer: fine)");
 export const enabled = () => available && !reducedQuery.matches;
 const fine = () => fineQuery.matches;
 
+// "Reduce motion" can be switched on while a page is open. One-off effects
+// check enabled() each time they run; anything that keeps going by itself
+// (loops, scroll-linked movement) registers here and is stopped on the spot.
+const onReduce = new Set();
+reducedQuery.addEventListener?.("change", () => {
+  if (enabled()) return;
+  for (const stop of [...onReduce]) { try { stop(); } catch { /* best effort */ } }
+  onReduce.clear();
+});
+/** Run `stop` if reduced motion is switched on. Returns a function that unregisters it. */
+export function untilReduced(stop) {
+  onReduce.add(stop);
+  return () => onReduce.delete(stop);
+}
+
+/**
+ * Tie an animation to the scroll position, and undo it completely (back to
+ * the element's own styles) if reduced motion is switched on.
+ */
+export function scrollLink(el, keyframes, options) {
+  if (!enabled() || !el) return;
+  const anim = animate(el, keyframes, { ease: "linear" });
+  const cancel = scroll(anim, options);
+  untilReduced(() => {
+    cancel?.();
+    anim.cancel?.();
+    for (const p of Object.keys(keyframes)) el.style.removeProperty(p);
+    clear(el);
+  });
+}
+
 // Springs: "settle" for things arriving, "pop" for answers to a tap.
 export const SETTLE = { type: "spring", visualDuration: 0.55, bounce: 0.18 };
 export const POP = { type: "spring", visualDuration: 0.3, bounce: 0.5 };
@@ -84,7 +115,7 @@ export function revealOnScroll(selector) {
 export function parallaxGlow() {
   const glow = document.querySelector(".page-glow");
   if (!enabled() || !glow) return;
-  scroll(animate(glow, { y: [0, -140], opacity: [0.55, 0.15] }, { ease: "linear" }));
+  scrollLink(glow, { y: [0, -140], opacity: [0.55, 0.15] });
 }
 
 // =========================================================================

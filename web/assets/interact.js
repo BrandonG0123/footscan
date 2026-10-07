@@ -17,7 +17,7 @@
 // readable, "reduce motion" turns it all off, and nothing here touches the
 // camera stage or anything around it.
 import { animate, inView, scroll, stagger } from "./motion.js";
-import { enabled, POP, SETTLE } from "./fx.js";
+import { enabled, POP, scrollLink, SETTLE, untilReduced } from "./fx.js";
 
 // =========================================================================
 // Scroll: the welcome picture
@@ -28,8 +28,8 @@ export function heroParallax(scene, copy) {
   // above the words) its bottom never slides down over the heading.
   scene.style.transformOrigin = "50% 0%";
   const range = { target: scene, offset: ["start start", "end start"] };
-  scroll(animate(scene, { y: [0, 36], scale: [1, 0.86], opacity: [1, 0.2] }, { ease: "linear" }), range);
-  if (copy) scroll(animate(copy, { y: [0, -12] }, { ease: "linear" }), range);
+  scrollLink(scene, { y: [0, 36], scale: [1, 0.86], opacity: [1, 0.2] }, range);
+  if (copy) scrollLink(copy, { y: [0, -12] }, range);
 }
 
 /** Blocks marked data-parallax="0.2" drift against the page by that much. */
@@ -37,7 +37,7 @@ export function parallaxBlocks() {
   if (!enabled()) return;
   for (const el of document.querySelectorAll("[data-parallax]")) {
     const d = (Number(el.dataset.parallax) || 0.15) * 120;
-    scroll(animate(el, { y: [d, -d] }, { ease: "linear" }), { target: el, offset: ["start end", "end start"] });
+    scrollLink(el, { y: [d, -d] }, { target: el, offset: ["start end", "end start"] });
   }
 }
 
@@ -47,6 +47,7 @@ export function parallaxBlocks() {
 const READ_LINE = 0.62; // how far down the screen counts as "being read"
 
 function updateRails() {
+  if (!enabled()) return;
   const atBottom = scrollY + innerHeight >= document.documentElement.scrollHeight - 4;
   const line = innerHeight * READ_LINE;
   for (const list of document.querySelectorAll("main ol.howto")) {
@@ -78,6 +79,12 @@ export function stepRails() {
   // A view changing on the scan page doesn't scroll anything, so it says so.
   document.addEventListener("fx:view", () => requestAnimationFrame(updateRails));
   requestAnimationFrame(updateRails);
+  untilReduced(() => {
+    for (const list of document.querySelectorAll("ol.howto.rail")) {
+      list.classList.remove("rail");
+      for (const li of list.querySelectorAll("li.lit")) li.classList.remove("lit");
+    }
+  });
 }
 
 // =========================================================================
@@ -92,7 +99,8 @@ export function readingProgress() {
     bar.className = "read-progress";
     bar.setAttribute("aria-hidden", "true");
     header.append(bar);
-    scroll(animate(bar, { scaleX: [0, 1] }, { ease: "linear" }));
+    scrollLink(bar, { scaleX: [0, 1] });
+    untilReduced(() => bar.remove());
   }
   scroll((_, info) => header.classList.toggle("lifted", info.y.current > 8));
 }
@@ -156,7 +164,7 @@ export function assembleMat(host) {
   host.dataset.assemble = "1";
   const play = () => {
     const svg = host.querySelector("svg");
-    if (!svg) return;
+    if (!svg || !enabled()) return;
     const q = (s) => [...svg.querySelectorAll(s)];
     const [top, bottom] = [q(".sheet-2"), q(".sheet-1")];
     animate(top, { y: [-34, 0], rotate: [-5, 0], opacity: [0, 1] }, SETTLE);
@@ -177,6 +185,7 @@ export function assembleMat(host) {
 export function growBars(container, selector = ".bar") {
   if (!enabled() || !container) return;
   inView(container, () => {
+    if (!enabled()) return;
     animate([...container.querySelectorAll(selector)], { scaleY: [0, 1] }, { ...SETTLE, delay: stagger(0.045) });
   }, { amount: 0.4 });
 }
