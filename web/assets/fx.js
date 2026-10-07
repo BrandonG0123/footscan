@@ -265,7 +265,9 @@ export function initSegmented(group) {
   group.classList.add("has-pill");
   const place = (instant) => {
     const label = group.querySelector("input:checked")?.closest("label");
-    if (!label) return;
+    // Hidden (its view isn't showing): nothing to measure. It is placed again
+    // when it shows, by the size watcher below.
+    if (!label || !label.offsetWidth) return;
     const to = { x: label.offsetLeft, width: label.offsetWidth };
     if (instant || !enabled()) {
       pill.style.transform = `translateX(${to.x}px)`;
@@ -276,7 +278,9 @@ export function initSegmented(group) {
   };
   group.addEventListener("change", () => place(false));
   requestAnimationFrame(() => place(true));
-  addEventListener("resize", () => place(true));
+  // Fires on a resize or rotation, and when a hidden view shows again (its
+  // size goes from nothing to something).
+  new ResizeObserver(() => place(true)).observe(group);
 }
 
 /** A tick box that was just ticked: the box pops and the tick draws itself. */
