@@ -45,3 +45,32 @@ test("ruler: a correct print, a shrunk print, and nonsense", () => {
   assert.equal(m("25").status, "unclear");
   assert.equal(m("25").shown, 12); // clamped to the ruler's end
 });
+
+test("orbitParam undoes orbitPoint, on the ellipse and off it", async () => {
+  const { orbitParam } = await import("../../web/assets/scene-math.js");
+  for (const t of [0, 0.1, 0.25, 0.4, 0.5, 0.73, 0.99]) {
+    const p = orbitPoint(160, 134, 134, 108, t);
+    close(orbitParam(160, 134, 134, 108, p.x, p.y), t, 1e-9);
+    // a finger inside or outside the line maps to the same place
+    const q = { x: 160 + (p.x - 160) * 0.4, y: 134 + (p.y - 134) * 0.4 };
+    close(orbitParam(160, 134, 134, 108, q.x, q.y), t, 1e-9);
+  }
+});
+
+test("shortestDelta goes the short way round", async () => {
+  const { shortestDelta } = await import("../../web/assets/scene-math.js");
+  close(shortestDelta(0.1, 0.3), 0.2);
+  close(shortestDelta(0.9, 0.1), 0.2);   // forward across the join
+  close(shortestDelta(0.1, 0.9), -0.2);  // backward across the join
+  close(shortestDelta(0.5, 0.5), 0);
+});
+
+test("segmentsSwept lists every segment passed, in order, without skipping", async () => {
+  const { segmentsSwept } = await import("../../web/assets/scene-math.js");
+  assert.deepEqual(segmentsSwept(0.01, 0.3, 12), [0, 1, 2, 3]);
+  assert.deepEqual(segmentsSwept(0.95, 0.15, 12), [11, 0, 1]);      // across the join
+  assert.deepEqual(segmentsSwept(0.2, -0.13, 12), [2, 1, 0]);        // backwards
+  assert.deepEqual(segmentsSwept(0.5, 0, 12), [6]);
+  // a whole turn in one go still visits all twelve
+  assert.equal(new Set(segmentsSwept(0, 0.999, 12)).size, 12);
+});

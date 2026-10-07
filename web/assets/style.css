@@ -384,6 +384,32 @@ body.stage-locked { overflow: hidden; }
 .hero-scene .badge circle { fill: var(--ok); }
 .hero-scene .badge path { fill: none; stroke: #fff; stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; stroke-dasharray: 1; }
 
+/* You can drive the phone: a sideways drag is the scene's, an up-down swipe
+   still scrolls the page. */
+.hero-scene { position: relative; }
+.hero-scene svg { touch-action: pan-y; cursor: grab; user-select: none; -webkit-user-select: none;
+  -webkit-tap-highlight-color: transparent; border-radius: 24px; }
+.hero-scene.dragging svg, .hero-scene.dragging .phone-grip { cursor: grabbing; }
+.phone-grip { position: absolute; left: -28px; top: -28px; width: 56px; height: 56px; border-radius: 50%;
+  touch-action: none; cursor: grab; -webkit-tap-highlight-color: transparent; }
+@media (prefers-reduced-motion: reduce) { .phone-grip { display: none; } }
+.hero-scene svg:focus-visible { outline: 3px solid color-mix(in srgb, var(--brand) 45%, transparent); outline-offset: 4px; }
+.hero-scene .seg { transition: stroke 0.2s; }
+.scene-hint { margin: 6px 0 0; display: flex; justify-content: center; align-items: center; gap: 8px;
+  font-size: 0.88rem; font-weight: 650; color: var(--muted); min-height: 1.6em; }
+.scene-hint-text { display: inline-block; font-variant-numeric: tabular-nums; }
+.scene-hint-icon { width: 18px; height: 18px; border-radius: 50%; position: relative; flex: none;
+  background: color-mix(in srgb, var(--brand) 18%, transparent); }
+.scene-hint-icon::after { content: ""; position: absolute; inset: 5px; border-radius: 50%; background: var(--brand); }
+.scene-hint[data-kind="invite"] .scene-hint-icon { animation: hint-nudge 2.4s ease-in-out infinite; }
+.scene-hint[data-kind="count"] { color: var(--brand); }
+.scene-hint[data-kind="done"] { color: var(--ok); }
+.scene-hint[data-kind="done"] .scene-hint-icon { background: var(--ok); }
+.scene-hint[data-kind="done"] .scene-hint-icon::after { inset: 4px 6px 6px 5px; border-radius: 0; background: none;
+  border: solid #fff; border-width: 0 2px 2px 0; transform: rotate(45deg) translate(-1px, -1px); }
+@keyframes hint-nudge { 0%, 100% { transform: translateX(-6px); } 50% { transform: translateX(6px); } }
+@media (prefers-reduced-motion: reduce) { .scene-hint { display: none; } }
+
 /* The setup diagram's walking phones. */
 .diagram .walker rect { fill: var(--accent); stroke: var(--ink); stroke-width: 1.2; }
 .diagram .walker circle { fill: var(--ink); }
@@ -419,3 +445,38 @@ body.stage-locked { overflow: hidden; }
 /* Confetti on the last page. */
 .confetti-layer { position: fixed; inset: 0; pointer-events: none; z-index: 80; overflow: hidden; }
 .confetti-layer i { position: absolute; display: block; }
+
+/* ---- scroll and touch (interact.js) ------------------------------------- */
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden;
+  clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+
+/* Headings that arrive a word at a time: each word rises inside its own slot. */
+.word { display: inline-block; overflow: hidden; vertical-align: top; padding-bottom: 0.1em; margin-bottom: -0.1em; }
+.word > span { display: inline-block; transform-origin: 0 100%; }
+
+/* Numbered steps: a line runs down through the numbers and fills as you read. */
+ol.howto.rail { position: relative; }
+ol.howto.rail::before, ol.howto.rail::after { content: ""; position: absolute; width: 3px; border-radius: 3px;
+  left: calc(var(--rail-x, 15px) - 1.5px); top: var(--rail-top, 15px); height: var(--rail-h, 0px); pointer-events: none; }
+ol.howto.rail::before { background: color-mix(in srgb, var(--brand) 14%, transparent); }
+ol.howto.rail::after { background: linear-gradient(var(--brand), color-mix(in srgb, var(--brand) 60%, var(--accent)));
+  transform-origin: top; transform: scaleY(var(--rail-p, 0)); }
+ol.howto.rail > li { position: relative; z-index: 1; }
+ol.howto.rail > li::before { transition: background 0.3s, color 0.3s, box-shadow 0.3s; }
+ol.howto.rail > li.lit::before { background: var(--brand); color: var(--brand-ink);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 45%, transparent); animation: rail-pop 0.45s cubic-bezier(.3,1.6,.5,1); }
+@keyframes rail-pop { from { transform: scale(0.7); } to { transform: scale(1); } }
+
+/* The header lifts off the page once you scroll; long pages show how far down you are. */
+.site-header { transition: box-shadow 0.25s; }
+.site-header.lifted { box-shadow: 0 6px 20px -12px rgba(0, 0, 0, 0.35); }
+.read-progress { position: absolute; left: 0; right: 0; bottom: -1px; height: 3px; transform-origin: left;
+  transform: scaleX(0); background: linear-gradient(90deg, var(--brand), var(--accent)); pointer-events: none; }
+
+/* A soft light follows the mouse over cards and choices (computers with a mouse). */
+.card.spot, .choice.spot, .ack label.spot, .download a.spot {
+  background-image: radial-gradient(260px circle at var(--mx, 50%) var(--my, 50%),
+    color-mix(in srgb, var(--accent) 14%, transparent), transparent 70%); }
+
+/* The mat drawing's pieces turn and scale about their own middles. */
+.mat-sheet, .mat-seam, .mat-foot-at, .mat-sheet rect { transform-box: fill-box; transform-origin: center; }

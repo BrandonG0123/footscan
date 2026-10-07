@@ -13,18 +13,24 @@ export function matDiagram() {
     for (let y = y0 + 6; y < y1 - 10; y += 16) out += SQ(8, y) + SQ(103, y);
     return out;
   };
+  // Grouped by sheet so the drawing can tape itself together (interact.js).
   return `<svg viewBox="0 0 120 204" role="img" aria-label="Two printed sheets taped end to end, with a foot standing in the middle">
-    <rect x="4" y="96" width="112" height="90" rx="2" fill="var(--surface)" stroke="var(--line)"/>
-    <rect x="4" y="4" width="112" height="90" rx="2" fill="var(--surface)" stroke="var(--line)"/>
-    ${edge(96, 186)}${edge(4, 94)}
-    ${SQ(30, 172)}${SQ(52, 172)}${SQ(74, 172)}
-    ${SQ(30, 8)}${SQ(52, 8)}${SQ(74, 8)}
-    <g transform="translate(11.5 48) scale(0.48)">${footSvg({ cls: "mat-foot" })}</g>
-    <line x1="4" y1="95" x2="116" y2="95" stroke="var(--brand)" stroke-width="1.5" stroke-dasharray="4 3"/>
-    <text x="60" y="32" text-anchor="middle" font-size="6.5" fill="var(--muted)">sheet 2 · toes</text>
-    <text x="60" y="166" text-anchor="middle" font-size="6.5" fill="var(--muted)">sheet 1 · heel</text>
-    <line x1="30" y1="196" x2="48" y2="196" stroke="var(--brand)" stroke-width="1.5" stroke-dasharray="4 3"/>
-    <text x="53" y="198" font-size="6.5" fill="var(--brand)">tape the sheets here</text>
+    <g class="mat-sheet sheet-1">
+      <rect x="4" y="96" width="112" height="90" rx="2" fill="var(--surface)" stroke="var(--line)"/>
+      ${edge(96, 186)}${SQ(30, 172)}${SQ(52, 172)}${SQ(74, 172)}
+      <text x="60" y="166" text-anchor="middle" font-size="6.5" fill="var(--muted)">sheet 1 · heel</text>
+    </g>
+    <g class="mat-sheet sheet-2">
+      <rect x="4" y="4" width="112" height="90" rx="2" fill="var(--surface)" stroke="var(--line)"/>
+      ${edge(4, 94)}${SQ(30, 8)}${SQ(52, 8)}${SQ(74, 8)}
+      <text x="60" y="32" text-anchor="middle" font-size="6.5" fill="var(--muted)">sheet 2 · toes</text>
+    </g>
+    <g class="mat-foot-at"><g transform="translate(11.5 48) scale(0.48)">${footSvg({ cls: "mat-foot" })}</g></g>
+    <line class="mat-seam" x1="4" y1="95" x2="116" y2="95" stroke="var(--brand)" stroke-width="1.5" stroke-dasharray="4 3"/>
+    <g class="mat-legend">
+      <line x1="30" y1="196" x2="48" y2="196" stroke="var(--brand)" stroke-width="1.5" stroke-dasharray="4 3"/>
+      <text x="53" y="198" font-size="6.5" fill="var(--brand)">tape the sheets here</text>
+    </g>
   </svg>`;
 }
 

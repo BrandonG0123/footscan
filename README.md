@@ -166,10 +166,13 @@ per scan following `data/templates/scan_landmarks.json`, then
   nested variance decomposition (session / capture / pick), condition
   differences, arch height flexibility, gate
 - `src/footscan/report.py` — markdown report, safety banner included
-- `web/assets/fx.js`, `scene.js`, `ruler.js` — the customer pages' movement,
+- `web/assets/fx.js`, `scene.js`, `ruler.js`, `interact.js` — the customer pages' movement,
   built on [Motion](https://motion.dev) (vendored in `web/vendor/motion/`):
-  the looping hero scene, tick and tap feedback, view transitions, the live
-  ruler for the mat check, the upload deck and the finish. With "reduce
+  the hero scene (it plays by itself, or you drag the phone round the foot
+  and light all twelve sides), tick and tap feedback, view transitions,
+  scroll parallax, step rails that light as you read, the live ruler for the
+  mat check, the self-taping mat drawing, the two-week wearing chart, the
+  upload deck and the finish. With "reduce
   motion" on, or if Motion fails to load, the pages work the same and stand
   still
 - `tests/` — geometry checked against hand-built feet with known answers

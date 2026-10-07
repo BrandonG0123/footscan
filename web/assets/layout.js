@@ -100,9 +100,10 @@ function mountLayout() {
   addPageGlow();
   if (area === "customer") {
     // Customer pages: springs, ripples and scroll reveals from Motion (fx.js).
-    import("./fx.js").then((fx) => {
+    Promise.all([import("./fx.js"), import("./interact.js")]).then(([fx, interact]) => {
       fx.initPage();
       fx.revealOnScroll("main > section, main > .layout, [data-reveal] > *");
+      interact.initInteract();
     });
   } else {
     initReveal();

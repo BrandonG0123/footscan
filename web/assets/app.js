@@ -9,6 +9,7 @@ import { DIAGRAM_CSS, matDiagram, phonePathDiagram } from "./diagrams.js";
 import { unlockAudio } from "./cues.js";
 import * as fx from "./fx.js";
 import { animatePathDiagram, mountScene } from "./scene.js";
+import { assembleMat, heroParallax } from "./interact.js";
 import { mountRuler } from "./ruler.js";
 
 const $ = (id) => document.getElementById(id);
@@ -23,6 +24,7 @@ $("map-css").textContent = DIAGRAM_CSS;
 $("mat-diagram").innerHTML = matDiagram();
 $("path-diagram").innerHTML = phonePathDiagram();
 mountScene($("hero-scene"));
+heroParallax($("hero-scene"), document.querySelector(".hero-copy"));
 animatePathDiagram($("path-diagram"));
 fx.updateSteps($("steps"), 0); // first step: you
 
@@ -55,6 +57,8 @@ function show(view, step, dir) {
   if (view === "scan") return;
   const d = dir ?? Math.sign(VIEW_ORDER.indexOf(view) - VIEW_ORDER.indexOf(from));
   fx.enterView($(`v-${view}`), d);
+  // Scroll effects re-measure (the page may not scroll at all to tell them).
+  document.dispatchEvent(new Event("fx:view"));
 }
 
 async function api(path, { method = "POST", json, body, headers = {} } = {}) {
@@ -288,11 +292,9 @@ function renderPlan() {
 
 const ruler = mountRuler($("ruler-view"), $("mat-check"), () => matBars);
 
-// The mat drawing assembles itself: sheets, then the black squares one by one.
+// The mat drawing tapes itself together when it scrolls into view (or is tapped).
 function popMatDiagram() {
-  if (!fx.enabled()) return;
-  const squares = [...$("mat-diagram").querySelectorAll("rect[width='9']")];
-  fx.enter(squares, { each: 0.018, distance: 6, blur: false, delay: 0.3 });
+  assembleMat($("mat-diagram"));
 }
 
 
@@ -603,8 +605,18 @@ $("btn-send").addEventListener("click", async () => {
   celebrate();
 });
 
-// The finish: the tick draws itself, then confetti from it.
+// The finish: the tick draws itself, then confetti from it. Tap it for more.
+let lastConfetti = 0;
+$("big-check").addEventListener("click", () => {
+  if (performance.now() - lastConfetti < 900) return;
+  lastConfetti = performance.now();
+  fx.bounce($("big-check"), { scale: 1.12 });
+  fx.confetti($("big-check"), { count: 50 });
+  fx.buzz([8, 40, 8]);
+});
+
 function celebrate() {
+  lastConfetti = performance.now();
   const check = $("big-check");
   fx.draw(check.querySelector("circle"), { duration: 0.6 });
   fx.draw(check.querySelector("path"), { delay: 0.45, duration: 0.4 });

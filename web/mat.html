@@ -24,14 +24,14 @@
     th { font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
   </style>
 </head>
-<body data-area="customer">
+<body data-area="customer" data-longread>
 <main class="wrap">
   <p class="eyebrow">Scan mat</p>
   <h1 style="font-size:clamp(1.8rem,4vw,2.6rem);margin:0 0 10px">Print the paper mat</h1>
   <p class="muted" style="max-width:62ch;font-size:1.05rem">A photo can show the shape of your foot, but not how big
     it is. The black squares are a known size, so they work like a ruler in the picture. You print two pages on plain
     paper. Black and white is fine.</p>
-  <div class="diagram" id="mat-diagram" style="max-width:200px;margin:18px auto 0"></div>
+  <div class="diagram" id="mat-diagram" data-parallax="0.12" style="max-width:200px;margin:18px auto 0"></div>
 
   <div class="download stagger">
     <a href="/mat/footscan-mat-letter.pdf">
@@ -103,6 +103,7 @@
   import { DIAGRAM_CSS, matDiagram } from "/assets/diagrams.js";
   document.head.insertAdjacentHTML("beforeend", `<style>${DIAGRAM_CSS}</style>`);
   document.getElementById("mat-diagram").innerHTML = matDiagram();
+  import("/assets/interact.js").then(({ assembleMat }) => assembleMat(document.getElementById("mat-diagram")));
 </script>
 </body>
 </html>

@@ -19,7 +19,7 @@ const fine = () => fineQuery.matches;
 // Springs: "settle" for things arriving, "pop" for answers to a tap.
 export const SETTLE = { type: "spring", visualDuration: 0.55, bounce: 0.18 };
 export const POP = { type: "spring", visualDuration: 0.3, bounce: 0.5 };
-const SOFT = { type: "spring", visualDuration: 0.4, bounce: 0.1 };
+export const SOFT = { type: "spring", visualDuration: 0.4, bounce: 0.1 };
 
 const NO_TOUCH = "#v-scan, .stage";
 const touchesStage = (el) => !!el.closest(NO_TOUCH) || !!el.querySelector?.(".stage");
@@ -125,9 +125,28 @@ function ripple(el, x, y) {
   animate(dot, { scale: [0, 1], opacity: [0.32, 0] }, { duration: 0.6, ease: "easeOut" }).then(() => dot.remove(), () => dot.remove());
 }
 
-/** Cards that lean toward the mouse, a few degrees, on computers with a mouse. */
+/**
+ * Cards that lean toward the mouse, a few degrees, on computers with a mouse;
+ * on a phone, a card leans under your finger while you press it.
+ */
 export function initTilt(selector = ".tilt") {
   if (!available) return;
+  document.addEventListener("pointerdown", (e) => {
+    if (!enabled() || e.pointerType === "mouse") return;
+    const el = e.target.closest(selector);
+    if (!el || touchesStage(el)) return;
+    const r = el.getBoundingClientRect();
+    const px = (e.clientX - r.left) / r.width - 0.5;
+    const py = (e.clientY - r.top) / r.height - 0.5;
+    animate(el, { rotateY: px * 7, rotateX: -py * 6, scale: 0.985, transformPerspective: 700 }, SOFT);
+    const up = () => {
+      settle(animate(el, { rotateY: 0, rotateX: 0, scale: 1 }, POP), [el], ["transform"]);
+      removeEventListener("pointerup", up);
+      removeEventListener("pointercancel", up);
+    };
+    addEventListener("pointerup", up);
+    addEventListener("pointercancel", up);
+  });
   document.addEventListener("pointermove", (e) => {
     if (!enabled() || !fine()) return;
     const el = e.target.closest(selector);
@@ -144,6 +163,30 @@ export function initTilt(selector = ".tilt") {
     el._tilting = false;
     settle(animate(el, { rotateY: 0, rotateX: 0 }, SOFT), [el], ["transform"]);
   });
+}
+
+/** A soft light that follows the mouse across cards and choices. */
+export function initSpotlight(selector = ".card, .choice, .ack label, .download a") {
+  if (!available) return;
+  let lastEl = null;
+  document.addEventListener("pointermove", (e) => {
+    if (!enabled() || !fine() || e.pointerType !== "mouse") return;
+    const el = e.target.closest?.(selector);
+    if (lastEl && lastEl !== el) lastEl.classList.remove("spot");
+    lastEl = el;
+    if (!el || touchesStage(el)) return;
+    const r = el.getBoundingClientRect();
+    el.style.setProperty("--mx", `${e.clientX - r.left}px`);
+    el.style.setProperty("--my", `${e.clientY - r.top}px`);
+    el.classList.add("spot");
+  }, { passive: true });
+  document.addEventListener("pointerleave", () => lastEl?.classList.remove("spot"));
+}
+
+/** A tiny buzz under the finger, on phones that can (Android); silent elsewhere. */
+export function buzz(pattern = 6) {
+  if (!enabled()) return;
+  try { navigator.vibrate?.(pattern); } catch { /* not allowed here: fine */ }
 }
 
 /** Primary buttons drift a few pixels toward the cursor, as if magnetic. */
@@ -365,8 +408,16 @@ export function initPage() {
   initTilt();
   initMagnetic();
   for (const g of document.querySelectorAll(".segmented")) initSegmented(g);
+  initSpotlight();
   document.addEventListener("change", (e) => {
-    if (e.target.matches(".ack input, .confirm input, .tickable input")) popTick(e.target);
+    const t = e.target;
+    if (t.matches(".ack input, .confirm input, .tickable input")) { popTick(t); buzz(t.checked ? 8 : 4); }
+    else if (t.matches(".choice input") && enabled()) {
+      // the dot (or tick) springs in, and the card gives a little nod
+      animate(t, { scale: [0.55, 1] }, POP);
+      if (t.checked) settle(animate(t.closest(".choice"), { x: [0, 3, 0] }, { duration: 0.25 }), [t.closest(".choice")], ["transform"]);
+      buzz(5);
+    } else if (t.matches(".segmented input")) buzz(5);
   });
   parallaxGlow();
 }

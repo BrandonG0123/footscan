@@ -19,9 +19,30 @@
     .day .flag { grid-column: 1 / -1; margin: 0; font-size: 0.9rem; font-weight: 600; }
     .stop-banner { display: grid; gap: 10px; }
     .stop-banner h2 { color: var(--stop); margin: 0; }
+    /* The two weeks at a glance: one bar per day, as tall as that day's most. */
+    .ramp-card { margin-top: 20px; }
+    .ramp-card h2 { font-size: 1.15rem; margin: 0 0 2px; }
+    .ramp { display: grid; grid-template-columns: repeat(14, 1fr); grid-template-rows: auto 132px; column-gap: 4px; margin-top: 12px; }
+    .ramp-cap { grid-row: 1; align-self: end; text-align: center; font-size: 0.72rem; font-weight: 700; color: var(--brand);
+      white-space: nowrap; border-bottom: 2px solid color-mix(in srgb, var(--brand) 30%, transparent); margin: 0 1px 6px; padding-bottom: 2px; }
+    .ramp-day { grid-row: 2; height: 100%; display: flex; flex-direction: column; justify-content: flex-end; align-items: stretch;
+      gap: 5px; background: none; border: 0; padding: 0; cursor: pointer; font: inherit; color: inherit; -webkit-tap-highlight-color: transparent; }
+    .ramp-day .bar { display: block; min-height: 8%; border-radius: 6px 6px 2px 2px; transform-origin: bottom;
+      background: color-mix(in srgb, var(--brand) 22%, var(--surface)); transition: background 0.2s; }
+    .ramp-day.logged .bar { background: color-mix(in srgb, var(--brand) 60%, var(--surface)); }
+    .ramp-day.today .bar { background: var(--brand); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 55%, transparent); }
+    .ramp-day:hover .bar, .ramp-day:focus-visible .bar { background: color-mix(in srgb, var(--accent) 70%, var(--brand)); }
+    .ramp-day:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; border-radius: 6px; }
+    .ramp-num { text-align: center; font-size: 0.72rem; color: var(--muted); font-variant-numeric: tabular-nums; }
+    .ramp-day.today .ramp-num { color: var(--brand); font-weight: 700; }
+    .ramp.stopped .bar { background: color-mix(in srgb, var(--muted) 25%, var(--surface)) !important; box-shadow: none !important; }
+    @media (prefers-reduced-motion: no-preference) {
+      .day.flash { animation: day-flash 1.2s ease-out; }
+      @keyframes day-flash { 0%, 30% { box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 70%, transparent); } 100% { box-shadow: var(--shadow); } }
+    }
   </style>
 </head>
-<body data-area="customer">
+<body data-area="customer" data-longread>
 <main class="wrap">
   <p class="eyebrow">After you get your insole</p>
   <h1 style="font-size:clamp(1.8rem,4vw,2.6rem)">Wearing your insole</h1>
@@ -44,6 +65,13 @@
         <button class="btn secondary" id="btn-resume" disabled>Start again</button>
       </div>
     </details>
+  </div>
+
+  <div class="card ramp-card">
+    <h2>Your two weeks</h2>
+    <p class="hint" style="margin:0">Each bar is the most to wear that day. It goes up slowly on purpose. Tap a day to
+      go to it.</p>
+    <div class="ramp" id="ramp"></div>
   </div>
 
   <div class="layout" style="margin-top:20px">
@@ -167,7 +195,37 @@
         </div></div>`);
     }
     $("days").innerHTML = html.join("");
+    renderRamp(today);
   }
+
+  // The plan at a glance, drawn from the same SCHEDULE as the day list.
+  function renderRamp(today) {
+    const caps = SCHEDULE.map(([a, b, label]) =>
+      `<span class="ramp-cap" style="grid-column:${a} / ${b + 1}">${label}</span>`).join("");
+    const bars = [];
+    for (let d = 1; d <= 14; d++) {
+      const [, , label] = targetFor(d);
+      const logged = state.days[d]?.hours != null && state.days[d].hours !== "";
+      const cls = [d === today ? "today" : "", logged ? "logged" : ""].join(" ");
+      bars.push(`<button type="button" class="ramp-day ${cls}" data-day="${d}" style="grid-column:${d}"
+        aria-label="Day ${d}: up to ${label === "All day" ? "all day" : label.replace(" h", " hours")}${d === today ? ", today" : ""}. Go to day ${d}.">
+        <span class="bar" style="height:${(100 * hoursCap(label)) / 16}%"></span><span class="ramp-num">${d}</span></button>`);
+    }
+    $("ramp").innerHTML = caps + bars.join("");
+    $("ramp").classList.toggle("stopped", !!state.stopped);
+  }
+
+  $("ramp").addEventListener("click", (e) => {
+    const btn = e.target.closest(".ramp-day");
+    if (!btn) return;
+    const card = $(`h${btn.dataset.day}`)?.closest(".day");
+    if (!card) return;
+    const still = matchMedia("(prefers-reduced-motion: reduce)").matches;
+    card.scrollIntoView({ behavior: still ? "auto" : "smooth", block: "center" });
+    card.classList.remove("flash");
+    void card.offsetWidth; // restart the highlight if it's tapped twice
+    card.classList.add("flash");
+  });
 
   $("days").addEventListener("change", (ev) => {
     const el = ev.target;
@@ -196,6 +254,7 @@
   });
 
   render();
+  import("/assets/interact.js").then(({ growBars }) => growBars($("ramp")));
 </script>
 </body>
 </html>
