@@ -184,7 +184,8 @@ struct ScanDetailView: View {
                             Task { await library.send(scan, studio: studio, loadKg: parsedLoad) }
                         }
                         .buttonStyle(.borderedProminent)
-                        .disabled(rec.subject.isFoot && parsedLoad == nil && rec.loadKg == nil)
+                        // the reading on screen is what gets sent: never fall back to an older saved one
+                        .disabled(rec.subject.isFoot && parsedLoad == nil)
                     } else {
                         // already there: sending again makes a second copy, so it's a quiet option
                         Button("Send another copy") {
