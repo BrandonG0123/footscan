@@ -95,41 +95,72 @@ private struct Controls: View {
     @Binding var passes: Int
     var onCancel: () -> Void
 
+    /// Where you are: 0 point at it, 1 fit the box, 2 walk round.
+    private var stepIndex: Int {
+        switch session.state {
+        case .ready, .initializing: 0
+        case .detecting: 1
+        default: 2
+        }
+    }
+
     var body: some View {
         VStack {
             HStack {
-                Button("Cancel", action: onCancel)
-                    .buttonStyle(.bordered).tint(.white)
+                Button(action: onCancel) {
+                    Image(systemName: "xmark").font(.headline).frame(width: 40, height: 40)
+                        .background(.ultraThinMaterial, in: Circle())
+                }
+                .tint(.white)
+                .accessibilityLabel("Cancel this scan")
                 Spacer()
                 if session.state == .capturing {
-                    Text("\(session.numberOfShotsTaken) photos")
-                        .font(.callout.monospacedDigit().weight(.semibold))
-                        .padding(.horizontal, 12).padding(.vertical, 6)
-                        .background(.ultraThinMaterial, in: Capsule())
+                    HStack(spacing: 6) {
+                        Image(systemName: "camera.fill").font(.caption)
+                        Text("\(session.numberOfShotsTaken)")
+                            .font(.callout.monospacedDigit().weight(.bold))
+                            .contentTransition(.numericText(value: Double(session.numberOfShotsTaken)))
+                        Text("photos").font(.callout)
+                    }
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 12).padding(.vertical, 8)
+                    .background(.ultraThinMaterial, in: Capsule())
+                    .animation(.snappy, value: session.numberOfShotsTaken)
+                    .transition(.move(edge: .top).combined(with: .opacity))
                 }
             }
             .padding()
             Spacer()
-            VStack(spacing: 12) {
-                if let tip = feedbackText {
-                    Text(tip)
-                        .font(.headline)
-                        .padding(.horizontal, 14).padding(.vertical, 8)
-                        .background(.orange.opacity(0.9), in: Capsule())
-                        .foregroundStyle(.black)
-                        .transition(.opacity.combined(with: .scale(scale: 0.9)))
-                }
+            if let tip = feedbackText {
+                Label(tip, systemImage: "exclamationmark.triangle.fill")
+                    .font(.headline)
+                    .padding(.horizontal, 14).padding(.vertical, 9)
+                    .background(Color.fsAccent, in: Capsule())
+                    .foregroundStyle(Color.fsAccentInk)
+                    .transition(.scale(scale: 0.85).combined(with: .opacity))
+                    .padding(.bottom, 10)
+            }
+            VStack(spacing: 14) {
+                StepDots(index: stepIndex)
                 Text(instruction)
                     .font(.title3.weight(.semibold))
                     .multilineTextAlignment(.center)
                     .foregroundStyle(.white)
-                    .shadow(radius: 4)
+                    .contentTransition(.opacity)
+                    .fixedSize(horizontal: false, vertical: true)
                 buttons
             }
-            .padding()
-            .padding(.bottom, 12)
-            .animation(.spring(duration: 0.3), value: feedbackText)
+            .padding(18)
+            .background(.ultraThinMaterial.opacity(0.92), in: RoundedRectangle(cornerRadius: 28, style: .continuous))
+            .environment(\.colorScheme, .dark)
+            .padding(.horizontal, 12)
+            .padding(.bottom, 8)
         }
+        .animation(.spring(duration: 0.35, bounce: 0.3), value: feedbackText)
+        .animation(.spring(duration: 0.45, bounce: 0.2), value: stepIndex)
+        .sensoryFeedback(.selection, trigger: session.numberOfShotsTaken)
+        .sensoryFeedback(.success, trigger: session.userCompletedScanPass)
+        .sensoryFeedback(.impact(weight: .medium), trigger: stepIndex)
     }
 
     private var instruction: String {
@@ -153,21 +184,21 @@ private struct Controls: View {
         case .ready:
             big("Continue") { _ = session.startDetecting() }
         case .detecting:
-            HStack {
+            HStack(spacing: 10) {
                 Button("Find it again") { session.resetDetection() }
-                    .buttonStyle(.bordered).tint(.white)
+                    .buttonStyle(SecondaryButtonStyle())
                 big("Start capture") { session.startCapturing() }
             }
         case .capturing:
-            HStack {
+            HStack(spacing: 10) {
                 if session.userCompletedScanPass {
                     Button("Another lap") {
                         passes += 1
                         session.beginNewScanPass()
                     }
-                    .buttonStyle(.bordered).tint(.white)
+                    .buttonStyle(SecondaryButtonStyle())
                 }
-                big("Finish") { session.finish() }
+                big(session.numberOfShotsTaken < 20 ? "Keep going…" : "Finish") { session.finish() }
                     .disabled(session.numberOfShotsTaken < 20)
             }
         default:
@@ -176,10 +207,8 @@ private struct Controls: View {
     }
 
     private func big(_ title: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Text(title).font(.headline).frame(minWidth: 160).padding(.vertical, 6)
-        }
-        .buttonStyle(.borderedProminent)
+        Button(title, action: action)
+            .buttonStyle(PrimaryButtonStyle(tint: .fsAccent, ink: .fsAccentInk))
     }
 
     /// Object Capture's own warnings, in footscan's words. The most useful one wins.
@@ -192,5 +221,30 @@ private struct Controls: View {
         if f.contains(.objectTooFar) { return "Move a little closer." }
         if f.contains(.outOfFieldOfView) { return "Keep it in the middle of the screen." }
         return nil
+    }
+}
+
+/// Three dots and labels: point at it, fit the box, walk round.
+private struct StepDots: View {
+    let index: Int
+    private let labels = ["Point", "Box", "Walk round"]
+
+    var body: some View {
+        HStack(spacing: 8) {
+            ForEach(0..<3, id: \.self) { i in
+                HStack(spacing: 6) {
+                    Circle()
+                        .fill(i <= index ? Color.fsAccent : Color.white.opacity(0.3))
+                        .frame(width: 8, height: 8)
+                    if i == index {
+                        Text(labels[i]).font(.caption.weight(.bold)).foregroundStyle(.white)
+                            .transition(.opacity.combined(with: .scale(scale: 0.8, anchor: .leading)))
+                    }
+                }
+                if i < 2 { Capsule().fill(i < index ? Color.fsAccent : Color.white.opacity(0.25)).frame(width: 18, height: 2) }
+            }
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Step \(index + 1) of 3: \(labels[index])")
     }
 }

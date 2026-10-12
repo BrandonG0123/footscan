@@ -25,12 +25,22 @@ enum Subject: String, CaseIterable, Identifiable, Codable {
 
     var isFoot: Bool { self == .rightFoot || self == .leftFoot }
 
+    /// For the small cards on the home screen.
+    var shortLabel: String {
+        switch self {
+        case .calibration: "Calibration"
+        case .rightFoot: "Right foot"
+        case .leftFoot: "Left foot"
+        case .other: "Anything"
+        }
+    }
+
     var label: String {
         switch self {
         case .calibration: "Calibration object"
         case .rightFoot: "Right foot"
         case .leftFoot: "Left foot"
-        case .other: "Something else"
+        case .other: "Anything else"
         }
     }
 
@@ -77,6 +87,7 @@ struct Scan: Identifiable, Hashable {
     var usdz: URL { folder.appending(path: "model.usdz") }
     var obj: URL { folder.appending(path: "model.obj") }
     var recordURL: URL { folder.appending(path: "scan.json") }
+    var thumbnail: URL { folder.appending(path: "thumb.png") }
 
     var record: ScanRecord? {
         guard let data = try? Data(contentsOf: recordURL) else { return nil }
@@ -132,6 +143,12 @@ enum ScanStore {
 
     static func delete(_ scan: Scan) {
         try? FileManager.default.removeItem(at: scan.folder)
+    }
+
+    /// A readable name for a hardware model code. Only codes confirmed on a
+    /// real device are listed; anything else shows the code itself.
+    static func phoneName(_ code: String) -> String {
+        ["iPhone18,1": "iPhone 17 Pro"][code] ?? code
     }
 
     /// The hardware model, e.g. "iPhone18,1", so results can be compared across phones.

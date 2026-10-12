@@ -11,11 +11,16 @@ import SwiftUI
 @main
 struct FootscanCaptureApp: App {
     @State private var studio = StudioConnection()
+    @State private var settings = AppSettings()
+    @State private var library = ScanLibrary()
 
     var body: some Scene {
         WindowGroup {
-            HomeView()
+            RootView()
                 .environment(studio)
+                .environment(settings)
+                .environment(library)
+                .tint(.fsBrand)
         }
     }
 }

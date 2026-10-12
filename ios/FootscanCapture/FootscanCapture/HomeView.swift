@@ -1,70 +1,78 @@
-// The home screen: pick what you're scanning, start, and see past scans.
-import QuickLook
+// Home: start a scan in one tap, and see every scan with where it's at.
+//
+// The first time, the intro runs instead (OnboardingView). Before the first
+// scan of each kind, a short "get ready" list (PrepSheet); after that, Start
+// goes straight to the camera, and the model is built (and sent, with a
+// studio connected) by itself.
 import RealityKit
 import SwiftUI
 
+struct RootView: View {
+    @Environment(AppSettings.self) private var settings
+
+    var body: some View {
+        ZStack {
+            if settings.onboarded {
+                HomeView().transition(.opacity.combined(with: .scale(scale: 1.04)))
+            } else {
+                OnboardingView().transition(.opacity)
+            }
+        }
+        .animation(.smooth(duration: 0.5), value: settings.onboarded)
+    }
+}
+
 struct HomeView: View {
-    // Starts on "Something else", so a calibration-object scan is always a deliberate choice.
-    @State private var subject: Subject = .other
-    @State private var scans: [Scan] = ScanStore.all()
+    @Environment(AppSettings.self) private var settings
+    @Environment(StudioConnection.self) private var studio
+    @Environment(ScanLibrary.self) private var library
+
+    @AppStorage("lastSubject") private var subjectRaw = Subject.other.rawValue
     @State private var capturing: Scan?
     @State private var path: [Scan] = []
-    @State private var autoBuild: Scan?
-    @State private var error: String?
+    @State private var prep: PrepRequest?
+    @State private var showSettings = false
     @State private var showStudio = false
-    @Environment(StudioConnection.self) private var studio
+    @State private var error: String?
+
+    struct PrepRequest: Identifiable {
+        let subject: Subject
+        let mustTick: Bool
+        var id: String { subject.rawValue + (mustTick ? "!" : "") }
+    }
+
+    private var subject: Subject { Subject(rawValue: subjectRaw) ?? .other }
 
     var body: some View {
         NavigationStack(path: $path) {
-            List {
-                Section {
-                    SafetyNote()
+            ScrollView {
+                VStack(alignment: .leading, spacing: 22) {
+                    hero
+                    newScan
+                    scansSection
                 }
-                Section("What are you scanning?") {
-                    Picker("Scanning", selection: $subject) {
-                        ForEach(Subject.allCases) { Text($0.label).tag($0) }
-                    }
-                    .pickerStyle(.menu)
-                    Text(subject.howTo).font(.callout).foregroundStyle(.secondary)
-                    Button {
-                        start()
-                    } label: {
-                        Label("Start scanning", systemImage: "camera.viewfinder")
-                            .frame(maxWidth: .infinity).padding(.vertical, 6)
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(!ObjectCaptureSession.isSupported)
-                    if !ObjectCaptureSession.isSupported {
-                        Text("This device has no LiDAR, so it can't run Object Capture. Use an iPhone Pro or iPad Pro.")
-                            .font(.footnote).foregroundStyle(.red)
-                    }
-                    if let error { Text(error).font(.footnote).foregroundStyle(.red) }
-                }
-                Section("Scans on this phone") {
-                    if scans.isEmpty {
-                        Text("None yet.").foregroundStyle(.secondary)
-                    }
-                    ForEach(scans) { scan in
-                        NavigationLink(value: scan) { ScanRow(scan: scan) }
-                    }
-                    .onDelete { idx in
-                        idx.map { scans[$0] }.forEach(ScanStore.delete)
-                        scans = ScanStore.all()
-                    }
-                }
+                .padding(.horizontal, 20)
+                .padding(.bottom, 40)
             }
-            .navigationTitle("footscan capture")
+            .scrollIndicators(.hidden)
+            .background(Color.fsBackground.ignoresSafeArea())
+            .navigationTitle("footscan")
             .toolbar {
+                ToolbarItem(placement: .topBarLeading) { studioPill }
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button { showStudio = true } label: {
-                        Label("Studio", systemImage: studio.link == nil ? "desktopcomputer" : "desktopcomputer.and.arrow.down")
-                    }
+                    Button { showSettings = true } label: { Image(systemName: "gearshape.fill") }
+                        .accessibilityLabel("Settings")
                 }
             }
-            .sheet(isPresented: $showStudio) { StudioView() }
-            .navigationDestination(for: Scan.self) { scan in
-                ScanDetail(scan: scan, buildNow: autoBuild == scan, onChange: { scans = ScanStore.all() })
-            }
+            .navigationDestination(for: Scan.self) { ScanDetailView(scan: $0) }
+            .refreshable { library.reload() }
+        }
+        .tint(.fsBrand)
+        .sheet(isPresented: $showSettings) { SettingsView() }
+        .sheet(isPresented: $showStudio) { StudioView() }
+        .sheet(item: $prep) { req in
+            PrepSheet(subject: req.subject, mustTick: req.mustTick) { begin(req.subject) }
+                .presentationDragIndicator(.visible)
         }
         // The studio's code, read by the iPhone's own Camera app, opens here.
         .onOpenURL { url in
@@ -74,19 +82,156 @@ struct HomeView: View {
         .fullScreenCover(item: $capturing) { scan in
             CaptureView(scan: scan, onDone: { done in
                 capturing = nil
-                scans = ScanStore.all()
-                autoBuild = done
+                if let s = done.record?.subject { settings.markPrepared(s) }
+                library.reload()
                 path = [done]
+                Task { await library.finish(done, settings: settings, studio: studio) }
             }, onCancel: {
                 capturing = nil
-                scans = ScanStore.all()
+                library.reload()
             })
         }
     }
 
+    // MARK: sections
+
+    private var hero: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            OrbitScene(interactive: false)
+                .frame(height: 210)
+                .frame(maxWidth: .infinity)
+                .visualEffect { content, proxy in
+                    // drifts and fades as the page scrolls up under it
+                    // shrinks back and fades as the page scrolls up; stretches a little on pull-down
+                    let y: CGFloat = proxy.frame(in: .scrollView).minY
+                    let up: CGFloat = min(1, max(0, -y / 200))
+                    let grow: CGFloat = y > 0 ? 1 + y / 900 : 1 - up * 0.18
+                    return content.scaleEffect(grow, anchor: .bottom).opacity(Double(1 - up)).blur(radius: up * 4)
+                }
+            SafetyStrip()
+        }
+    }
+
+    private var newScan: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("New scan").font(.system(.title2, design: .rounded, weight: .bold))
+            ScrollViewReader { reader in
+            ScrollView(.horizontal) {
+                HStack(spacing: 12) {
+                    ForEach(Subject.allCases) { s in
+                        SubjectCard(subject: s, selected: s == subject, firstTime: !settings.hasPrepared(s)) {
+                            withAnimation(.spring(duration: 0.35, bounce: 0.35)) { subjectRaw = s.rawValue }
+                        }
+                        .scrollTransition(.interactive, axis: .horizontal) { content, phase in
+                            content
+                                .scaleEffect(phase.isIdentity ? 1 : 0.9)
+                                .rotation3DEffect(.degrees(phase.value * -14), axis: (0, 1, 0), perspective: 0.6)
+                                .opacity(phase.isIdentity ? 1 : 0.6)
+                        }
+                        .id(s.rawValue)
+                    }
+                }
+                .scrollTargetLayout()
+                .padding(.vertical, 6)
+            }
+            .scrollTargetBehavior(.viewAligned)
+            .scrollIndicators(.hidden)
+            .contentMargins(.horizontal, 2, for: .scrollContent)
+            .sensoryFeedback(.selection, trigger: subjectRaw)
+            .onAppear { reader.scrollTo(subjectRaw, anchor: .center) }
+            .onChange(of: subjectRaw) { _, new in withAnimation(.smooth) { reader.scrollTo(new, anchor: .center) } }
+            }
+
+            Button {
+                start()
+            } label: {
+                Label(ObjectCaptureSession.isSupported ? "Scan \(subject.label.lowercased())" : "Needs an iPhone with LiDAR",
+                      systemImage: "camera.viewfinder")
+                    .contentTransition(.numericText())
+            }
+            .buttonStyle(PrimaryButtonStyle())
+            .disabled(!ObjectCaptureSession.isSupported)
+            .animation(.smooth, value: subjectRaw)
+
+            HStack {
+                if settings.hasPrepared(subject) {
+                    Button { prep = PrepRequest(subject: subject, mustTick: false) } label: {
+                        Label("Tips", systemImage: "lightbulb")
+                    }
+                    .font(.subheadline.weight(.semibold))
+                } else {
+                    Label("A short get-ready list comes first, this once.", systemImage: "checklist")
+                        .font(.footnote).foregroundStyle(Color.fsMuted)
+                }
+                Spacer()
+            }
+            if let error { Text(error).font(.footnote).foregroundStyle(Color.fsStop) }
+        }
+    }
+
+    private var scansSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .firstTextBaseline) {
+                Text("Your scans").font(.system(.title2, design: .rounded, weight: .bold))
+                Spacer()
+                Text("\(library.scans.count)")
+                    .font(.subheadline.monospacedDigit().weight(.semibold))
+                    .foregroundStyle(Color.fsMuted)
+                    .contentTransition(.numericText())
+            }
+            if library.scans.isEmpty {
+                VStack(spacing: 10) {
+                    Image(systemName: "cube.transparent")
+                        .font(.system(size: 40, weight: .light))
+                        .foregroundStyle(Color.fsBrand)
+                        .symbolEffect(.pulse)
+                    Text("No scans yet").font(.headline)
+                    Text("Your first one will appear here, with its 3D model.").font(.subheadline).foregroundStyle(Color.fsMuted)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 30)
+                .card()
+            } else {
+                LazyVStack(spacing: 12) {
+                    ForEach(library.scans) { scan in
+                        NavigationLink(value: scan) { ScanCard(scan: scan) }
+                            .buttonStyle(PressableStyle())
+                            .scrollReveal()
+                            .contextMenu {
+                                if scan.hasOBJ { ShareLink(item: scan.obj) { Label("Share model.obj", systemImage: "square.and.arrow.up") } }
+                                Button(role: .destructive) { withAnimation { library.delete(scan) } } label: {
+                                    Label("Delete", systemImage: "trash")
+                                }
+                            }
+                    }
+                }
+                .animation(.spring(duration: 0.4), value: library.scans)
+            }
+        }
+    }
+
+    private var studioPill: some View {
+        Button { showStudio = true } label: {
+            Image(systemName: studio.link == nil ? "desktopcomputer" : "desktopcomputer.and.arrow.down")
+                .symbolRenderingMode(.hierarchical)
+                .overlay(alignment: .topTrailing) {
+                    Circle().fill(studio.link == nil ? Color.fsMuted : Color.fsOK)
+                        .frame(width: 8, height: 8)
+                        .offset(x: 4, y: -3)
+                }
+        }
+        .accessibilityLabel(studio.link == nil ? "Studio: not connected" : "Studio: connected to \(studio.link!.host)")
+    }
+
+    // MARK: actions
+
     private func start() {
+        if settings.hasPrepared(subject) { begin(subject) } else { prep = PrepRequest(subject: subject, mustTick: true) }
+    }
+
+    private func begin(_ s: Subject) {
         do {
-            capturing = try ScanStore.create(subject)
+            capturing = try ScanStore.create(s)
             error = nil
         } catch {
             self.error = "Couldn't make a folder for the scan: \(error.localizedDescription)"
@@ -94,195 +239,121 @@ struct HomeView: View {
     }
 }
 
-private struct SafetyNote: View {
+// MARK: - cards
+
+private struct SubjectCard: View {
+    let subject: Subject
+    let selected: Bool
+    let firstTime: Bool
+    var onTap: () -> Void
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text("NOT A MEDICAL DEVICE").font(.caption.weight(.heavy)).foregroundStyle(.orange)
-            Text("A test app for measuring how accurate LiDAR scanning is. It doesn't design or treat anything.")
-                .font(.footnote).foregroundStyle(.secondary)
+        Button(action: onTap) {
+            VStack(alignment: .leading, spacing: 10) {
+                Image(systemName: subject.symbol)
+                    .font(.system(size: 22, weight: .semibold))
+                    .foregroundStyle(selected ? Color.fsAccentInk : Color.fsBrand)
+                    .frame(width: 44, height: 44)
+                    .background(selected ? Color.fsAccent : Color.fsBrandSoft, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .scaleEffect(x: subject == .leftFoot ? -1 : 1)
+                    .symbolEffect(.bounce, value: selected)
+                Spacer(minLength: 0)
+                Text(subject.shortLabel).font(.headline).foregroundStyle(selected ? Color.fsBrandInk : Color.fsInk)
+                    .lineLimit(1).minimumScaleFactor(0.8)
+                Text(firstTime ? "First time" : "Ready").font(.caption.weight(.semibold))
+                    .foregroundStyle(selected ? Color.fsBrandInk.opacity(0.8) : Color.fsMuted)
+            }
+            .padding(14)
+            .frame(width: 148, height: 150, alignment: .topLeading)
+            .background(selected ? Color.fsBrand : Color.fsSurface, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).stroke(selected ? .clear : Color.fsLine, lineWidth: 1))
+            .shadow(color: selected ? Color.fsBrand.opacity(0.35) : .black.opacity(0.04), radius: selected ? 14 : 8, y: 6)
         }
+        .buttonStyle(PressableStyle())
+        .accessibilityAddTraits(selected ? [.isSelected] : [])
     }
 }
 
-private struct ScanRow: View {
+struct ScanCard: View {
     let scan: Scan
+    @Environment(ScanLibrary.self) private var library
+
     var body: some View {
+        let _ = library.version
         let rec = scan.record
-        VStack(alignment: .leading, spacing: 2) {
-            Text(rec?.subject.label ?? scan.folder.lastPathComponent).font(.headline)
-            HStack(spacing: 6) {
-                if let d = rec?.created { Text(d, style: .date); Text(d, style: .time) }
-                Text("· \(scan.photoCount) photos")
-                if scan.hasModel { Image(systemName: "cube.fill").foregroundStyle(.green) }
+        HStack(spacing: 14) {
+            ScanThumb(scan: scan)
+                .frame(width: 72, height: 72)
+            VStack(alignment: .leading, spacing: 6) {
+                Text(rec?.subject.label ?? scan.folder.lastPathComponent).font(.headline).foregroundStyle(Color.fsInk)
+                if let d = rec?.created {
+                    Text("\(d.formatted(date: .abbreviated, time: .shortened)) · \(scan.photoCount) photos")
+                        .font(.caption).foregroundStyle(Color.fsMuted)
+                }
+                ScanStatus(scan: scan)
             }
-            .font(.caption).foregroundStyle(.secondary)
+            Spacer(minLength: 0)
+            Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(Color.fsMuted)
         }
+        .card(padding: 12)
     }
 }
 
-struct ScanDetail: View {
+/// Where a scan is at, as one chip (with live progress while something is happening).
+struct ScanStatus: View {
     let scan: Scan
-    var buildNow: Bool
-    var onChange: () -> Void
-
-    @State private var builder = ModelBuilder()
-    @State private var preview: URL?
-    @State private var sending = false
-    @State private var sendError: String?
-    @State private var loadText = ""
-    @State private var showStudio = false
-    @State private var refresh = 0
-    @Environment(StudioConnection.self) private var studio
+    @Environment(ScanLibrary.self) private var library
 
     var body: some View {
+        let _ = library.version
         let rec = scan.record
-        List {
-            Section("Capture") {
-                LabeledContent("What", value: rec?.subject.label ?? "?")
-                LabeledContent("Photos kept", value: "\(scan.photoCount)")
-                if let passes = rec?.scanPasses { LabeledContent("Laps", value: "\(passes)") }
-                LabeledContent("Phone", value: "\(rec?.device ?? "?"), iOS \(rec?.systemVersion ?? "?")")
-                if let err = rec?.error { Text(err).foregroundStyle(.red).font(.footnote) }
-            }
-            Section("3D model") {
-                switch builder.phase {
-                case .building(let f):
-                    ProgressView(value: f) { Text("Building the model on the phone… \(Int(f * 100))%") }
-                    Text("Keep the app open. This can take a few minutes.").font(.footnote).foregroundStyle(.secondary)
-                case .converting:
-                    ProgressView { Text("Saving a copy for the studio…") }
-                case .failed(let msg):
-                    Text(msg).foregroundStyle(.red).font(.footnote)
-                    buildButton("Try again")
-                default:
-                    if scan.hasModel {
-                        if let s = rec?.modelSeconds { LabeledContent("Built in", value: "\(Int(s)) s") }
-                        Button { preview = scan.usdz } label: { Label("Look at it", systemImage: "cube") }
-                    } else if scan.photoCount > 0 {
-                        buildButton("Build the 3D model")
-                    } else {
-                        Text("No photos were kept.").foregroundStyle(.secondary)
-                    }
-                }
-            }
-            if scan.hasOBJ, let rec {
-                studioSection(rec)
-            }
-            if scan.hasModel {
-                Section {
-                    if scan.hasOBJ {
-                        ShareLink(item: scan.obj) { Label("Send model.obj (for the studio)", systemImage: "square.and.arrow.up") }
-                    }
-                    ShareLink(item: scan.usdz) { Label("Send model.usdz", systemImage: "square.and.arrow.up") }
-                } header: {
-                    Text("Send to the Mac")
-                } footer: {
-                    Text("Or AirDrop model.obj to your Mac, then in the studio use Import 3D. For the calibration object, run `footscan accuracy-mesh` on it. To rebuild in more detail on the Mac, copy this scan's Images folder over: in Finder, open your iPhone, then Files, then footscan capture.")
+        Group {
+            switch library.work[scan.folder] {
+            case .building(let f): Chip(text: "Building model \(Int(f * 100))%", symbol: "gearshape.2.fill")
+            case .converting: Chip(text: "Finishing model", symbol: "gearshape.2.fill")
+            case .sending: Chip(text: "Sending", symbol: "paperplane.fill")
+            case nil:
+                if library.problems[scan.folder] != nil {
+                    Chip(text: "Needs a look", symbol: "exclamationmark.triangle.fill", tint: .fsWarn, soft: .fsWarnSoft)
+                } else if rec?.studioCaptureID != nil {
+                    Chip(text: "Sent to studio", symbol: "checkmark.circle.fill", tint: .fsOK, soft: .fsOKSoft)
+                } else if scan.hasModel {
+                    Chip(text: "Model ready", symbol: "cube.fill")
+                } else if scan.photoCount > 0 {
+                    Chip(text: "Photos only", symbol: "photo.stack", tint: .fsMuted, soft: .fsSurface2)
+                } else {
+                    Chip(text: "Empty", symbol: "xmark", tint: .fsMuted, soft: .fsSurface2)
                 }
             }
         }
-        .id(refresh)
-        .sheet(isPresented: $showStudio) { StudioView() }
-        .navigationTitle(rec?.subject.label ?? "Scan")
-        .navigationBarTitleDisplayMode(.inline)
-        .quickLookPreview($preview)
-        .task {
-            if buildNow && !scan.hasModel && builder.phase == .idle { await build() }
-        }
+        .contentTransition(.numericText())
+        .animation(.smooth, value: library.work[scan.folder])
     }
+}
 
-    // Sending to the studio, and what came back.
-    @ViewBuilder private func studioSection(_ rec: ScanRecord) -> some View {
-        Section {
-            if let id = rec.studioCaptureID {
-                Label("Sent to \(rec.studioHost ?? "the studio")", systemImage: "checkmark.circle.fill")
-                    .foregroundStyle(.green)
-                LabeledContent("Capture", value: id).font(.footnote)
-                if let acc = rec.studioAccuracy { AccuracyRows(acc: acc) }
-            }
-            if rec.subject.isFoot && rec.studioCaptureID == nil {
-                TextField("Scale reading under this foot (kg)", text: $loadText)
-                    .keyboardType(.decimalPad)
-            }
-            if studio.client == nil {
-                Button { showStudio = true } label: { Label("Connect to your studio to send it straight there", systemImage: "desktopcomputer") }
-            } else if sending {
-                ProgressView { Text(rec.subject == .calibration ? "Sending and measuring accuracy…" : "Sending…") }
+struct ScanThumb: View {
+    let scan: Scan
+    @Environment(ScanLibrary.self) private var library
+    @State private var image: UIImage?
+
+    var body: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 16, style: .continuous).fill(Color.fsBrandSoft)
+            if let image {
+                Image(uiImage: image).resizable().scaledToFit().padding(6).transition(.opacity)
             } else {
-                Button { Task { await send(rec) } } label: {
-                    Label(rec.studioCaptureID == nil ? "Send to studio" : "Send again", systemImage: "paperplane")
-                }
-                .disabled(rec.subject.isFoot && rec.studioCaptureID == nil && parsedLoad == nil)
-            }
-            if let sendError { Text(sendError).font(.footnote).foregroundStyle(.red) }
-        } header: {
-            Text("Studio")
-        } footer: {
-            if rec.subject.isFoot && rec.studioCaptureID == nil {
-                Text("A seated foot scan is part-loaded: the studio records the scale reading with it, as in the Phase 0 protocol.")
+                Image(systemName: scan.record?.subject.symbol ?? "cube")
+                    .font(.title2).foregroundStyle(Color.fsBrand.opacity(0.7))
             }
         }
-    }
-
-    private var parsedLoad: Double? {
-        let v = Double(loadText.replacingOccurrences(of: ",", with: "."))
-        return v.flatMap { $0 > 0 && $0 < 400 ? $0 : nil }
-    }
-
-    private func send(_ rec: ScanRecord) async {
-        guard let client = studio.client else { return }
-        sending = true
-        sendError = nil
-        defer { sending = false }
-        var record = rec
-        if record.subject.isFoot, let load = parsedLoad { record.loadKg = load }
-        do {
-            let sent = try await client.upload(scan, record: record)
-            record.studioCaptureID = sent.captureID
-            record.studioHost = client.link.host
-            record.sentAt = Date()
-            record.studioAccuracy = sent.accuracy
-            scan.save(record)
-            refresh += 1
-            onChange()
-        } catch {
-            sendError = error.localizedDescription
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .task(id: library.version) {
+            if image == nil, !FileManager.default.fileExists(atPath: scan.thumbnail.path()), scan.hasModel {
+                await library.makeThumbnail(scan)
+            }
+            if let ui = UIImage(contentsOfFile: scan.thumbnail.path()) {
+                withAnimation(.smooth) { image = ui }
+            }
         }
-    }
-
-    private func buildButton(_ title: String) -> some View {
-        Button { Task { await build() } } label: { Label(title, systemImage: "cube.transparent") }
-    }
-
-    private func build() async {
-        await builder.build(scan)
-        onChange()
-    }
-}
-
-/// The calibration object's accuracy, as the studio measured it.
-private struct AccuracyRows: View {
-    let acc: StudioAccuracy
-
-    var body: some View {
-        if let error = acc.error {
-            Text(error).font(.footnote).foregroundStyle(.orange)
-        } else {
-            LabeledContent("Surface, typical error", value: mm(acc.median_mm, signed: false))
-            LabeledContent("Surface, worst 5%", value: mm(acc.p95_mm, signed: false))
-            LabeledContent("Too big (+) or small (−)", value: mm(acc.signed_mean_mm))
-            LabeledContent("Length", value: mm(acc.length_mm))
-            LabeledContent("Width", value: mm(acc.width_mm))
-            LabeledContent("Dome top height", value: mm(acc.dome_apex_mm))
-            Text(acc.reference == "calipers"
-                 ? "Compared with your caliper readings of the print."
-                 : "Compared with the object's design. Add caliper readings in the studio for a fairer comparison.")
-                .font(.footnote).foregroundStyle(.secondary)
-        }
-    }
-
-    private func mm(_ v: Double?, signed: Bool = true) -> String {
-        guard let v else { return "not measured" }
-        return (signed && v > 0 ? "+" : "") + String(format: "%.2f mm", v)
     }
 }
