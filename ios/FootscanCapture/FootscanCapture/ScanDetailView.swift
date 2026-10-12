@@ -71,6 +71,7 @@ struct ScanDetailView: View {
             default:
                 if scan.hasModel {
                     ModelViewer(url: scan.usdz)
+                        .accessibilityLabel("3D model of the scan. Drag to turn it.")
                         .transition(.scale(scale: 0.8).combined(with: .opacity))
                         .overlay(alignment: .bottomTrailing) {
                             Button { preview = scan.usdz } label: {
@@ -284,6 +285,17 @@ struct StepRow<Actions: View>: View {
             }
             .padding(.bottom, isLast ? 0 : 14)
             Spacer(minLength: 0)
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("\(title): \(stateWords). \(detail)")
+    }
+
+    private var stateWords: String {
+        switch state {
+        case .done: "done"
+        case .working: "in progress"
+        case .failed: "needs a look"
+        case .todo: "not yet"
         }
     }
 

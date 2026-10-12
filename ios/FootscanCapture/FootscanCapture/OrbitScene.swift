@@ -101,6 +101,7 @@ struct OrbitScene: View {
         .aspectRatio(1.2, contentMode: .fit)
         .accessibilityElement()
         .accessibilityLabel("A phone circles a foot standing on the printed mat, taking photos from every side; the foot then becomes an insole shaped to it.")
+        .accessibilityAddTraits(.isImage)
     }
 
     // MARK: what to show at a moment

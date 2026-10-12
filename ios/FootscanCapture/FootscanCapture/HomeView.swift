@@ -348,8 +348,11 @@ struct ScanCard: View {
             }
             Spacer(minLength: 0)
             Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(Color.fsMuted)
+                .accessibilityHidden(true)
         }
         .card(padding: 12)
+        .accessibilityElement(children: .combine)
+        .accessibilityHint("Opens the scan")
     }
 }
 
