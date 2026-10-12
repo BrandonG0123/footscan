@@ -212,6 +212,7 @@ struct HomeView: View {
                                 Button(role: .destructive) { withAnimation { library.delete(scan) } } label: {
                                     Label("Delete", systemImage: "trash")
                                 }
+                                .disabled(library.work[scan.folder] != nil)
                             }
                     }
                 }

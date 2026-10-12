@@ -28,7 +28,13 @@ final class ScanLibrary {
         version += 1
     }
 
+    /// Is anything still building, converting or sending?
+    var busy: Bool { !work.isEmpty }
+
+    /// Deleting waits for the scan's work to finish: the model build and the
+    /// upload carry on in the background and need its files until they're done.
     func delete(_ scan: Scan) {
+        guard work[scan.folder] == nil else { return }
         ScanStore.delete(scan)
         work[scan.folder] = nil
         problems[scan.folder] = nil
@@ -36,6 +42,7 @@ final class ScanLibrary {
     }
 
     func deleteAll() {
+        guard !busy else { return }
         for s in scans { ScanStore.delete(s) }
         work = [:]
         problems = [:]

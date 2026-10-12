@@ -31,6 +31,11 @@ struct ScanDetailView: View {
                 .buttonStyle(.bordered)
                 .tint(.fsStop)
                 .padding(.top, 6)
+                .disabled(library.work[scan.folder] != nil)
+                if library.work[scan.folder] != nil {
+                    Text("You can delete it once it has finished.").font(.footnote).foregroundStyle(Color.fsMuted)
+                        .frame(maxWidth: .infinity)
+                }
             }
             .padding(20)
         }

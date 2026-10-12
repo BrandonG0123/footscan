@@ -54,11 +54,12 @@ struct SettingsView: View {
                     Button(role: .destructive) { confirmDeleteAll = true } label: {
                         Label("Delete all scans", systemImage: "trash")
                     }
-                    .disabled(library.scans.isEmpty)
+                    .disabled(library.scans.isEmpty || library.busy)
                 } header: {
                     Text("Storage")
                 } footer: {
-                    Text("Scans already sent stay in the studio.")
+                    Text(library.busy ? "A scan is still building or sending; delete once it has finished."
+                                      : "Scans already sent stay in the studio.")
                 }
 
                 Section {
