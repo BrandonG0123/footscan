@@ -57,6 +57,7 @@ Phones only allow camera and motion-sensor access on secure origins, so
 from __future__ import annotations
 
 import datetime as dt
+import hashlib
 import hmac
 import http.cookies
 import json
@@ -306,7 +307,8 @@ def load_studio_key(path: Path) -> str:
 
 def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check=is_loopback,
                  studio_key: str | None = None, secure_cookie: bool = False,
-                 submissions_per_hour: int = SUBMISSIONS_PER_HOUR, allow_indexing: bool = True):
+                 submissions_per_hour: int = SUBMISSIONS_PER_HOUR, allow_indexing: bool = True,
+                 public: bool = False, cert_fingerprint: str | None = None):
     runner = recon_jobs.ReconRunner()
     captures_dir = data_dir / "captures"
     submissions_dir = data_dir / "submissions"
@@ -531,7 +533,31 @@ def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check
             if parts == ["studio"] and method == "GET":
                 self.require_local()
                 return self.send_json(self.studio_info())
+            if parts == ["studio", "pairing"] and method == "GET":
+                self.require_local()
+                return self.send_json(self.pairing())
             raise FileNotFoundError
+
+        def pairing(self) -> dict:
+            """What the iPhone app needs to send scans straight to this studio.
+
+            Shown as a QR code in the studio (so only someone already in the
+            studio can see it): the address the phone should use, the studio
+            key, and, for this computer's own self-signed HTTPS, the SHA-256
+            fingerprint of its certificate, so the app trusts exactly this
+            computer and nothing pretending to be it.
+            """
+            if public:
+                host = self.headers.get("Host", "")
+                if not host:
+                    return dict(available=False, reason="Open the studio through its public address to pair.")
+                return dict(available=True, url=f"https://{host}", key=studio_key, fingerprint=None)
+            info = self.studio_info()
+            if not info["phones_can_connect"] or not cert_fingerprint:
+                return dict(available=False,
+                            reason="Phones can't reach this studio yet. Restart footscan with "
+                                   "--host 0.0.0.0 --https, then open this page again.")
+            return dict(available=True, url=info["scan_url"].rstrip("/"), key=studio_key, fingerprint=cert_fingerprint)
 
         def studio_info(self) -> dict:
             host, port = self.server.server_address[:2]
@@ -990,6 +1016,12 @@ def ensure_cert(cert_dir: Path) -> tuple[Path, Path]:
     return cert, key
 
 
+def cert_fingerprint(cert_path: Path) -> str:
+    """SHA-256 of the certificate (DER), hex: what the iPhone app pins."""
+    der = ssl.PEM_cert_to_DER_cert(cert_path.read_text())
+    return hashlib.sha256(der).hexdigest()
+
+
 def lan_ip() -> str | None:
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
@@ -1007,13 +1039,16 @@ def serve(host: str = "127.0.0.1", port: int = 8765, https: bool = False, public
     studio_key = load_studio_key(ROOT / ".studio_key")
     if allow_indexing is None:
         allow_indexing = not public  # on the internet, hidden from search engines unless asked otherwise
+    cert_fp = None
+    if https:
+        cert_path, key_path = ensure_cert(ROOT / ".certs")
+        cert_fp = cert_fingerprint(cert_path)
     handler = make_handler(data_dir=(data_dir or DATA_DIR).resolve(), studio_key=studio_key,
                            secure_cookie=https or public, local_check=never_local if public else is_loopback,
-                           allow_indexing=allow_indexing)
+                           allow_indexing=allow_indexing, public=public, cert_fingerprint=cert_fp)
     httpd = ThreadingHTTPServer((host, port), handler)
     scheme = "http"
     if https:
-        cert_path, key_path = ensure_cert(ROOT / ".certs")
         ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
         ctx.load_cert_chain(cert_path, key_path)
         httpd.socket = ctx.wrap_socket(httpd.socket, server_side=True)

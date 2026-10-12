@@ -7,6 +7,8 @@
   <link rel="stylesheet" href="/assets/style.css">
   <style>
     main.wrap { max-width: 860px; }
+    .pair-qr { background: #fff; padding: 10px; border-radius: 12px; border: 1px solid var(--line); }
+    .pair-qr svg { display: block; width: 100%; height: auto; }
     .calipers { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin: 0 0 12px; }
     .layout { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: var(--gap); align-items: start; }
     @media (max-width: 820px) { .layout { grid-template-columns: 1fr; } }
@@ -80,6 +82,18 @@
     </form>
 
     <aside style="display:grid;gap:var(--gap)">
+      <div class="card" id="pair-card">
+        <h3>Send straight from the iPhone app</h3>
+        <p class="muted" style="margin:0 0 10px">Connect footscan capture to this studio once, and every scan has a
+          <strong>Send to studio</strong> button: no AirDrop, no importing.</p>
+        <button class="btn secondary" type="button" id="btn-pair">Show the connect code</button>
+        <div id="pair" hidden style="margin-top:12px">
+          <div id="pair-qr" class="pair-qr" role="img" aria-label="Code for the footscan capture app to connect to this studio"></div>
+          <p class="hint" style="margin:8px 0 0">In the app: <strong>Studio</strong> → <strong>Connect</strong>, and
+            point the camera here. The code contains the studio key, so don't share a photo of it.</p>
+        </div>
+        <p class="hint" id="pair-msg" style="margin:8px 0 0"></p>
+      </div>
       <div class="card">
         <h3>Which phones</h3>
         <p class="muted" style="margin:0">LiDAR is on iPhone Pro and Pro Max models from the 12 Pro onward, and on
@@ -126,6 +140,7 @@
     </div>
   </section>
 </main>
+<script src="/vendor/qrcode/qrcode.js"></script>
 <script type="module" src="/assets/layout.js"></script>
 <script type="module">
   const $ = (id) => document.getElementById(id);
@@ -151,6 +166,28 @@
   drop.addEventListener("dragover", (e) => { e.preventDefault(); drop.classList.add("over"); });
   drop.addEventListener("dragleave", () => drop.classList.remove("over"));
   drop.addEventListener("drop", (e) => { e.preventDefault(); drop.classList.remove("over"); pick(e.dataTransfer.files[0]); });
+
+  // The connect code for the iPhone app: footscan-capture://connect?url=…&key=…&fp=…
+  $("btn-pair").addEventListener("click", async () => {
+    if (!$("pair").hidden) { $("pair").hidden = true; $("btn-pair").textContent = "Show the connect code"; return; }
+    $("pair-msg").textContent = "";
+    try {
+      const r = await fetch("/api/studio/pairing");
+      const p = await r.json();
+      if (!r.ok) throw new Error(p.error || "couldn't ask the studio");
+      if (!p.available) { $("pair-msg").textContent = p.reason; return; }
+      const q = new URLSearchParams({ url: p.url, key: p.key });
+      if (p.fingerprint) q.set("fp", p.fingerprint);
+      const code = qrcode(0, "M");
+      code.addData(`footscan-capture://connect?${q}`);
+      code.make();
+      $("pair-qr").innerHTML = code.createSvgTag({ cellSize: 4, margin: 2, scalable: true });
+      $("pair").hidden = false;
+      $("btn-pair").textContent = "Hide the code";
+    } catch (err) {
+      $("pair-msg").textContent = `Couldn't make the code: ${err.message}`;
+    }
+  });
 
   const CALIPERS = [
     ["length", "Overall length", 150], ["width", "Overall width", 70], ["base", "Base thickness", 10],

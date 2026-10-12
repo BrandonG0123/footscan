@@ -634,3 +634,37 @@ def test_studio_path_check_is_part_based(servers):
     _, phone, _ = servers
     st, raw, _ = call(f"{phone}/studio-old/x.html")
     assert st == 404 and b"Studio locked" not in raw
+
+
+# ---- pairing the iPhone app ----------------------------------------------------
+
+def test_pairing_code_is_studio_only_and_explains_when_phones_cant_connect(servers):
+    op, phone, _ = servers
+    assert call(f"{phone}/api/studio/pairing")[0] == 403          # a phone without the key gets nothing
+    p = body(call(f"{op}/api/studio/pairing"))                     # this test server: http on 127.0.0.1
+    assert p["available"] is False and "--host 0.0.0.0 --https" in p["reason"]
+    assert "key" not in p
+
+
+def test_pairing_through_the_public_address_uses_it_and_needs_no_fingerprint(tmp_path):
+    handler = make_handler(WEB_DIR, tmp_path, local_check=lambda h: False, studio_key=KEY, public=True)
+    httpd = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    url = f"http://127.0.0.1:{httpd.server_address[1]}"
+    try:
+        assert call(f"{url}/api/studio/pairing")[0] == 403
+        p = body(call(f"{url}/api/studio/pairing", headers={"X-Studio-Key": KEY, "Host": "footscan.example.dev"}))
+        assert p == {"available": True, "url": "https://footscan.example.dev", "key": KEY, "fingerprint": None}
+    finally:
+        httpd.shutdown()
+
+
+def test_certificate_fingerprint_is_the_sha256_of_the_certificate(tmp_path):
+    import hashlib
+    import ssl
+
+    from footscan.server import cert_fingerprint, ensure_cert
+
+    cert, _ = ensure_cert(tmp_path)
+    fp = cert_fingerprint(cert)
+    assert fp == hashlib.sha256(ssl.PEM_cert_to_DER_cert(cert.read_text())).hexdigest() and len(fp) == 64

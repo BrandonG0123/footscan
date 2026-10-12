@@ -10,9 +10,12 @@ import SwiftUI
 
 @main
 struct FootscanCaptureApp: App {
+    @State private var studio = StudioConnection()
+
     var body: some Scene {
         WindowGroup {
             HomeView()
+                .environment(studio)
         }
     }
 }

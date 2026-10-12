@@ -23,6 +23,8 @@ enum Subject: String, CaseIterable, Identifiable, Codable {
 
     var id: String { rawValue }
 
+    var isFoot: Bool { self == .rightFoot || self == .leftFoot }
+
     var label: String {
         switch self {
         case .calibration: "Calibration object"
@@ -55,6 +57,13 @@ struct ScanRecord: Codable {
     var modelBuiltOnPhone: Bool = false
     var modelSeconds: Double?
     var error: String?
+    /// Bathroom-scale reading under the foot (kg): the studio needs it for a loaded (seated) foot scan.
+    var loadKg: Double?
+    /// Set once it has been sent to the studio.
+    var studioCaptureID: String?
+    var studioHost: String?
+    var sentAt: Date?
+    var studioAccuracy: StudioAccuracy?
     var units = "metres, Y up (Apple Object Capture's own frame). The studio's Import 3D converts to millimetres."
     var note = "footscan LiDAR test capture. Not a medical device."
 }

@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Merged with the settings Xcode generates (GENERATE_INFOPLIST_FILE).
+  - footscan-capture:// links: the studio's connect code opens the app.
+  - NSAllowsLocalNetworking: the studio on the Mac answers at a local address
+    with its own self-made certificate. The app pins that exact certificate
+    (Studio.swift); this lets the connection be made at all. It applies only
+    to local addresses: everything on the internet keeps Apple's full rules.
+-->
+<plist version="1.0">
+<dict>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>dev.brandongreene.footscan.capture.connect</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>footscan-capture</string>
+			</array>
+		</dict>
+	</array>
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+	</dict>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>To send your scans to the footscan studio on your Mac, over your Wi-Fi.</string>
+</dict>
+</plist>
