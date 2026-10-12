@@ -43,6 +43,7 @@ struct HomeView: View {
     @State private var showSettings = false
     @State private var showStudio = false
     @State private var error: String?
+    @State private var startAfterPrep: Subject?
 
     struct PrepRequest: Identifiable {
         let subject: Subject
@@ -80,8 +81,12 @@ struct HomeView: View {
         .tint(.fsBrand)
         .sheet(isPresented: $showSettings) { SettingsView() }
         .sheet(isPresented: $showStudio) { StudioView() }
-        .sheet(item: $prep) { req in
-            PrepSheet(subject: req.subject, mustTick: req.mustTick) { begin(req.subject) }
+        // The camera opens only once the get-ready sheet has fully gone:
+        // presenting it while the sheet is still closing can lose it.
+        .sheet(item: $prep, onDismiss: {
+            if let s = startAfterPrep { startAfterPrep = nil; begin(s) }
+        }) { req in
+            PrepSheet(subject: req.subject, mustTick: req.mustTick) { startAfterPrep = req.subject }
                 .presentationDragIndicator(.visible)
         }
         .fullScreenCover(item: $capturing) { scan in
@@ -304,7 +309,8 @@ private struct SubjectCard: View {
                     .foregroundStyle(selected ? Color.fsBrandInk.opacity(0.8) : Color.fsMuted)
             }
             .padding(14)
-            .frame(width: 148, height: 150, alignment: .topLeading)
+            .frame(width: 156, alignment: .topLeading)
+            .frame(minHeight: 150, alignment: .topLeading)
             .background(selected ? Color.fsBrand : Color.fsSurface, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).stroke(selected ? .clear : Color.fsLine, lineWidth: 1))
             .shadow(color: selected ? Color.fsBrand.opacity(0.35) : .black.opacity(0.04), radius: selected ? 14 : 8, y: 6)

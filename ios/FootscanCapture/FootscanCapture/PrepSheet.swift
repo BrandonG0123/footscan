@@ -75,8 +75,8 @@ struct PrepSheet: View {
             .background(Color.fsBackground)
             .safeAreaInset(edge: .bottom) {
                 Button(mustTick && ticked.count < subject.checklist.count ? "Tick each one when it's ready" : "Start scanning") {
-                    dismiss()
                     onStart()
+                    dismiss()
                 }
                 .buttonStyle(PrimaryButtonStyle())
                 .disabled(mustTick && ticked.count < subject.checklist.count)

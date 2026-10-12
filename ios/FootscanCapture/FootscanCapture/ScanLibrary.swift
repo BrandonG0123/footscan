@@ -124,12 +124,13 @@ final class ScanLibrary {
         if let png { try? png.write(to: out, options: .atomic) }
     }
 
-    /// Bytes used by every scan (photos, working data, models).
-    func storageUsed() -> Int64 {
+    /// Bytes used by these scan folders (photos, working data, models).
+    /// Runs anywhere: call it off the main thread, it walks every file.
+    nonisolated static func bytes(in folders: [URL]) -> Int64 {
         var total: Int64 = 0
         let fm = FileManager.default
-        for s in scans {
-            guard let e = fm.enumerator(at: s.folder, includingPropertiesForKeys: [.fileSizeKey]) else { continue }
+        for folder in folders {
+            guard let e = fm.enumerator(at: folder, includingPropertiesForKeys: [.fileSizeKey]) else { continue }
             for case let url as URL in e {
                 total += Int64((try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0)
             }

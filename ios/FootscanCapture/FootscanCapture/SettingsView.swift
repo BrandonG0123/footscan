@@ -77,8 +77,8 @@ struct SettingsView: View {
                 }
             }
             .task(id: library.version) {
-                let lib = library
-                storage = await Task.detached { await lib.storageUsed() }.value
+                let folders = library.scans.map(\.folder)
+                storage = await Task.detached(priority: .utility) { ScanLibrary.bytes(in: folders) }.value
             }
         }
         .tint(.fsBrand)

@@ -66,6 +66,7 @@ struct ScanDetailView: View {
             default:
                 if scan.hasModel {
                     ModelViewer(url: scan.usdz)
+                        .transition(.scale(scale: 0.8).combined(with: .opacity))
                         .overlay(alignment: .bottomTrailing) {
                             Button { preview = scan.usdz } label: {
                                 Label("Full screen", systemImage: "arkit").labelStyle(.iconOnly)
@@ -91,7 +92,8 @@ struct ScanDetailView: View {
         .frame(height: 320)
         .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 24, style: .continuous).stroke(Color.fsLine, lineWidth: 1))
-        .animation(.smooth, value: library.work[scan.folder])
+        .animation(.spring(duration: 0.6, bounce: 0.3), value: library.work[scan.folder])
+        .animation(.spring(duration: 0.6, bounce: 0.3), value: scan.hasModel)
     }
 
     // MARK: where it's at
