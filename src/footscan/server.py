@@ -840,6 +840,12 @@ def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check
                 # A built model only needs its comparison redone, not a rebuild.
                 updating = False
                 meta = read_json(d / "capture.json")
+                if meta.get("condition") == "calibration" and meta.get("method") == "imported_mesh" and meta.get("mesh"):
+                    # An imported model: re-scoring takes seconds, so do it now.
+                    meta["accuracy"] = score_imported(d, meta["mesh"].get("up", "y"))
+                    write_json(d / "capture.json", meta)
+                    return self.send_json({"ok": True, "calipers": calipers, "updating": False,
+                                           "accuracy": meta["accuracy"]})
                 built = recon_jobs.summary(d, runner).get("state") == "done"
                 if meta.get("condition") == "calibration" and built and (d / "recon" / "mesh.ply").exists():
                     try:
@@ -852,6 +858,9 @@ def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check
                 ext = (query_param(self.path, "ext") or "").lower()
                 if ext not in MESH_TYPES:
                     raise BadRequest(f"3D file must be one of {sorted(MESH_TYPES)} (export from your scanning app)")
+                up = (query_param(self.path, "up") or "y").lower()
+                if up not in UP_AXES:
+                    raise BadRequest(f"up must be one of {sorted(UP_AXES)}")
                 raw = d / f"original.{ext}"
                 raw.write_bytes(self.read_body(MAX_MESH_BYTES))
                 try:
@@ -859,10 +868,20 @@ def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check
                 except Exception as e:  # noqa: BLE001 - any parse failure is the file's fault
                     raw.unlink(missing_ok=True)
                     raise BadRequest(f"couldn't read that 3D file: {e}") from None
+                stats["up"] = up
                 meta = read_json(d / "capture.json")
                 meta.update(status="complete", mesh=stats, frame_files=[])
+                # The calibration object made by another app (e.g. the iPhone
+                # test app): score it now, against the object's true shape.
+                if meta.get("condition") == "calibration":
+                    meta["accuracy"] = score_imported(d, up)
                 write_json(d / "capture.json", meta)
-                return self.send_json({"ok": True, "mesh": stats})
+                return self.send_json({"ok": True, "mesh": stats, "accuracy": meta.get("accuracy")})
+            if p[1:] == ["accuracy"] and method == "GET":
+                f = d / "accuracy.json"
+                if not f.is_file():
+                    raise FileNotFoundError
+                return self.send_file(f, "application/json")
             if p[1:] == ["complete"] and method == "POST":
                 body = self.json_body()
                 frames = body.get("frames", [])
@@ -920,6 +939,19 @@ def import_mesh(src: Path, dst: Path) -> dict:
         units_detected=units, scale_to_mm=factor, extents_mm=ext, watertight=bool(mesh.is_watertight),
         file="mesh.ply",
     )
+
+
+UP_AXES = ("y", "z")
+
+
+def score_imported(folder: Path, up: str) -> dict:
+    """Accuracy study of an imported calibration-object model (see recon/imported.py)."""
+    from .recon.imported import score_capture
+
+    try:
+        return score_capture(folder, up)
+    except Exception as e:  # noqa: BLE001 - a model the study can't use is reported, not a crash
+        return dict(error=f"the accuracy study couldn't run on this model: {e}")
 
 
 def public_meta(meta: dict) -> dict:

@@ -106,7 +106,11 @@
           <div><dt>Coverage</dt><dd>${cov}</dd></div>
           <div><dt>Texture</dt><dd>${esc(c.method)}</dd></div>
           <div><dt>Created</dt><dd>${esc(c.created?.replace("T", " "))}</dd></div>
+          ${c.accuracy && !c.accuracy.error
+            ? `<div><dt>Accuracy</dt><dd>${esc(c.accuracy.median_mm)} mm typical · length ${c.accuracy.length_mm == null ? "—" : (c.accuracy.length_mm > 0 ? "+" : "") + Number(c.accuracy.length_mm).toFixed(2) + " mm"}</dd></div>` : ""}
         </dl>
+        ${c.accuracy?.error ? `<p class="hint" style="margin:8px 0 0;color:var(--warn)">${esc(c.accuracy.error)}</p>` : ""}
+        ${c.accuracy && !c.accuracy.error ? `<p class="hint" style="margin:6px 0 0"><a href="/api/captures/${encodeURIComponent(c.capture_id)}/accuracy">Full accuracy report</a></p>` : ""}
         ${c.notes ? `<p class="hint" style="margin:8px 0 0">${esc(c.notes)}</p>` : ""}
         <p class="btn-row" style="margin:10px 0 0">
           ${c.status === "complete" && c.frame_files?.length && c.condition !== "object"

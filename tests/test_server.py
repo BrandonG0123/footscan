@@ -390,6 +390,45 @@ def test_mesh_import_rejects_bad_files(servers):
     assert status == 400 and "couldn't read" in json.loads(raw)["error"]
 
 
+def test_imported_calibration_object_is_scored_and_rescored_with_calipers(servers):
+    """A model from the iPhone test app (metres, Y up) gets the accuracy study on import."""
+    from test_imported import _as_exported
+
+    op, _, data = servers
+    obj = _as_exported(table=False, tilt_deg=0.0).export(file_type="obj").encode()
+    cid = body(call(f"{op}/api/captures", "POST", {"condition": "calibration", "session": "LIDAR",
+                                                    "method": "imported_mesh"}))["id"]
+    assert call(f"{op}/api/captures/{cid}/mesh?ext=obj&up=x", "PUT", obj,
+                {"Content-Type": "application/octet-stream"})[0] == 400
+    status, raw, _ = call(f"{op}/api/captures/{cid}/mesh?ext=obj&up=y", "PUT", obj,
+                          {"Content-Type": "application/octet-stream"})
+    assert status == 200, raw
+    acc = json.loads(raw)["accuracy"]
+    assert acc["median_mm"] < 0.01 and abs(acc["length_mm"]) < 0.06 and acc["reference"] == "model"
+    assert (data / "captures" / cid / "accuracy.json").exists()
+    assert call(f"{op}/api/captures/{cid}/accuracy")[0] == 200
+
+    # caliper readings of the print become the reference, straight away
+    st, raw, _ = call(f"{op}/api/captures/{cid}/calipers", "PUT", {"length": 149.8})
+    assert st == 200, raw
+    acc = json.loads(raw)["accuracy"]
+    assert acc["reference"] == "calipers" and acc["length_mm"] == pytest.approx(0.2, abs=0.06)
+
+
+def test_importing_something_else_as_the_calibration_object_is_reported_not_crashed(servers):
+    import trimesh
+
+    op, _, _ = servers
+    shoe_ish = trimesh.creation.box(extents=[2.6, 1.0, 1.2])  # metres, and far too big: no real scale
+    cid = body(call(f"{op}/api/captures", "POST", {"condition": "calibration", "session": "LIDAR",
+                                                    "method": "imported_mesh"}))["id"]
+    status, raw, _ = call(f"{op}/api/captures/{cid}/mesh?ext=obj", "PUT", shoe_ish.export(file_type="obj").encode(),
+                          {"Content-Type": "application/octet-stream"})
+    assert status == 200, raw
+    assert "calibration object is 150 mm" in json.loads(raw)["accuracy"]["error"]
+    assert call(f"{op}/api/captures/{cid}/accuracy")[0] == 404
+
+
 # --------------------------------------------------------------------------
 # Phase 2: 3D models from the studio
 # --------------------------------------------------------------------------

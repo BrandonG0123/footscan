@@ -38,6 +38,13 @@ allows TestFlight.)
    **Another lap** higher up, looking down, then **Finish**.
 4. The phone builds the model (a few minutes; keep the app open).
 5. **Send model.obj** > AirDrop to the Mac.
+6. In the studio: **Import 3D** > *The calibration object (accuracy test)* >
+   choose the file > Import. The score appears straight away, and in the
+   research library. Type your caliper readings of the print into the
+   boxes under it and press *Save and re-score*: lengths are then compared
+   with the real print instead of the design.
+
+Or from the command line:
 
 ```bash
 .venv/bin/footscan accuracy-mesh ~/Downloads/model.obj -o reports/lidar-calib.json

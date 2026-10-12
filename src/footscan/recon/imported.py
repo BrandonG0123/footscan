@@ -179,3 +179,40 @@ def evaluate_imported(mesh, up: str = "y", calipers: dict | None = None) -> dict
     report["imported"] = dict(units_detected=units, scale_to_mm=factor,
                               extents_mm=[round(float(v), 1) for v in sorted(mm.extents, reverse=True)], **info)
     return report
+
+
+def summarize(report: dict) -> dict:
+    """The few numbers the studio shows at a glance; the full report is kept alongside."""
+    dims = {r["key"]: r.get("scan_minus_reference_mm") for r in report["dimensions"]}
+    dev = report["surface_deviation"]
+    return dict(
+        median_mm=dev["median_mm"], p95_mm=dev["p95_mm"], signed_mean_mm=dev["signed_mean_mm"],
+        within_1mm=report["completeness"]["within_1mm"], scan_within_2mm=report["registration"]["scan_within_2mm"],
+        length_mm=dims.get("length"), width_mm=dims.get("width"), dome_apex_mm=dims.get("dome_apex"),
+        reference="calipers" if any(r.get("caliper_mm") is not None for r in report["dimensions"]) else "model",
+        floor=report["imported"]["floor"], warnings=report["warnings"],
+    )
+
+
+def score_capture(folder, up: str = "y") -> dict:
+    """Run the study on a studio capture's imported mesh.ply (millimetres, as imported).
+
+    Writes accuracy.json next to it and returns the summary, or
+    {"error": ...} when the model can't be the calibration object.
+    """
+    import json
+    from pathlib import Path
+
+    import trimesh
+
+    folder = Path(folder)
+    calipers_file = folder / "calipers.json"
+    calipers = json.loads(calipers_file.read_text()) if calipers_file.exists() else None
+    mesh = trimesh.load(folder / "mesh.ply", force="mesh")
+    try:
+        report = evaluate_imported(mesh, up=up, calipers=calipers)
+    except NotTheObject as err:
+        (folder / "accuracy.json").unlink(missing_ok=True)
+        return dict(error=str(err))
+    (folder / "accuracy.json").write_text(json.dumps(report, indent=2))
+    return summarize(report)

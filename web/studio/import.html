@@ -7,6 +7,7 @@
   <link rel="stylesheet" href="/assets/style.css">
   <style>
     main.wrap { max-width: 860px; }
+    .calipers { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin: 0 0 12px; }
     .layout { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: var(--gap); align-items: start; }
     @media (max-width: 820px) { .layout { grid-template-columns: 1fr; } }
     form { display: grid; gap: 18px; }
@@ -45,6 +46,14 @@
             <option value="nwb_relaxed">Foot, unloaded and relaxed</option>
             <option value="nwb">Foot, subtalar neutral (helper)</option>
             <option value="object">An object (test)</option>
+            <option value="calibration">The calibration object (accuracy test)</option>
+          </select>
+        </div>
+        <div class="field" id="up-field" hidden>
+          <label for="up">Which way is up in the file?</label>
+          <select id="up">
+            <option value="y">Y (footscan capture app, Polycam, Scaniverse)</option>
+            <option value="z">Z (some desktop tools)</option>
           </select>
         </div>
         <div class="field" id="foot-field">
@@ -79,6 +88,7 @@
       <div class="card">
         <h3>Exporting</h3>
         <ul class="checklist">
+          <li><strong>footscan capture (iPhone):</strong> the scan → Send model.obj → AirDrop</li>
           <li><strong>Polycam:</strong> Export → OBJ or PLY</li>
           <li><strong>Scaniverse:</strong> Share → Export Model → OBJ or PLY</li>
           <li><strong>3d Scanner App:</strong> Export → OBJ</li>
@@ -93,6 +103,22 @@
       <h2 style="margin:0 0 12px">Imported</h2>
       <dl class="facts" id="facts"></dl>
       <p class="hint" id="units-note" style="margin:14px 0 0"></p>
+      <div id="acc" hidden style="margin-top:18px">
+        <h3 style="margin:0 0 4px">Accuracy against the calibration object</h3>
+        <p class="hint" style="margin:0 0 10px" id="acc-ref"></p>
+        <dl class="facts" id="acc-facts"></dl>
+        <ul id="acc-warn" class="checklist" style="margin:10px 0 0"></ul>
+        <p class="hint" style="margin:10px 0 0">The alignment only turns and moves the model, never resizes it, so a
+          size error in the scan shows in these numbers. Full report: <a id="acc-json" href="#">accuracy.json</a>.</p>
+        <form id="caliper-form" style="margin-top:16px">
+          <h3 style="margin:0 0 4px">Your caliper readings <span class="hint">optional</span></h3>
+          <p class="hint" style="margin:0 0 10px">Measure the printed object (the Project page says how). Then lengths
+            are compared with the real print, so printer error isn't counted as scan error.</p>
+          <div class="calipers" id="calipers"></div>
+          <div class="btn-row"><button class="btn secondary" type="submit">Save and re-score</button></div>
+          <p class="hint" id="caliper-msg" role="status" style="margin:8px 0 0"></p>
+        </form>
+      </div>
       <div class="btn-row" style="margin-top:16px">
         <a class="btn" href="/studio/captures.html" id="to-library">See it in the library</a>
         <button class="btn secondary" type="button" onclick="location.reload()">Import another</button>
@@ -108,7 +134,8 @@
 
   function sync() {
     const c = $("condition").value;
-    $("foot-field").hidden = c === "object";
+    $("foot-field").hidden = c === "object" || c === "calibration";
+    $("up-field").hidden = c !== "calibration";
     $("load-field").hidden = c !== "swb" && c !== "fwb";
   }
   $("condition").addEventListener("change", sync);
@@ -125,6 +152,52 @@
   drop.addEventListener("dragleave", () => drop.classList.remove("over"));
   drop.addEventListener("drop", (e) => { e.preventDefault(); drop.classList.remove("over"); pick(e.dataTransfer.files[0]); });
 
+  const CALIPERS = [
+    ["length", "Overall length", 150], ["width", "Overall width", 70], ["base", "Base thickness", 10],
+    ["dome_apex", "Dome top height", 30], ["terrace_high", "High terrace height", 35], ["terrace_low", "Low terrace height", 22],
+  ];
+  $("calipers").innerHTML = CALIPERS.map(([k, label, nominal]) => `
+    <div class="field"><label for="c-${k}">${esc(label)} <span class="hint">model ${nominal}</span></label>
+      <input id="c-${k}" name="${k}" type="number" inputmode="decimal" step="0.01" min="1" max="300"></div>`).join("");
+  let importedId = null;
+  $("caliper-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const body = Object.fromEntries(new FormData(e.target));
+    $("caliper-msg").textContent = "Re-scoring…";
+    const r = await fetch(`/api/captures/${encodeURIComponent(importedId)}/calipers`, {
+      method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+    });
+    const out = await r.json().catch(() => ({}));
+    if (!r.ok) { $("caliper-msg").textContent = out.error || "Couldn't save."; return; }
+    showAccuracy(out.accuracy, importedId);
+    $("caliper-msg").textContent = "Saved. The numbers above now use your readings.";
+  });
+
+  // What the scan measured against the object's true shape (imported calibration object only).
+  function showAccuracy(a, id) {
+    importedId = id;
+    $("acc").hidden = !a;
+    $("caliper-form").hidden = !a || !!a.error;
+    if (!a) return;
+    if (a.error) {
+      $("acc-ref").textContent = "";
+      $("acc-facts").innerHTML = "";
+      $("acc-warn").innerHTML = `<li>${esc(a.error)}</li>`;
+      $("acc-json").parentElement.hidden = true;
+      return;
+    }
+    const mm = (v) => (v == null ? "not measured" : `${v > 0 ? "+" : ""}${Number(v).toFixed(2)} mm`);
+    $("acc-ref").textContent = `Lengths compared with the ${a.reference === "calipers" ? "caliper readings of the print" : "object's design (add caliper readings for a fairer comparison)"}. ${a.floor.charAt(0).toUpperCase()}${a.floor.slice(1)}.`;
+    $("acc-facts").innerHTML = [
+      ["Surface, typical error", `${a.median_mm} mm`], ["Surface, worst 5%", `${a.p95_mm} mm`],
+      ["Too big (+) or small (−) on average", mm(a.signed_mean_mm)], ["Object captured within 1 mm", `${Math.round(100 * a.within_1mm)}%`],
+      ["Length", mm(a.length_mm)], ["Width", mm(a.width_mm)], ["Dome top height", mm(a.dome_apex_mm)],
+    ].map(([k, v]) => `<div><dt>${k}</dt><dd>${esc(v)}</dd></div>`).join("");
+    $("acc-warn").innerHTML = (a.warnings || []).map((w) => `<li>${esc(w)}</li>`).join("");
+    $("acc-json").href = `/api/captures/${encodeURIComponent(id)}/accuracy`;
+    $("acc-json").parentElement.hidden = false;
+  }
+
   $("form").addEventListener("submit", async (e) => {
     e.preventDefault();
     const ext = file?.name.split(".").pop().toLowerCase();
@@ -138,18 +211,18 @@
 
     const btn = $("btn-import");
     btn.disabled = true;
-    btn.textContent = "Importing…";
+    btn.textContent = cond === "calibration" ? "Importing and measuring…" : "Importing…";
     try {
       const r = await fetch("/api/captures", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          condition: cond, foot: cond === "object" ? null : $("foot").value, session: $("session").value.trim(),
+          condition: cond, foot: cond === "object" || cond === "calibration" ? null : $("foot").value, session: $("session").value.trim(),
           load_kg: $("load").value || null, method: "imported_mesh", notes: $("notes").value,
         }),
       });
       const created = await r.json();
       if (!r.ok) throw new Error(created.error);
-      const up = await fetch(`/api/captures/${created.id}/mesh?ext=${ext}`, {
+      const up = await fetch(`/api/captures/${created.id}/mesh?ext=${ext}&up=${$("up").value}`, {
         method: "PUT", headers: { "Content-Type": "application/octet-stream" }, body: file,
       });
       const data = await up.json();
@@ -160,7 +233,9 @@
         ["Vertices", m.vertices.toLocaleString()], ["Faces", m.faces.toLocaleString()], ["Closed surface", m.watertight ? "yes" : "no"],
       ].map(([k, v]) => `<div><dt>${k}</dt><dd>${esc(v)}</dd></div>`).join("");
       $("units-note").textContent = `The file looked like it was in ${m.units_detected === "m" ? "metres" : m.units_detected === "cm" ? "centimetres" : "millimetres"}, `
-        + `so it was scaled by ${m.scale_to_mm} to millimetres. A foot is usually 220–320 mm long: if the length above is far off, the units guess was wrong.`;
+        + `so it was scaled by ${m.scale_to_mm} to millimetres. `
+        + (cond === "calibration" ? "The calibration object is 150 × 70 mm." : "A foot is usually 220–320 mm long: if the length above is far off, the units guess was wrong.");
+      showAccuracy(data.accuracy, created.id);
       $("to-library").href = `/studio/captures.html#${created.id}`;
       $("result").hidden = false;
       $("result").scrollIntoView({ behavior: "smooth" });
