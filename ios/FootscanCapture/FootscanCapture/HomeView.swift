@@ -4,7 +4,8 @@ import RealityKit
 import SwiftUI
 
 struct HomeView: View {
-    @State private var subject: Subject = .calibration
+    // Starts on "Something else", so a calibration-object scan is always a deliberate choice.
+    @State private var subject: Subject = .other
     @State private var scans: [Scan] = ScanStore.all()
     @State private var capturing: Scan?
     @State private var path: [Scan] = []

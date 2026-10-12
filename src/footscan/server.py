@@ -922,15 +922,10 @@ def import_mesh(src: Path, dst: Path) -> dict:
     tools use millimetres. A foot is roughly 0.2-0.35 m long, so the largest
     dimension tells the units apart unambiguously.
     """
-    import trimesh
-
-    loaded = trimesh.load(src, force="mesh")
-    if not isinstance(loaded, trimesh.Trimesh) or len(loaded.faces) == 0:
-        raise ValueError("no triangles found")
     from .recon import viewer_data
-    from .recon.imported import to_millimetres
+    from .recon.imported import load_geometry, to_millimetres
 
-    mesh, units, factor = to_millimetres(loaded)
+    mesh, units, factor = to_millimetres(load_geometry(src))
     mesh.export(dst)
     viewer_data.write(mesh, dst.parent / "viewer.bin")
     ext = [round(float(v), 1) for v in sorted(mesh.extents, reverse=True)]

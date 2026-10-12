@@ -139,7 +139,7 @@ private struct Controls: View {
         case .detecting: "A box appears round it. Drag the box's edges so it holds just the object, then Start."
         case .capturing:
             session.userCompletedScanPass
-                ? "That's one lap. Do another lap higher up, looking down at it, or Finish."
+                ? "Lap done. Best results: 2 or 3 laps, one higher up looking down, one low. Then Finish."
                 : "Walk slowly all the way round. Keep it in the middle of the screen."
         case .finishing: "Saving the last photos…"
         case .completed: "Done."

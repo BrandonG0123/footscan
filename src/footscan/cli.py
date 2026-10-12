@@ -133,14 +133,13 @@ def cmd_accuracy(args) -> int:
 
 
 def cmd_accuracy_mesh(args) -> int:
-    import trimesh
-
     from .recon import imported
 
     calipers = json.loads(Path(args.calipers).read_text()) if args.calipers else None
-    mesh = trimesh.load(args.mesh, force="mesh")
-    if not isinstance(mesh, trimesh.Trimesh) or not len(mesh.faces):
-        print(f"{args.mesh}: no triangles found", file=sys.stderr)
+    try:
+        mesh = imported.load_geometry(args.mesh)
+    except ValueError as err:
+        print(f"{args.mesh}: {err}", file=sys.stderr)
         return 1
     try:
         a = imported.evaluate_imported(mesh, up=args.up, calipers=calipers)

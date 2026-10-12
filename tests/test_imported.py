@@ -76,3 +76,51 @@ def test_something_that_isnt_the_calibration_object_is_refused():
     big.apply_scale(3.0)  # e.g. a model with no real-world scale
     with pytest.raises(imported.NotTheObject):
         imported.evaluate_imported(big, up="z")
+
+
+# What Apple's Model I/O writes for an Object Capture model: one named group,
+# normals and texture coordinates on every corner, and a material whose
+# textures live inside the .usdz.
+_APPLE_MTL = """# Apple ModelI/O MTL File: model.mtl
+
+newmtl Texture
+\tmap_Kd model.usdz[0/baked_mesh_2eee0005_tex0.png]
+\tKd 0.18 0.18 0.18
+\tmap_ao model.usdz[0/baked_mesh_2eee0005_ao0.png]
+\tmap_tangentSpaceNormal model.usdz[0/baked_mesh_2eee0005_norm0.png]
+"""
+
+
+def _apple_obj(folder, mesh, with_mtl=True):
+    lines = ["# Apple ModelIO OBJ File: model", "mtllib model.mtl", "g submesh", "usemtl Texture", "s off"]
+    lines += [f"v {x:.6f} {y:.6f} {z:.6f}" for x, y, z in mesh.vertices]
+    lines += [f"vt {u:.4f} {v:.4f}" for u, v in np.random.default_rng(0).random((len(mesh.vertices), 2))]
+    lines += [f"vn {x:.4f} {y:.4f} {z:.4f}" for x, y, z in mesh.vertex_normals]
+    lines += ["f " + " ".join(f"{i + 1}/{i + 1}/{i + 1}" for i in face) for face in mesh.faces]
+    (folder / "model.obj").write_text("\n".join(lines) + "\n")
+    if with_mtl:
+        (folder / "model.mtl").write_text(_APPLE_MTL)
+    return folder / "model.obj"
+
+
+@pytest.mark.parametrize("with_mtl", [True, False])  # AirDropping just model.obj leaves the .mtl behind
+def test_textured_obj_from_object_capture_loads_as_plain_geometry(tmp_path, with_mtl):
+    """Object Capture's OBJ carries texture data; measuring must not need to read it.
+
+    The first real scan from the iPhone app (earbuds, 12 Oct 2026) crashed the
+    plain trimesh loader on exactly this layout: merging the group copies the
+    texture material, which needs an image library the studio doesn't have.
+    """
+    box = trimesh.creation.box(extents=[0.06, 0.045, 0.022])  # metres, like the app's export
+    path = _apple_obj(tmp_path, box, with_mtl)
+    m = imported.load_geometry(path)
+    assert len(m.faces) == 12
+    mm, units, _ = imported.to_millimetres(m)
+    assert units == "m"
+    assert sorted(mm.extents) == pytest.approx([22.0, 45.0, 60.0], abs=1e-4)
+
+
+def test_a_file_with_no_triangles_is_refused(tmp_path):
+    (tmp_path / "empty.obj").write_text("v 0 0 0\nv 1 0 0\n")
+    with pytest.raises(ValueError):
+        imported.load_geometry(tmp_path / "empty.obj")

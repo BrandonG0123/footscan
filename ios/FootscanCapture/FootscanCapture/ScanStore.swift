@@ -39,7 +39,7 @@ enum Subject: String, CaseIterable, Identifiable, Codable {
         case .rightFoot, .leftFoot:
             "Sit on a chair with this foot bare and flat on the printed mat. Keep the foot completely still. Someone else holds the phone and walks round you."
         case .other:
-            "Any object on a table, to get a feel for how capture works."
+            "Any object on a table, to get a feel for how capture works. Matte, textured things scan best; shiny or plain white ones (like earbuds) come out patchy."
         }
     }
 }

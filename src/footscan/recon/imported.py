@@ -53,6 +53,43 @@ FLOOR_FACING = 0.97         # cos of the most a "flat" bit may tilt (about 14 de
 TABLE_CUT_MM = 0.5          # triangles entirely below this, once levelled, are table
 
 
+def load_geometry(path):
+    """Just the triangles of a 3D file, in the file's own units and axes.
+
+    Scanning apps attach colour textures (Object Capture's OBJ points at a
+    PNG). Measuring needs only the shape, and reading textures would need an
+    image library and can fail on files that are fine geometrically, so each
+    part's vertices and faces are taken directly, placed where the file puts
+    them, and nothing else is read.
+    """
+    import trimesh
+
+    loaded = trimesh.load(path, process=False)
+    if isinstance(loaded, trimesh.Trimesh):
+        parts = [(np.eye(4), loaded)]
+    elif isinstance(loaded, trimesh.Scene):
+        parts = []
+        for node in loaded.graph.nodes_geometry:
+            T, name = loaded.graph[node]
+            g = loaded.geometry.get(name)
+            if isinstance(g, trimesh.Trimesh):
+                parts.append((T, g))
+    else:
+        parts = []
+    if not parts:
+        raise ValueError("no triangles found")
+    V, F, offset = [], [], 0
+    for T, g in parts:
+        v = np.asarray(g.vertices, dtype=float)
+        V.append(v @ T[:3, :3].T + T[:3, 3])
+        F.append(np.asarray(g.faces) + offset)
+        offset += len(v)
+    mesh = trimesh.Trimesh(np.vstack(V), np.vstack(F), process=True)
+    if not len(mesh.faces):
+        raise ValueError("no triangles found")
+    return mesh
+
+
 def to_millimetres(mesh):
     """(mesh in mm, units it was in, factor applied). Does not modify the input."""
     extent = float(mesh.extents.max())
