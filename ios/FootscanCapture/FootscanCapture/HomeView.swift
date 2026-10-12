@@ -67,8 +67,15 @@ struct HomeView: View {
             }
             .scrollIndicators(.hidden)
             .background(Color.fsBackground.ignoresSafeArea())
-            .navigationTitle("footscan")
+            .navigationTitle("Footscan")
+            .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                ToolbarItem(placement: .principal) {
+                    Text("Footscan")
+                        .font(.system(size: 22, weight: .bold, design: .rounded))
+                        .foregroundStyle(Color.fsInk)
+                        .accessibilityAddTraits(.isHeader)
+                }
                 ToolbarItem(placement: .topBarLeading) { studioPill }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button { showSettings = true } label: { Image(systemName: "gearshape.fill") }
@@ -108,7 +115,7 @@ struct HomeView: View {
     private var hero: some View {
         VStack(alignment: .leading, spacing: 10) {
             OrbitScene(interactive: false)
-                .frame(height: 210)
+                .frame(height: 240)
                 .frame(maxWidth: .infinity)
                 .visualEffect { content, proxy in
                     // drifts and fades as the page scrolls up under it

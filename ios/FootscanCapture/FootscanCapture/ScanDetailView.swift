@@ -236,7 +236,7 @@ struct ScanDetailView: View {
                 if scan.hasOBJ { ShareLink(item: scan.obj) { Label("model.obj", systemImage: "square.and.arrow.up") }.buttonStyle(.bordered) }
                 ShareLink(item: scan.usdz) { Label("model.usdz", systemImage: "square.and.arrow.up") }.buttonStyle(.bordered)
             }
-            Text("model.obj goes into the studio's Import 3D. To rebuild in more detail on a Mac, copy this scan's Images folder over (Finder > iPhone > Files > footscan capture).")
+            Text("model.obj goes into the studio's Import 3D. To rebuild in more detail on a Mac, copy this scan's Images folder over (Finder > iPhone > Files > Footscan).")
                 .font(.footnote).foregroundStyle(Color.fsMuted)
         }
         .card()

@@ -85,7 +85,7 @@ struct OnboardingView: View {
             Text("Scan it.\nMeasure it.")
                 .font(.system(size: 40, weight: .bold, design: .rounded))
                 .foregroundStyle(Color.fsInk)
-            Text("footscan turns a walk round your foot with your iPhone into a 3D model in real millimetres. Try it: drag the phone round the foot above.")
+            Text("Footscan turns a walk round your foot with your iPhone into a 3D model in real millimetres. Try it: drag the phone round the foot above.")
                 .font(.body).foregroundStyle(Color.fsMuted)
             SafetyStrip()
         }
@@ -281,7 +281,7 @@ struct OnboardingView: View {
     private var cameraDetail: String {
         switch camera {
         case .authorized: "You're ready to scan."
-        case .denied, .restricted: "Turn it on in Settings > footscan capture > Camera."
+        case .denied, .restricted: "Turn it on in Settings > Footscan > Camera."
         default: "iOS will ask once."
         }
     }

@@ -64,7 +64,7 @@ struct SettingsView: View {
 
                 Section {
                     LabeledContent("Version", value: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "?")
-                    Text("footscan capture measures how accurate iPhone scanning is. It is not a medical device: it designs and treats nothing.")
+                    Text("Footscan measures how accurate iPhone scanning is. It is not a medical device: it designs and treats nothing.")
                         .font(.footnote).foregroundStyle(Color.fsMuted)
                 }
             }

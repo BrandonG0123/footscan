@@ -88,7 +88,7 @@ struct OrbitScene: View {
             .contentShape(Rectangle())
             .gesture(interactive && !reduceMotion ? DragGesture(minimumDistance: 0).onChanged { g in
                 let c = CGPoint(x: size.width / 2, y: size.height / 2)
-                let a = atan2((g.location.y - c.y) / (size.height * 0.42), (g.location.x - c.x) / (size.width * 0.42))
+                let a = atan2((g.location.y - c.y) / (size.height * 0.36), (g.location.x - c.x) / (size.width * 0.42))
                 let t = (a - .pi / 2) / (2 * .pi)
                 let before = model.lit.count
                 model.drag(to: t)
@@ -141,118 +141,155 @@ struct OrbitScene: View {
 
     private func draw(_ ctx: inout GraphicsContext, size: CGSize, frame f: Frame) {
         let c = CGPoint(x: size.width / 2, y: size.height / 2)
-        let rx = size.width * 0.42, ry = size.height * 0.42
+        // leave room top and bottom for the phone (it's taller than the ring is thick)
+        let rx = size.width * 0.42, ry = size.height * 0.36
         func onRing(_ t: Double, _ k: CGFloat = 1) -> CGPoint {
             let a = CGFloat(Double.pi / 2 + t * 2 * Double.pi)
             return CGPoint(x: c.x + rx * k * cos(a), y: c.y + ry * k * sin(a))
         }
-
-        // the ring of sides
         let n = OrbitModel.sides
+        let current = OrbitModel.side(f.phoneT)
+
+        // a soft pool of colour the whole scene sits in
+        let glow = CGRect(x: c.x - rx * 0.95, y: c.y - ry * 0.95, width: rx * 1.9, height: ry * 1.9)
+        ctx.fill(Path(ellipseIn: glow), with: .radialGradient(
+            Gradient(colors: [Color.fsBrandSoft.opacity(0.85), Color.fsBrandSoft.opacity(0)]),
+            center: c, startRadius: 0, endRadius: rx * 0.95))
+
+        // the path the phone walks: a fine dotted line
+        var orbit = Path()
+        orbit.addEllipse(in: CGRect(x: c.x - rx, y: c.y - ry, width: 2 * rx, height: 2 * ry))
+        ctx.stroke(orbit, with: .color(.fsBrand.opacity(0.22)), style: StrokeStyle(lineWidth: 1.2, lineCap: .round, dash: [0.1, 6]))
+
+        // the ring of sides: thin rounded arcs; the side the phone is on glows
         for i in 0..<n {
             var arc = Path()
-            let steps = 12
+            let steps = 14
             for j in 0...steps {
-                let t = (Double(i) + 0.08 + 0.84 * Double(j) / Double(steps)) / Double(n)
-                let p = onRing(t, 1.09)
+                let t = (Double(i) + 0.1 + 0.8 * Double(j) / Double(steps)) / Double(n)
+                let p = onRing(t, 1.1)
                 j == 0 ? arc.move(to: p) : arc.addLine(to: p)
             }
             let on = f.lit.contains(i)
-            ctx.stroke(arc, with: .color(on ? .fsBrand : .fsLine), style: StrokeStyle(lineWidth: on ? 7 : 6, lineCap: .round))
-        }
-        // the dashed path the phone walks
-        var orbit = Path()
-        orbit.addEllipse(in: CGRect(x: c.x - rx, y: c.y - ry, width: 2 * rx, height: 2 * ry))
-        ctx.stroke(orbit, with: .color(.fsBrand.opacity(0.3)), style: StrokeStyle(lineWidth: 1.4, dash: [4, 6]))
-
-        // the mat: two sheets, markers down the long edges
-        let mw = size.width * 0.3, mh = size.height * 0.62
-        let mat = CGRect(x: c.x - mw / 2, y: c.y - mh / 2, width: mw, height: mh)
-        ctx.fill(Path(roundedRect: mat, cornerRadius: 4), with: .color(.fsSurface))
-        ctx.stroke(Path(roundedRect: mat, cornerRadius: 4), with: .color(.fsLine), lineWidth: 1)
-        let sq = mw * 0.075
-        var y = mat.minY + sq * 0.7
-        while y < mat.maxY - sq * 1.5 {
-            if abs(y + sq / 2 - c.y) > sq {
-                ctx.fill(Path(CGRect(x: mat.minX + sq * 0.5, y: y, width: sq, height: sq)), with: .color(.fsInk))
-                ctx.fill(Path(CGRect(x: mat.maxX - sq * 1.5, y: y, width: sq, height: sq)), with: .color(.fsInk))
+            if on && i == current && f.insole == 0 {
+                ctx.stroke(arc, with: .color(.fsAccent.opacity(0.55)), style: StrokeStyle(lineWidth: 10, lineCap: .round))
             }
-            y += sq * 1.9
+            ctx.stroke(arc, with: .color(on ? Color.fsBrand : Color.fsLine.opacity(0.9)),
+                       style: StrokeStyle(lineWidth: on ? 5 : 4, lineCap: .round))
+        }
+
+        // the mat: a sheet of paper with a soft shadow; its markers are small
+        // and faint, background texture behind the foot rather than the subject
+        let mw = size.width * 0.29, mh = size.height * 0.5
+        let mat = CGRect(x: c.x - mw / 2, y: c.y - mh / 2, width: mw, height: mh)
+        var paper = ctx
+        paper.addFilter(.shadow(color: .black.opacity(0.1), radius: 10, x: 0, y: 5))
+        paper.fill(Path(roundedRect: mat, cornerRadius: 8), with: .color(.fsSurface))
+        let sq = mw * 0.055
+        var y = mat.minY + sq * 1.2
+        while y < mat.maxY - sq * 2 {
+            if abs(y + sq / 2 - c.y) > sq * 1.5 {
+                for x in [mat.minX + sq * 0.9, mat.maxX - sq * 1.9] {
+                    ctx.fill(Path(roundedRect: CGRect(x: x, y: y, width: sq, height: sq), cornerRadius: sq * 0.25),
+                             with: .color(.fsInk.opacity(0.16)))
+                }
+            }
+            y += sq * 2.3
         }
         var seam = Path()
-        seam.move(to: CGPoint(x: mat.minX, y: c.y)); seam.addLine(to: CGPoint(x: mat.maxX, y: c.y))
-        ctx.stroke(seam, with: .color(.fsBrand), style: StrokeStyle(lineWidth: 1, dash: [3, 3]))
+        seam.move(to: CGPoint(x: mat.minX + 6, y: c.y)); seam.addLine(to: CGPoint(x: mat.maxX - 6, y: c.y))
+        ctx.stroke(seam, with: .color(.fsBrand.opacity(0.3)), style: StrokeStyle(lineWidth: 1, dash: [3, 4]))
 
-        // the foot (and, as it becomes the insole, the lattice)
-        let scale = mh * 0.86 / 200
+        // the foot: the subject. Larger than the clear middle of the mat, with
+        // its own shadow, so it sits on top of the paper
+        let scale = mh * 0.9 / 200
         let foot = FootShape.outline()
             .applying(CGAffineTransform(translationX: -100, y: -100))
             .applying(CGAffineTransform(scaleX: scale, y: scale))
-            .applying(CGAffineTransform(translationX: c.x, y: c.y + 4))
-        ctx.fill(foot, with: .color(.fsBrandSoft))
+            .applying(CGAffineTransform(translationX: c.x, y: c.y + 6))
+        let box = foot.boundingRect
+        var footCtx = ctx
+        footCtx.addFilter(.shadow(color: Color.fsBrand.opacity(0.25), radius: 8, x: 0, y: 4))
+        footCtx.fill(foot, with: .linearGradient(Gradient(colors: [.fsBrandSoft, .fsSurface]),
+                                                 startPoint: CGPoint(x: box.midX, y: box.minY),
+                                                 endPoint: CGPoint(x: box.midX, y: box.maxY)))
         if f.insole > 0 {
             var lattice = ctx
             lattice.clip(to: foot)
             lattice.opacity = f.insole
-            lattice.fill(foot, with: .color(.fsAccent.opacity(0.35)))
+            lattice.fill(foot, with: .color(.fsAccent.opacity(0.3)))
             let h: CGFloat = 9 * scale * 1.6
             var row = 0
-            var yy = foot.boundingRect.minY - h
-            while yy < foot.boundingRect.maxY + h {
-                var xx = foot.boundingRect.minX - h + (row % 2 == 0 ? 0 : h * 0.866)
-                while xx < foot.boundingRect.maxX + h {
-                    lattice.stroke(hexagon(CGPoint(x: xx, y: yy), r: h * 0.5), with: .color(.fsBrand.opacity(0.55)), lineWidth: 0.8)
+            var yy = box.minY - h
+            while yy < box.maxY + h {
+                var xx = box.minX - h + (row % 2 == 0 ? 0 : h * 0.866)
+                while xx < box.maxX + h {
+                    lattice.stroke(hexagon(CGPoint(x: xx, y: yy), r: h * 0.5), with: .color(.fsBrand.opacity(0.5)), lineWidth: 0.8)
                     xx += h * 1.732
                 }
                 yy += h * 1.5
                 row += 1
             }
         }
-        ctx.stroke(foot, with: .color(.fsBrand), lineWidth: 2.4 + 1.6 * f.insole)
+        ctx.stroke(foot, with: .color(.fsBrand), lineWidth: 2 + 1.5 * f.insole)
         for (x, yv, r) in FootShape.toes {
-            let p = CGPoint(x: c.x + (x - 100) * scale, y: c.y + 4 + (yv - 100) * scale)
+            let p = CGPoint(x: c.x + (x - 100) * scale, y: c.y + 6 + (yv - 100) * scale)
             let circle = Path(ellipseIn: CGRect(x: p.x - r * scale, y: p.y - r * scale, width: 2 * r * scale, height: 2 * r * scale))
             var toe = ctx
             toe.opacity = 1 - f.insole * 0.85
             toe.fill(circle, with: .color(.fsBrandSoft))
-            toe.stroke(circle, with: .color(.fsBrand), lineWidth: 2)
+            toe.stroke(circle, with: .color(.fsBrand), lineWidth: 1.8)
         }
 
-        // the scan line, over the foot only
+        // the scanner: one bright line with a soft glow, sweeping heel to toe over the foot
         if let s = f.scan {
+            let yLine = box.maxY - CGFloat(s) * box.height
             var scanCtx = ctx
             scanCtx.clip(to: foot)
-            let yLine = foot.boundingRect.maxY - CGFloat(s) * foot.boundingRect.height
-            let band = CGRect(x: foot.boundingRect.minX, y: yLine - 8, width: foot.boundingRect.width, height: 16)
+            let band = CGRect(x: box.minX, y: yLine - 14, width: box.width, height: 28)
             scanCtx.fill(Path(band), with: .linearGradient(
-                Gradient(colors: [.fsAccent.opacity(0), .fsAccent.opacity(0.9), .fsAccent.opacity(0)]),
+                Gradient(colors: [.fsAccent.opacity(0), .fsAccent.opacity(0.55), .fsAccent.opacity(0)]),
                 startPoint: CGPoint(x: band.midX, y: band.minY), endPoint: CGPoint(x: band.midX, y: band.maxY)))
+            var line = Path()
+            line.move(to: CGPoint(x: mat.minX + 4, y: yLine)); line.addLine(to: CGPoint(x: mat.maxX - 4, y: yLine))
+            ctx.stroke(line, with: .color(.fsAccent), style: StrokeStyle(lineWidth: 2, lineCap: .round))
         }
 
-        // the phone, facing the middle, and its flash
+        // the phone, facing the middle: rounded body, lit screen, lens
         let p = onRing(f.phoneT)
         if f.flash > 0 {
-            ctx.fill(Path(ellipseIn: CGRect(x: p.x - 18, y: p.y - 18, width: 36, height: 36)),
-                     with: .color(.fsAccent.opacity(0.7 * f.flash)))
+            let r = 14 + 10 * (1 - f.flash)
+            ctx.stroke(Path(ellipseIn: CGRect(x: p.x - r, y: p.y - r, width: 2 * r, height: 2 * r)),
+                       with: .color(.fsAccent.opacity(0.8 * f.flash)), lineWidth: 3)
         }
         var phone = ctx
         phone.translateBy(x: p.x, y: p.y)
         let facing = Double(atan2(c.x - p.x, -(c.y - p.y))) + Double.pi
         phone.rotate(by: .radians(facing))
-        let body = CGRect(x: -11, y: -19, width: 22, height: 38)
-        phone.fill(Path(roundedRect: body, cornerRadius: 5), with: .color(.fsInk))
-        phone.fill(Path(roundedRect: body.insetBy(dx: 3, dy: 4).offsetBy(dx: 0, dy: 1), cornerRadius: 2), with: .color(.fsBrand.opacity(0.75)))
-        phone.fill(Path(ellipseIn: CGRect(x: -1.6, y: -18.5, width: 3.2, height: 3.2)), with: .color(.fsAccent))
+        phone.addFilter(.shadow(color: .black.opacity(0.25), radius: 6, x: 0, y: 3))
+        let body = CGRect(x: -12, y: -21, width: 24, height: 42)
+        phone.fill(Path(roundedRect: body, cornerRadius: 7), with: .color(Color(light: 0x15201f, dark: 0x0a0f0e)))
+        var screenCtx = ctx
+        screenCtx.translateBy(x: p.x, y: p.y)
+        screenCtx.rotate(by: .radians(facing))
+        screenCtx.fill(Path(roundedRect: body.insetBy(dx: 2.5, dy: 2.5), cornerRadius: 5), with: .linearGradient(
+            Gradient(colors: [.fsBrand, Color(light: 0x5fc2b6, dark: 0x5fc2b6)]),
+            startPoint: CGPoint(x: 0, y: body.minY), endPoint: CGPoint(x: 0, y: body.maxY)))
+        screenCtx.fill(Path(ellipseIn: CGRect(x: -2.2, y: -18.2, width: 4.4, height: 4.4)), with: .color(.fsAccent))
 
-        // done: a tick
+        // done: a tick beside the mat
         if f.insole > 0.6 {
-            let tp = CGPoint(x: mat.maxX + 4, y: mat.minY + 18)
+            let tp = CGPoint(x: mat.maxX + 6, y: mat.minY + 16)
             var tick = ctx
             tick.opacity = (f.insole - 0.6) / 0.4
+            tick.addFilter(.shadow(color: Color.fsOK.opacity(0.4), radius: 6, x: 0, y: 2))
             tick.fill(Path(ellipseIn: CGRect(x: tp.x - 14, y: tp.y - 14, width: 28, height: 28)), with: .color(.fsOK))
             var t = Path()
             t.move(to: CGPoint(x: tp.x - 6, y: tp.y)); t.addLine(to: CGPoint(x: tp.x - 2, y: tp.y + 4)); t.addLine(to: CGPoint(x: tp.x + 6, y: tp.y - 5))
-            tick.stroke(t, with: .color(.white), style: StrokeStyle(lineWidth: 2.6, lineCap: .round, lineJoin: .round))
+            ctx.opacity = 1
+            var mark = ctx
+            mark.opacity = (f.insole - 0.6) / 0.4
+            mark.stroke(t, with: .color(.white), style: StrokeStyle(lineWidth: 2.6, lineCap: .round, lineJoin: .round))
         }
     }
 
