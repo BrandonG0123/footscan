@@ -132,6 +132,39 @@ def cmd_accuracy(args) -> int:
     return 0
 
 
+def cmd_accuracy_mesh(args) -> int:
+    import trimesh
+
+    from .recon import imported
+
+    calipers = json.loads(Path(args.calipers).read_text()) if args.calipers else None
+    mesh = trimesh.load(args.mesh, force="mesh")
+    if not isinstance(mesh, trimesh.Trimesh) or not len(mesh.faces):
+        print(f"{args.mesh}: no triangles found", file=sys.stderr)
+        return 1
+    try:
+        a = imported.evaluate_imported(mesh, up=args.up, calipers=calipers)
+    except imported.NotTheObject as err:
+        print(f"{args.mesh}: {err}", file=sys.stderr)
+        return 1
+    imp, reg, dev, comp = a["imported"], a["registration"], a["surface_deviation"], a["completeness"]
+    print(f"{args.mesh}: {imp['units_detected']} -> mm, {'x'.join(str(v) for v in imp['extents_mm'])} mm, {args.up} up")
+    print(f"  table: {imp['floor']}")
+    print(f"  lined up: {100 * reg['scan_within_2mm']:.0f}% of the scan within 2 mm of the object")
+    print(f"  surface: median {dev['median_mm']} mm, 95th percentile {dev['p95_mm']} mm, "
+          f"signed mean {dev['signed_mean_mm']:+} mm")
+    print(f"  coverage: {100 * comp['within_1mm']:.1f}% of the object within 1 mm, {100 * comp['within_2mm']:.1f}% within 2 mm")
+    for r in a["dimensions"]:
+        diff = "not measured" if r["scan_minus_reference_mm"] is None else f"{r['scan_minus_reference_mm']:+.2f} mm"
+        print(f"  {r['label']}: {diff} (vs {r['reference']})")
+    for w in a["warnings"]:
+        print(f"  warning: {w}", file=sys.stderr)
+    if args.output:
+        Path(args.output).write_text(json.dumps(a, indent=2))
+        print(f"report: {args.output}")
+    return 0
+
+
 def cmd_export_measures(args) -> int:
     from .landmarks import export_rows, list_picks
 
@@ -195,6 +228,16 @@ def main(argv=None) -> int:
     ac.add_argument("capture")
     ac.add_argument("--calipers", help="JSON of caliper measurements of the print")
     ac.set_defaults(func=cmd_accuracy)
+
+    am = sub.add_parser("accuracy-mesh",
+                        help="accuracy study for a calibration-object model made by another app "
+                             "(e.g. the footscan capture iPhone app's Object Capture model)")
+    am.add_argument("mesh", help="OBJ, PLY, STL or GLB; metres, centimetres or millimetres (detected from its size)")
+    am.add_argument("--up", choices=["y", "z"], default="y",
+                    help="which axis points up in the file (Object Capture and most phone apps: y)")
+    am.add_argument("--calipers", help="JSON of caliper measurements of the print")
+    am.add_argument("-o", "--output", help="write the full report as JSON")
+    am.set_defaults(func=cmd_accuracy_mesh)
 
     ex = sub.add_parser("export-measures", help="landmark picks of research captures -> repeatability CSV")
     ex.add_argument("--data", default="data", help="data folder (default: data/)")

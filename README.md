@@ -85,6 +85,12 @@ files from scanning apps (e.g. LiDAR scans from Polycam or Scaniverse), detects
 metres vs millimetres, and stores the model in the research library for
 comparison with photo scans.
 
+**iPhone LiDAR test app.** `ios/FootscanCapture` scans with Apple's Object
+Capture on an iPhone/iPad with LiDAR and sends the model to the Mac;
+`footscan accuracy-mesh model.obj` runs it through the same accuracy study as
+the photo scans. Setup (free Apple ID is enough) and steps:
+[docs/iphone-capture.md](docs/iphone-capture.md).
+
 **3D models (Phase 2).** In the studio, *3D model* on a capture or a
 customer's scan builds a surface in millimetres in the background (several
 minutes) and shows how well it went together. For the accuracy study, print

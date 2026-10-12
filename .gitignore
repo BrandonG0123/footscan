@@ -11,3 +11,9 @@ data/captures/
 .studio_key
 data/submissions/
 .demo-data/
+
+# Xcode
+ios/**/xcuserdata/
+ios/**/*.xcuserstate
+ios/**/DerivedData/
+ios/**/build/

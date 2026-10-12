@@ -908,17 +908,10 @@ def import_mesh(src: Path, dst: Path) -> dict:
     loaded = trimesh.load(src, force="mesh")
     if not isinstance(loaded, trimesh.Trimesh) or len(loaded.faces) == 0:
         raise ValueError("no triangles found")
-    extent = float(loaded.extents.max())
-    if extent < 5:
-        units, factor = "m", 1000.0
-    elif extent < 50:
-        units, factor = "cm", 10.0
-    else:
-        units, factor = "mm", 1.0
     from .recon import viewer_data
+    from .recon.imported import to_millimetres
 
-    mesh = loaded.copy()
-    mesh.apply_scale(factor)
+    mesh, units, factor = to_millimetres(loaded)
     mesh.export(dst)
     viewer_data.write(mesh, dst.parent / "viewer.bin")
     ext = [round(float(v), 1) for v in sorted(mesh.extents, reverse=True)]
