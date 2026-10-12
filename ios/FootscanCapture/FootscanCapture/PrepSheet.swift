@@ -1,6 +1,7 @@
 // "Get ready", before the first scan of each kind. Tick each thing as it's
 // done; after that kind has been scanned once, this is skipped (and stays
 // one tap away as Tips, without the ticking).
+import RealityKit
 import SwiftUI
 
 extension Subject {
@@ -13,24 +14,23 @@ extension Subject {
         }
     }
 
-    /// What to have ready before scanning this.
-    var checklist: [(String, String)] {
+    /// What to have ready before scanning this: (symbol, title, detail).
+    var checklist: [(String, String, String)] {
         switch self {
         case .calibration: [
-            ("Printed at 100%", "Matte, light-coloured filament; no supports."),
-            ("On a plain, matte table", "With room to walk all the way round it."),
-            ("Bright, even light", "No harsh shadows or shiny reflections."),
+            ("printer.fill", "Printed at 100%", "Matte, light-coloured filament; no supports."),
+            ("table.furniture.fill", "On a plain, matte table", "With room to walk all the way round it."),
+            ("sun.max.fill", "Bright, even light", "No harsh shadows or shiny reflections."),
         ]
         case .rightFoot, .leftFoot: [
-            ("The paper mat is taped flat", "On a hard floor, with sheet 1 (the heel end) toward the chair."),
-            ("Foot bare, trousers rolled up", "Past the ankle, so the whole foot shows."),
-            ("Sitting, foot flat on the mat", "Lower leg straight down. The foot stays completely still."),
-            ("Someone else holds the phone", "It's much easier for them to walk round you."),
-            ("A scale reading, if you can", "Bathroom scale under the foot: the studio records the load with the scan."),
+            ("doc.on.doc.fill", "The paper mat is taped flat", "On a hard floor, with sheet 1 (the heel end) toward the chair."),
+            ("figure.seated.side.right", "Sitting, foot bare and flat on the mat", "Trousers rolled past the ankle, lower leg straight down. The foot stays completely still."),
+            ("scalemass.fill", "A bathroom scale under the foot", "You'll type in its reading afterwards: the studio needs it for a seated scan."),
+            ("person.2.fill", "Someone else holds the phone", "It's much easier for them to walk round you."),
         ]
         case .other: [
-            ("Something matte with some texture", "A shoe, a patterned mug, a book. Shiny or plain white things come out patchy."),
-            ("Room to walk all the way round", "On a table or the floor, in even light."),
+            ("cube.fill", "Something matte with some texture", "A shoe, a patterned mug, a book. Shiny or plain white things come out patchy."),
+            ("arrow.trianglehead.2.clockwise.rotate.90", "Room to walk all the way round", "On a table or the floor, in even light."),
         ]
         }
     }
@@ -79,7 +79,7 @@ struct PrepSheet: View {
                     dismiss()
                 }
                 .buttonStyle(PrimaryButtonStyle())
-                .disabled(mustTick && ticked.count < subject.checklist.count)
+                .disabled(!ObjectCaptureSession.isSupported || (mustTick && ticked.count < subject.checklist.count))
                 .padding(.horizontal, 20).padding(.vertical, 10)
                 .background(.bar)
             }
@@ -89,7 +89,7 @@ struct PrepSheet: View {
         .sensoryFeedback(.success, trigger: ticked.count == subject.checklist.count)
     }
 
-    private func row(_ i: Int, _ item: (String, String)) -> some View {
+    private func row(_ i: Int, _ item: (String, String, String)) -> some View {
         Button {
             guard mustTick else { return }
             if ticked.contains(i) { ticked.remove(i) } else { ticked.insert(i) }
@@ -101,11 +101,13 @@ struct PrepSheet: View {
                         .foregroundStyle(ticked.contains(i) ? Color.fsBrand : Color.fsLine)
                         .contentTransition(.symbolEffect(.replace))
                 } else {
-                    Image(systemName: "lightbulb.fill").font(.title3).foregroundStyle(Color.fsBrand).frame(width: 28)
+                    Image(systemName: item.0).font(.title3).foregroundStyle(Color.fsBrand)
+                        .frame(width: 40, height: 40)
+                        .background(Color.fsBrandSoft, in: RoundedRectangle(cornerRadius: 11, style: .continuous))
                 }
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(item.0).font(.headline).foregroundStyle(Color.fsInk)
-                    Text(item.1).font(.subheadline).foregroundStyle(Color.fsMuted).fixedSize(horizontal: false, vertical: true)
+                    Text(item.1).font(.headline).foregroundStyle(Color.fsInk)
+                    Text(item.2).font(.subheadline).foregroundStyle(Color.fsMuted).fixedSize(horizontal: false, vertical: true)
                 }
                 Spacer(minLength: 0)
             }
