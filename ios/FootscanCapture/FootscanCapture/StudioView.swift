@@ -61,36 +61,47 @@ struct StudioView: View {
     @Environment(StudioConnection.self) private var studio
     @Environment(\.dismiss) private var dismiss
     @State private var scanning = false
+    @State private var confirmDisconnect = false
+
+    private var canScan: Bool { DataScannerViewController.isSupported && DataScannerViewController.isAvailable }
 
     var body: some View {
         NavigationStack {
-            List {
-                Section {
-                    if let link = studio.link {
-                        LabeledContent("Connected to", value: link.host)
-                        LabeledContent("Security", value: link.fingerprint == nil
-                                       ? "Public address (normal certificate checks)"
-                                       : "This Mac only (pinned certificate)")
-                        Button("Test the connection") { Task { await studio.check() } }
-                        Button("Disconnect", role: .destructive) { studio.disconnect() }
-                    } else {
-                        Text("Not connected. Scans can still be sent by AirDrop.").foregroundStyle(.secondary)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 18) {
+                    PageIllustration(symbol: studio.link == nil ? "desktopcomputer" : "desktopcomputer.and.arrow.down")
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(studio.link == nil ? "Connect to your studio" : "Your studio")
+                            .font(.system(.title, design: .rounded, weight: .bold))
+                        Text("Scans go straight from this phone to the footscan studio on your Mac, over your Wi-Fi.")
+                            .foregroundStyle(Color.fsMuted)
                     }
-                    if let status = studio.status { Text(status).font(.footnote) }
-                }
-                Section {
-                    Button {
-                        scanning = true
-                    } label: {
-                        Label(studio.link == nil ? "Connect: scan the studio's code" : "Connect to a different studio",
-                              systemImage: "qrcode.viewfinder")
+                    if let link = studio.link { connected(link) } else { howTo }
+                    if let status = studio.status {
+                        Label(status, systemImage: "info.circle")
+                            .font(.footnote).foregroundStyle(Color.fsMuted)
+                            .transition(.opacity)
                     }
-                    .disabled(!(DataScannerViewController.isSupported && DataScannerViewController.isAvailable))
-                } footer: {
-                    Text("On the Mac, start footscan with --host 0.0.0.0 --https, open the studio's Import 3D page and tap Show the connect code. The phone and Mac need to be on the same Wi-Fi.")
                 }
+                .padding(20)
+                .animation(.smooth, value: studio.status)
+                .animation(.smooth, value: studio.link)
             }
-            .navigationTitle("Studio")
+            .background(Color.fsBackground.ignoresSafeArea())
+            .safeAreaInset(edge: .bottom) {
+                Group {
+                    if studio.link == nil {
+                        Button { scanning = true } label: { Label("Scan the studio's code", systemImage: "qrcode.viewfinder") }
+                            .buttonStyle(PrimaryButtonStyle())
+                    } else {
+                        Button { scanning = true } label: { Label("Connect to a different studio", systemImage: "qrcode.viewfinder") }
+                            .buttonStyle(SecondaryButtonStyle())
+                    }
+                }
+                .disabled(!canScan)
+                .padding(.horizontal, 20).padding(.vertical, 10)
+                .background(.bar)
+            }
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
             .sheet(isPresented: $scanning) {
                 CodeScanner { text in
@@ -99,7 +110,57 @@ struct StudioView: View {
                 }
                 .ignoresSafeArea()
             }
+            .confirmationDialog("Disconnect from this studio?", isPresented: $confirmDisconnect, titleVisibility: .visible) {
+                Button("Disconnect", role: .destructive) { studio.disconnect() }
+            } message: {
+                Text("Scans stay on this phone. You can connect again with the code.")
+            }
         }
+        .tint(.fsBrand)
+        .sensoryFeedback(.success, trigger: studio.link)
+    }
+
+    private var howTo: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            step(1, "On your Mac, open the footscan studio")
+            step(2, "Go to Import 3D and tap Show the connect code")
+            step(3, "Tap the button below and point this camera at it")
+            if !canScan {
+                Text("This device can't read codes with its camera. Point the iPhone's Camera app at the code instead; it opens this app.")
+                    .font(.footnote).foregroundStyle(Color.fsWarn)
+            }
+        }
+        .card()
+    }
+
+    private func step(_ n: Int, _ text: String) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            Text("\(n)").font(.headline).foregroundStyle(Color.fsBrandInk)
+                .frame(width: 28, height: 28).background(Color.fsBrand, in: Circle())
+            Text(text).font(.body).foregroundStyle(Color.fsInk).padding(.top, 3)
+        }
+    }
+
+    private func connected(_ link: StudioLink) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 12) {
+                Image(systemName: "checkmark.circle.fill").font(.title2).foregroundStyle(Color.fsOK)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Connected").font(.headline)
+                    Text(link.host).font(.subheadline.monospaced()).foregroundStyle(Color.fsMuted)
+                }
+            }
+            Label(link.fingerprint == nil ? "Public address, checked the normal way" : "Talks only to this Mac (its certificate is pinned)",
+                  systemImage: "lock.fill")
+                .font(.footnote).foregroundStyle(Color.fsMuted)
+            HStack {
+                Button("Test the connection") { Task { await studio.check() } }
+                Spacer()
+                Button("Disconnect", role: .destructive) { confirmDisconnect = true }
+            }
+            .font(.subheadline.weight(.semibold))
+        }
+        .card()
     }
 }
 

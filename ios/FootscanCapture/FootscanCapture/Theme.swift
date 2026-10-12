@@ -43,8 +43,8 @@ struct PrimaryButtonStyle: ButtonStyle {
         configuration.label
             .font(.headline)
             .frame(maxWidth: .infinity, minHeight: 54)
-            .foregroundStyle(ink)
-            .background(tint.opacity(enabled ? 1 : 0.35), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .foregroundStyle(enabled ? ink : Color.fsMuted)
+            .background(enabled ? tint : Color.fsSurface2, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
             .shadow(color: tint.opacity(enabled ? 0.28 : 0), radius: configuration.isPressed ? 4 : 12, y: configuration.isPressed ? 2 : 6)
             .scaleEffect(configuration.isPressed ? 0.97 : 1)
             .animation(.spring(duration: 0.25, bounce: 0.4), value: configuration.isPressed)
@@ -132,6 +132,7 @@ struct SafetyStrip: View {
         .padding(.horizontal, 12).padding(.vertical, 7)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color(light: 0x15201f, dark: 0x0a0f0e), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(Color.fsAccent.opacity(0.35), lineWidth: 1))
         .accessibilityElement(children: .combine)
     }
 }

@@ -13,6 +13,7 @@ struct ScanDetailView: View {
     @State private var showStudio = false
     @State private var confirmDelete = false
     @State private var preview: URL?
+    @FocusState private var loadFocused: Bool
 
     var body: some View {
         let _ = library.version
@@ -33,7 +34,14 @@ struct ScanDetailView: View {
             }
             .padding(20)
         }
+        .scrollDismissesKeyboard(.interactively)
         .background(Color.fsBackground.ignoresSafeArea())
+        .toolbar {
+            ToolbarItemGroup(placement: .keyboard) {
+                Spacer()
+                Button("Done") { loadFocused = false }
+            }
+        }
         .navigationTitle(rec?.subject.label ?? "Scan")
         .navigationBarTitleDisplayMode(.inline)
         .sheet(isPresented: $showStudio) { StudioView() }
@@ -142,10 +150,14 @@ struct ScanDetailView: View {
         if library.work[scan.folder] == .sending {
             return rec?.subject == .calibration ? "Sending, and measuring its accuracy…" : "Sending…"
         }
-        if let id = rec?.studioCaptureID { return "Sent to \(rec?.studioHost ?? "the studio") as \(id)" }
+        if rec?.studioCaptureID != nil {
+            let when = rec?.sentAt.map { " \($0.formatted(.relative(presentation: .named)))" } ?? ""
+            return "Sent to \(rec?.studioHost ?? "the studio")\(when)"
+        }
         if studio.client == nil { return "Not connected to a studio" }
-        if rec?.subject.isFoot == true && rec?.loadKg == nil { return "Needs the scale reading first" }
-        return scan.hasOBJ ? (settings.autoSend ? "Sends by itself when the model is ready" : "Ready to send") : "Waiting for the model"
+        if rec?.subject.isFoot == true && rec?.loadKg == nil { return "Add the scale reading, then send" }
+        if scan.hasOBJ { return "Ready to send" }
+        return settings.autoSend ? "Sends by itself once the model is ready" : "Waiting for the model"
     }
 
     @ViewBuilder private func studioActions(_ rec: ScanRecord?) -> some View {
@@ -155,15 +167,30 @@ struct ScanDetailView: View {
             } else if scan.hasOBJ {
                 VStack(alignment: .leading, spacing: 8) {
                     if rec.subject.isFoot && rec.studioCaptureID == nil {
-                        TextField("Scale reading under the foot (kg)", text: $loadText)
-                            .keyboardType(.decimalPad)
-                            .textFieldStyle(.roundedBorder)
+                        HStack {
+                            Image(systemName: "scalemass").foregroundStyle(Color.fsBrand)
+                            TextField("Scale reading under the foot", text: $loadText)
+                                .keyboardType(.decimalPad)
+                                .focused($loadFocused)
+                            Text("kg").foregroundStyle(Color.fsMuted)
+                        }
+                        .padding(.horizontal, 12).padding(.vertical, 10)
+                        .background(Color.fsSurface2, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
                     }
-                    Button(rec.studioCaptureID == nil ? "Send to studio" : "Send again") {
-                        Task { await library.send(scan, studio: studio, loadKg: parsedLoad) }
+                    if rec.studioCaptureID == nil {
+                        Button("Send to studio") {
+                            Task { await library.send(scan, studio: studio, loadKg: parsedLoad) }
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(rec.subject.isFoot && parsedLoad == nil && rec.loadKg == nil)
+                    } else {
+                        // already there: sending again makes a second copy, so it's a quiet option
+                        Button("Send another copy") {
+                            Task { await library.send(scan, studio: studio, loadKg: parsedLoad) }
+                        }
+                        .font(.footnote.weight(.semibold))
+                        .buttonStyle(.borderless)
                     }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(rec.subject.isFoot && rec.studioCaptureID == nil && parsedLoad == nil && rec.loadKg == nil)
                 }
             }
         }
@@ -181,6 +208,7 @@ struct ScanDetailView: View {
             if let d = rec?.created { row("Scanned", d.formatted(date: .abbreviated, time: .shortened)) }
             row("Phone", "\(ScanStore.phoneName(rec?.device ?? "?")), iOS \(rec?.systemVersion ?? "?")")
             if let l = rec?.loadKg { row("Scale reading", String(format: "%.1f kg", l)) }
+            if let id = rec?.studioCaptureID { row("In the studio", id) }
             if let err = rec?.error { row("Last problem", err) }
         }
         .card()

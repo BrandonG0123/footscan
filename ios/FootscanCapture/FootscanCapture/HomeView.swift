@@ -57,6 +57,7 @@ struct HomeView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 22) {
                     hero
+                    if let need = needsYou { attention(need) }
                     newScan
                     scansSection
                 }
@@ -212,6 +213,41 @@ struct HomeView: View {
                 .animation(.spring(duration: 0.4), value: library.scans)
             }
         }
+    }
+
+    /// The first scan that's waiting on you, and what it needs.
+    private var needsYou: (scan: Scan, title: String, detail: String)? {
+        for s in library.scans where library.work[s.folder] == nil {
+            guard let r = s.record else { continue }
+            if let p = library.problems[s.folder] { return (s, "\(r.subject.label) needs a look", p) }
+            if s.photoCount > 0 && !s.hasOBJ && ObjectCaptureSession.isSupported {
+                return (s, "Finish your \(r.subject.label.lowercased()) scan", "Its 3D model hasn't been built yet.")
+            }
+            if studio.client != nil, s.hasOBJ, r.studioCaptureID == nil, r.subject.isFoot, r.loadKg == nil {
+                return (s, "Add the scale reading", "Then your \(r.subject.label.lowercased()) scan can go to the studio.")
+            }
+        }
+        return nil
+    }
+
+    private func attention(_ need: (scan: Scan, title: String, detail: String)) -> some View {
+        Button { path.append(need.scan) } label: {
+            HStack(spacing: 14) {
+                Image(systemName: "exclamationmark.circle.fill")
+                    .font(.title2).foregroundStyle(Color.fsWarn)
+                    .symbolEffect(.pulse, options: .repeating)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(need.title).font(.headline).foregroundStyle(Color.fsInk)
+                    Text(need.detail).font(.subheadline).foregroundStyle(Color.fsMuted).lineLimit(2)
+                }
+                Spacer(minLength: 0)
+                Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(Color.fsMuted)
+            }
+            .padding(16)
+            .background(Color.fsWarnSoft, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+        }
+        .buttonStyle(PressableStyle())
+        .transition(.move(edge: .top).combined(with: .opacity))
     }
 
     private var studioPill: some View {
