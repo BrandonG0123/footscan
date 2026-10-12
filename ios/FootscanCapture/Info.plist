@@ -26,6 +26,11 @@
 		<key>NSAllowsLocalNetworking</key>
 		<true/>
 	</dict>
+	<key>UILaunchScreen</key>
+	<dict>
+		<key>UIColorName</key>
+		<string>LaunchBackground</string>
+	</dict>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>To send your scans to the footscan studio on your Mac, over your Wi-Fi.</string>
 </dict>
