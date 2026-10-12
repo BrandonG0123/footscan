@@ -9,6 +9,8 @@ import SwiftUI
 
 struct RootView: View {
     @Environment(AppSettings.self) private var settings
+    @Environment(StudioConnection.self) private var studio
+    @State private var showStudio = false
 
     var body: some View {
         ZStack {
@@ -19,6 +21,13 @@ struct RootView: View {
             }
         }
         .animation(.smooth(duration: 0.5), value: settings.onboarded)
+        // The studio's code, read by the iPhone's own Camera app, opens here,
+        // whatever is on screen (even the intro, on a brand-new install).
+        .onOpenURL { url in
+            showStudio = true
+            Task { await studio.connect(url.absoluteString) }
+        }
+        .sheet(isPresented: $showStudio) { StudioView() }
     }
 }
 
@@ -73,11 +82,6 @@ struct HomeView: View {
         .sheet(item: $prep) { req in
             PrepSheet(subject: req.subject, mustTick: req.mustTick) { begin(req.subject) }
                 .presentationDragIndicator(.visible)
-        }
-        // The studio's code, read by the iPhone's own Camera app, opens here.
-        .onOpenURL { url in
-            showStudio = true
-            Task { await studio.connect(url.absoluteString) }
         }
         .fullScreenCover(item: $capturing) { scan in
             CaptureView(scan: scan, onDone: { done in

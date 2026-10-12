@@ -46,7 +46,7 @@ final class ScanLibrary {
 
     /// Build the model, then send it if that's what the settings say.
     func finish(_ scan: Scan, settings: AppSettings, studio: StudioConnection) async {
-        if !scan.hasModel { await build(scan) }
+        if !scan.hasModel { await build(scan) } else if !scan.hasOBJ { await convert(scan) }
         guard scan.hasOBJ, settings.autoSend, studio.client != nil, let rec = scan.record,
               rec.studioCaptureID == nil, !rec.subject.isFoot || rec.loadKg != nil else { return }
         await send(scan, studio: studio)
@@ -76,6 +76,21 @@ final class ScanLibrary {
             await makeThumbnail(scan)
             UINotificationFeedbackGenerator().notificationOccurred(.success)
         }
+        reload()
+    }
+
+    /// The model was built but its studio copy (OBJ) wasn't made: make just that.
+    func convert(_ scan: Scan) async {
+        guard work[scan.folder] == nil, scan.hasModel else { return }
+        problems[scan.folder] = nil
+        work[scan.folder] = .converting
+        let usdz = scan.usdz, obj = scan.obj
+        let failure = await Task.detached(priority: .userInitiated) { () -> String? in
+            do { try ModelBuilder.exportOBJ(from: usdz, to: obj); return nil } catch { return error.localizedDescription }
+        }.value
+        work[scan.folder] = nil
+        if let failure { problems[scan.folder] = "Couldn't save the copy for the studio: \(failure)" }
+        await makeThumbnail(scan)
         reload()
     }
 

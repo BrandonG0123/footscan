@@ -94,8 +94,8 @@ struct ScanDetailView: View {
                     detail: "\(scan.photoCount) photos\(rec?.scanPasses.map { ", \($0) lap\($0 == 1 ? "" : "s")" } ?? "")",
                     isLast: false)
             StepRow(state: modelState, title: "3D model", detail: modelDetail(rec), isLast: false) {
-                if !scan.hasModel && scan.photoCount > 0 && library.work[scan.folder] == nil {
-                    Button(library.problems[scan.folder] == nil ? "Build it" : "Try again") {
+                if !scan.hasOBJ && scan.photoCount > 0 && library.work[scan.folder] == nil {
+                    Button(scan.hasModel ? "Finish it" : library.problems[scan.folder] == nil ? "Build it" : "Try again") {
                         Task { await library.finish(scan, settings: settings, studio: studio) }
                     }
                     .buttonStyle(.borderedProminent)
@@ -116,8 +116,9 @@ struct ScanDetailView: View {
     private var modelState: StepState {
         if case .building = library.work[scan.folder] { return .working }
         if library.work[scan.folder] == .converting { return .working }
-        if scan.hasModel { return .done }
-        return library.problems[scan.folder] != nil ? .failed : .todo
+        if scan.hasOBJ { return .done }
+        if scan.hasModel || library.problems[scan.folder] != nil { return .failed }
+        return .todo
     }
 
     private func modelDetail(_ rec: ScanRecord?) -> String {
@@ -125,6 +126,7 @@ struct ScanDetailView: View {
         case .building(let f): return "Building on the phone… \(Int(f * 100))%"
         case .converting: return "Saving a copy for the studio…"
         default:
+            if scan.hasModel && !scan.hasOBJ { return "Built, but the copy for the studio wasn't saved" }
             if scan.hasModel { return rec?.modelSeconds.map { "Built on the phone in \(Int($0)) s" } ?? "Built on the phone" }
             return scan.photoCount > 0 ? "Not built yet" : "Nothing to build from"
         }

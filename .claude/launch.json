@@ -32,6 +32,36 @@
         ".demo-data"
       ],
       "port": 8767
+    },
+    {
+      "name": "footscan-lan",
+      "runtimeExecutable": ".venv/bin/footscan",
+      "runtimeArgs": [
+        "serve",
+        "--host",
+        "0.0.0.0",
+        "--https",
+        "--port",
+        "8765"
+      ],
+      "port": 8765,
+      "url": "https://localhost:8765"
+    },
+    {
+      "name": "footscan-lan-demo",
+      "runtimeExecutable": ".venv/bin/footscan",
+      "runtimeArgs": [
+        "serve",
+        "--host",
+        "0.0.0.0",
+        "--https",
+        "--port",
+        "8768",
+        "--data",
+        ".demo-data"
+      ],
+      "port": 8768,
+      "url": "https://localhost:8768"
     }
   ]
 }
