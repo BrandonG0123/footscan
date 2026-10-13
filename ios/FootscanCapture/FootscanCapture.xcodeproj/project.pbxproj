@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXFileReference section */
+		F5C0A100000000000000B001 /* FootscanCaptureTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = FootscanCaptureTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		F5C0A10000000000000000A1 /* FootscanCapture.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = FootscanCapture.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -16,10 +17,22 @@
 			path = FootscanCapture;
 			sourceTree = "<group>";
 		};
+		F5C0A100000000000000B002 /* FootscanCaptureTests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = FootscanCaptureTests;
+			sourceTree = "<group>";
+		};
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
 		F5C0A10000000000000000A3 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		F5C0A100000000000000B003 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -33,6 +46,7 @@
 			isa = PBXGroup;
 			children = (
 				F5C0A10000000000000000A2 /* FootscanCapture */,
+				F5C0A100000000000000B002 /* FootscanCaptureTests */,
 				F5C0A10000000000000000A5 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -41,6 +55,7 @@
 			isa = PBXGroup;
 			children = (
 				F5C0A10000000000000000A1 /* FootscanCapture.app */,
+				F5C0A100000000000000B001 /* FootscanCaptureTests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -70,6 +85,29 @@
 			productReference = F5C0A10000000000000000A1 /* FootscanCapture.app */;
 			productType = "com.apple.product-type.application";
 		};
+		F5C0A100000000000000B004 /* FootscanCaptureTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = F5C0A100000000000000B005 /* Build configuration list for PBXNativeTarget "FootscanCaptureTests" */;
+			buildPhases = (
+				F5C0A100000000000000B006 /* Sources */,
+				F5C0A100000000000000B003 /* Frameworks */,
+				F5C0A100000000000000B007 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				F5C0A100000000000000B008 /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				F5C0A100000000000000B002 /* FootscanCaptureTests */,
+			);
+			name = FootscanCaptureTests;
+			packageProductDependencies = (
+			);
+			productName = FootscanCaptureTests;
+			productReference = F5C0A100000000000000B001 /* FootscanCaptureTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -82,6 +120,10 @@
 				TargetAttributes = {
 					F5C0A10000000000000000A6 = {
 						CreatedOnToolsVersion = 26.3;
+					};
+					F5C0A100000000000000B004 = {
+						CreatedOnToolsVersion = 26.3;
+						TestTargetID = F5C0A10000000000000000A6;
 					};
 				};
 			};
@@ -100,12 +142,20 @@
 			projectRoot = "";
 			targets = (
 				F5C0A10000000000000000A6 /* FootscanCapture */,
+				F5C0A100000000000000B004 /* FootscanCaptureTests */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
 		F5C0A10000000000000000A9 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		F5C0A100000000000000B007 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -122,7 +172,32 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		F5C0A100000000000000B006 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin PBXContainerItemProxy section */
+		F5C0A100000000000000B009 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = F5C0A10000000000000000AA /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = F5C0A10000000000000000A6;
+			remoteInfo = FootscanCapture;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXTargetDependency section */
+		F5C0A100000000000000B008 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = F5C0A10000000000000000A6 /* FootscanCapture */;
+			targetProxy = F5C0A100000000000000B009 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
 		F5C0A10000000000000000AC /* Debug */ = {
@@ -234,6 +309,40 @@
 			};
 			name = Release;
 		};
+		F5C0A100000000000000B00A /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				MARKETING_VERSION = 0.1;
+				PRODUCT_BUNDLE_IDENTIFIER = dev.brandongreene.footscan.capture.tests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/FootscanCapture.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/FootscanCapture";
+			};
+			name = Debug;
+		};
+		F5C0A100000000000000B00B /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				MARKETING_VERSION = 0.1;
+				PRODUCT_BUNDLE_IDENTIFIER = dev.brandongreene.footscan.capture.tests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/FootscanCapture.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/FootscanCapture";
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -251,6 +360,15 @@
 			buildConfigurations = (
 				F5C0A10000000000000000AC /* Debug */,
 				F5C0A10000000000000000AD /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		F5C0A100000000000000B005 /* Build configuration list for PBXNativeTarget "FootscanCaptureTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				F5C0A100000000000000B00A /* Debug */,
+				F5C0A100000000000000B00B /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

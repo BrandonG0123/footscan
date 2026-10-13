@@ -71,8 +71,8 @@ enum DiskSpace {
     }
 
     /// A message if there isn't room for a capture, else nil.
-    static func captureProblem() -> String? {
-        guard let free = available(), free < neededForCapture else { return nil }
+    static func captureProblem(free: Int64? = available()) -> String? {
+        guard let free, free < neededForCapture else { return nil }
         let have = ByteCountFormatter.string(fromByteCount: free, countStyle: .file)
         let need = ByteCountFormatter.string(fromByteCount: neededForCapture, countStyle: .file)
         return "Only \(have) free on this iPhone. A scan needs about \(need): delete some old scans (Settings shows how much they use) or other files, then try again."

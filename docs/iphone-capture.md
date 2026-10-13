@@ -84,6 +84,19 @@ upload to the studio, the questionnaire and break-in guide inside the app)
 is worth building, based on a real accuracy number rather than a guess.
 Nothing is concluded until the calibration object has actually been scanned.
 
+## Tests
+
+The app's own logic (studio connect codes, the scan list's order, the
+free-space check, the welcome scene's ring) has unit tests in
+`ios/FootscanCapture/FootscanCaptureTests`. In Xcode press Cmd-U, or:
+
+```bash
+cd ios/FootscanCapture && xcodebuild test -project FootscanCapture.xcodeproj \
+  -scheme FootscanCapture -destination 'platform=iOS Simulator,name=iPhone 17 Pro'
+```
+
+Capture itself needs a phone with LiDAR and isn't covered.
+
 ## What's been checked so far
 
 - The app compiles for iPhone (iOS 18+). It has **not run on a phone yet**:

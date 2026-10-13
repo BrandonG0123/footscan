@@ -133,9 +133,9 @@ enum ScanStore {
         return scan
     }
 
-    /// Every scan on the phone, newest first.
-    static func all() -> [Scan] {
-        let urls = (try? FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: [.creationDateKey])) ?? []
+    /// Every scan on the phone (or in `folder`, for tests), newest first.
+    static func all(in folder: URL = root) -> [Scan] {
+        let urls = (try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: [.creationDateKey])) ?? []
         // Newest first, by when each scan was taken (folder names start with
         // the kind of scan, so sorting by name would group them by kind).
         let scans = urls.filter(\.hasDirectoryPath).map { url -> (Scan, Date) in
