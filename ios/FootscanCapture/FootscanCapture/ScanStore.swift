@@ -75,7 +75,7 @@ struct ScanRecord: Codable {
     var sentAt: Date?
     var studioAccuracy: StudioAccuracy?
     var units = "metres, Y up (Apple Object Capture's own frame). The studio's Import 3D converts to millimetres."
-    var note = "footscan LiDAR test capture. Not a medical device."
+    var note = "Footscan LiDAR test capture. Not a medical device."
 }
 
 struct Scan: Identifiable, Hashable {

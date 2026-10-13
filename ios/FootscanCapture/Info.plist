@@ -32,6 +32,6 @@
 		<string>LaunchBackground</string>
 	</dict>
 	<key>NSLocalNetworkUsageDescription</key>
-	<string>To send your scans to the footscan studio on your Mac, over your Wi-Fi.</string>
+	<string>To send your scans to the Footscan studio on your Mac, over your Wi-Fi.</string>
 </dict>
 </plist>

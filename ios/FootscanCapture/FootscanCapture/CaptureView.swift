@@ -21,6 +21,7 @@ struct CaptureView: View {
     @State private var session: ObjectCaptureSession?
     @State private var passes = 1
     @State private var startError: String?
+    @State private var releaseScreen: (() -> Void)?
 
     var body: some View {
         ZStack {
@@ -39,7 +40,11 @@ struct CaptureView: View {
                 ProgressView().tint(.white)
             }
         }
-        .onAppear(perform: start)
+        .onAppear {
+            releaseScreen = KeepAlive.screen() // no dimming halfway round
+            start()
+        }
+        .onDisappear { releaseScreen?(); releaseScreen = nil }
         .statusBarHidden()
     }
 

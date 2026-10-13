@@ -117,15 +117,16 @@ struct HomeView: View {
             OrbitScene(interactive: false)
                 .frame(height: 240)
                 .frame(maxWidth: .infinity)
-                .visualEffect { content, proxy in
-                    // drifts and fades as the page scrolls up under it
-                    // shrinks back and fades as the page scrolls up; stretches a little on pull-down
-                    let y: CGFloat = proxy.frame(in: .scrollView).minY
-                    let up: CGFloat = min(1, max(0, -y / 200))
-                    let grow: CGFloat = y > 0 ? 1 + y / 900 : 1 - up * 0.18
-                    return content.scaleEffect(grow, anchor: .bottom).opacity(Double(1 - up)).blur(radius: up * 4)
-                }
             SafetyStrip()
+        }
+        // The scene and the safety strip shrink back and fade together as the
+        // page scrolls up (so the strip never shows through the title bar);
+        // they stretch a little on pull-down.
+        .visualEffect { content, proxy in
+            let y: CGFloat = proxy.frame(in: .scrollView).minY
+            let up: CGFloat = min(1, max(0, -y / 200))
+            let grow: CGFloat = y > 0 ? 1 + y / 900 : 1 - up * 0.18
+            return content.scaleEffect(grow, anchor: .bottom).opacity(Double(1 - up)).blur(radius: up * 4)
         }
     }
 
@@ -283,6 +284,11 @@ struct HomeView: View {
     }
 
     private func begin(_ s: Subject) {
+        if let problem = DiskSpace.captureProblem() {
+            withAnimation(.smooth) { error = problem }
+            UINotificationFeedbackGenerator().notificationOccurred(.warning)
+            return
+        }
         do {
             capturing = try ScanStore.create(s)
             error = nil

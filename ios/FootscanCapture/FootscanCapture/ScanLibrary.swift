@@ -18,6 +18,8 @@ final class ScanLibrary {
     private(set) var scans: [Scan] = []
     private(set) var work: [URL: Work] = [:]
     private(set) var problems: [URL: String] = [:]
+    /// Scans whose last send failed because the studio didn't answer (offer Reconnect).
+    private(set) var unreachable: Set<URL> = []
     /// Bumped when a scan's files or record change, so views re-read them.
     private(set) var version = 0
 
@@ -63,6 +65,8 @@ final class ScanLibrary {
         guard work[scan.folder] == nil else { return }
         problems[scan.folder] = nil
         work[scan.folder] = .building(0)
+        let release = KeepAlive.work("Building a 3D model")
+        defer { release() }
         let builder = ModelBuilder()
         let watch = Task { @MainActor in
             while !Task.isCancelled {
@@ -91,6 +95,8 @@ final class ScanLibrary {
         guard work[scan.folder] == nil, scan.hasModel else { return }
         problems[scan.folder] = nil
         work[scan.folder] = .converting
+        let release = KeepAlive.work("Saving a model copy")
+        defer { release() }
         let usdz = scan.usdz, obj = scan.obj
         let failure = await Task.detached(priority: .userInitiated) { () -> String? in
             do { try ModelBuilder.exportOBJ(from: usdz, to: obj); return nil } catch { return error.localizedDescription }
@@ -105,8 +111,10 @@ final class ScanLibrary {
         guard let client = studio.client, var record = scan.record, work[scan.folder] == nil else { return }
         if let loadKg { record.loadKg = loadKg; scan.save(record) }
         problems[scan.folder] = nil
+        unreachable.remove(scan.folder)
         work[scan.folder] = .sending
-        defer { work[scan.folder] = nil; reload() }
+        let release = KeepAlive.work("Sending a scan")
+        defer { work[scan.folder] = nil; reload(); release() }
         do {
             let sent = try await client.upload(scan, record: record)
             record.studioCaptureID = sent.captureID
@@ -117,6 +125,7 @@ final class ScanLibrary {
             UINotificationFeedbackGenerator().notificationOccurred(.success)
         } catch {
             problems[scan.folder] = error.localizedDescription
+            if (error as? StudioClient.Failure)?.isUnreachable == true { unreachable.insert(scan.folder) }
             UINotificationFeedbackGenerator().notificationOccurred(.error)
         }
     }

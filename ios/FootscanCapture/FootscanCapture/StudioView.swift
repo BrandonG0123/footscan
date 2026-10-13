@@ -21,7 +21,7 @@ final class StudioConnection {
     /// Try a connect code; save it only if the studio answers to it.
     func connect(_ text: String) async -> Bool {
         guard let parsed = StudioStore.parse(text) else {
-            status = "That isn't a footscan studio code. In the studio, open Import 3D and tap Show the connect code."
+            status = "That isn't a Footscan studio code. In the studio, open Import 3D and tap Show the connect code."
             return false
         }
         status = "Checking \(parsed.link.host)…"
@@ -73,7 +73,7 @@ struct StudioView: View {
                     VStack(alignment: .leading, spacing: 6) {
                         Text(studio.link == nil ? "Connect to your studio" : "Your studio")
                             .font(.system(.title, design: .rounded, weight: .bold))
-                        Text("Scans go straight from this phone to the footscan studio on your Mac, over your Wi-Fi.")
+                        Text("Scans go straight from this phone to the Footscan studio on your Mac, over your Wi-Fi.")
                             .foregroundStyle(Color.fsMuted)
                     }
                     if let link = studio.link { connected(link) } else { howTo }
@@ -122,7 +122,7 @@ struct StudioView: View {
 
     private var howTo: some View {
         VStack(alignment: .leading, spacing: 12) {
-            step(1, "On your Mac, open the footscan studio")
+            step(1, "On your Mac, open the Footscan studio")
             step(2, "Go to Import 3D and tap Show the connect code")
             step(3, "Tap the button below and point this camera at it")
             if !canScan {

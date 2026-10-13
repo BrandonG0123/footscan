@@ -124,6 +124,11 @@ struct ScanDetailView: View {
                 Label(problem, systemImage: "exclamationmark.triangle.fill")
                     .font(.footnote).foregroundStyle(Color.fsWarn)
                     .padding(.top, 8)
+                if library.unreachable.contains(scan.folder) {
+                    Button { showStudio = true } label: { Label("Reconnect to the studio", systemImage: "qrcode.viewfinder") }
+                        .font(.subheadline.weight(.semibold))
+                        .padding(.leading, 28)
+                }
             }
         }
         .card()
@@ -177,7 +182,7 @@ struct ScanDetailView: View {
                     if rec.subject.isFoot && rec.studioCaptureID == nil {
                         HStack {
                             Image(systemName: "scalemass").foregroundStyle(Color.fsBrand)
-                            TextField("Scale reading under the foot", text: $loadText)
+                            TextField("Scale reading", text: $loadText)
                                 .keyboardType(.decimalPad)
                                 .focused($loadFocused)
                             Text("kg").foregroundStyle(Color.fsMuted)

@@ -167,7 +167,7 @@ struct OnboardingView: View {
 
     private var studioPage: some View {
         VStack(alignment: .leading, spacing: 16) {
-            header("Send scans to your Mac", "Optional. Connect to the footscan studio once and every finished scan is sent there by itself.", symbol: "desktopcomputer.and.arrow.down")
+            header("Send scans to your Mac", "Optional. Connect to the Footscan studio once and every finished scan is sent there by itself.", symbol: "desktopcomputer.and.arrow.down")
             HStack(spacing: 14) {
                 Image(systemName: studio.link == nil ? "desktopcomputer" : "checkmark.circle.fill")
                     .font(.system(size: 28, weight: .semibold))
@@ -177,7 +177,7 @@ struct OnboardingView: View {
                 VStack(alignment: .leading, spacing: 3) {
                     Text(studio.link == nil ? "Not connected" : "Connected to \(studio.link!.host)").font(.headline)
                     Text(studio.link == nil
-                         ? "On your Mac, open the footscan studio, go to Import 3D and tap Show the connect code. Then tap Connect and point the camera at it."
+                         ? "On your Mac, open the Footscan studio, go to Import 3D and tap Show the connect code. Then tap Connect and point the camera at it."
                          : "Finished scans will be sent there by themselves.")
                         .font(.subheadline).foregroundStyle(Color.fsMuted)
                 }

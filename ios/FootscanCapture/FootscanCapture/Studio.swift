@@ -114,13 +114,15 @@ struct StudioClient {
     let key: String
 
     enum Failure: LocalizedError {
-        case refused(String), unreachable(String)
+        case refused(String), unreachable(host: String)
         var errorDescription: String? {
             switch self {
             case .refused(let why): "The studio said no: \(why)"
-            case .unreachable(let why): "Couldn't reach the studio (\(why)). Is footscan running on the Mac, and is the phone on the same Wi-Fi?"
+            case .unreachable(let host):
+                "The studio at \(host) isn't answering. Check Footscan is running on your Mac and both are on the same Wi-Fi. If your Mac's Wi-Fi address has changed, reconnect by scanning its code again."
             }
         }
+        var isUnreachable: Bool { if case .unreachable = self { true } else { false } }
     }
 
     private func session(timeout: TimeInterval = 20) -> URLSession {
@@ -151,7 +153,7 @@ struct StudioClient {
         do {
             (data, response) = try await s.data(for: req)
         } catch {
-            throw Failure.unreachable(error.localizedDescription)
+            throw Failure.unreachable(host: link.host)
         }
         let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
         let code = (response as? HTTPURLResponse)?.statusCode ?? 0
@@ -162,14 +164,16 @@ struct StudioClient {
     }
 
     /// Is the studio there, and does it accept the key?
-    func check() async throws {
-        _ = try await send(request("api/studio"), timeout: 8)
+    func check(timeout: TimeInterval = 8) async throws {
+        _ = try await send(request("api/studio"), timeout: timeout)
     }
 
     struct Sent { var captureID: String; var accuracy: StudioAccuracy? }
 
     /// Make a research capture for this scan and upload its model.
     func upload(_ scan: Scan, record: ScanRecord) async throws -> Sent {
+        // A quick hello first: a studio that isn't there fails in seconds, not after a long upload timeout.
+        try await check(timeout: 6)
         let (condition, foot): (String, String?) = switch record.subject {
         case .calibration: ("calibration", nil)
         case .rightFoot: ("swb", "right")
@@ -179,7 +183,7 @@ struct StudioClient {
         var setup: [String: Any] = [
             "condition": condition, "session": "LIDAR", "method": "imported_mesh",
             "device": "\(record.device), iOS \(record.systemVersion)",
-            "notes": "footscan capture app \(record.appVersion), Apple Object Capture, \(record.shotsTaken ?? 0) photos, "
+            "notes": "Footscan iPhone app \(record.appVersion), Apple Object Capture, \(record.shotsTaken ?? 0) photos, "
                 + "\(record.scanPasses ?? 1) lap(s), model built on the phone",
         ]
         if let foot { setup["foot"] = foot }
