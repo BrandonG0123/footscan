@@ -61,6 +61,24 @@ final class ScanLibrary {
         await send(scan, studio: studio)
     }
 
+    /// With "send automatically" on and a studio connected: send every
+    /// finished scan that hasn't gone yet (scans built while away from the
+    /// studio, or whose send failed). Foot scans still wait for their scale
+    /// reading. One at a time, oldest first.
+    func sendWaiting(settings: AppSettings, studio: StudioConnection) async {
+        guard settings.autoSend, studio.client != nil, !sendingWaiting else { return }
+        sendingWaiting = true
+        defer { sendingWaiting = false }
+        for scan in scans.reversed() {
+            guard studio.client != nil, work[scan.folder] == nil, scan.hasOBJ, let rec = scan.record,
+                  rec.studioCaptureID == nil, !rec.subject.isFoot || rec.loadKg != nil else { continue }
+            await send(scan, studio: studio)
+            // the studio isn't answering: don't try every other scan against it too
+            if unreachable.contains(scan.folder) { break }
+        }
+    }
+    private var sendingWaiting = false
+
     func build(_ scan: Scan) async {
         guard work[scan.folder] == nil else { return }
         problems[scan.folder] = nil

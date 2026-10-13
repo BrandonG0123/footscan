@@ -10,6 +10,8 @@ import SwiftUI
 struct RootView: View {
     @Environment(AppSettings.self) private var settings
     @Environment(StudioConnection.self) private var studio
+    @Environment(ScanLibrary.self) private var library
+    @Environment(\.scenePhase) private var scenePhase
     @State private var showStudio = false
 
     var body: some View {
@@ -28,6 +30,16 @@ struct RootView: View {
             Task { await studio.connect(url.absoluteString) }
         }
         .sheet(isPresented: $showStudio) { StudioView() }
+        // Scans that couldn't go before go now: when a studio is connected
+        // (or reconnected), when the app comes back to the front, and when
+        // "send automatically" is switched on.
+        .onChange(of: studio.link) { _, link in if link != nil { sendWaiting() } }
+        .onChange(of: scenePhase) { _, phase in if phase == .active { sendWaiting() } }
+        .onChange(of: settings.autoSend) { _, on in if on { sendWaiting() } }
+    }
+
+    private func sendWaiting() {
+        Task { await library.sendWaiting(settings: settings, studio: studio) }
     }
 }
 

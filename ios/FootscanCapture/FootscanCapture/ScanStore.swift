@@ -136,9 +136,17 @@ enum ScanStore {
     /// Every scan on the phone, newest first.
     static func all() -> [Scan] {
         let urls = (try? FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: [.creationDateKey])) ?? []
-        return urls.filter(\.hasDirectoryPath)
-            .sorted { $0.lastPathComponent > $1.lastPathComponent }
-            .map { Scan(folder: $0) }
+        // Newest first, by when each scan was taken (folder names start with
+        // the kind of scan, so sorting by name would group them by kind).
+        let scans = urls.filter(\.hasDirectoryPath).map { url -> (Scan, Date) in
+            let scan = Scan(folder: url)
+            let made = scan.record?.created
+                ?? (try? url.resourceValues(forKeys: [.creationDateKey]).creationDate)
+                ?? .distantPast
+            return (scan, made)
+        }
+        return scans.sorted { $0.1 != $1.1 ? $0.1 > $1.1 : $0.0.folder.lastPathComponent > $1.0.folder.lastPathComponent }
+            .map(\.0)
     }
 
     static func delete(_ scan: Scan) {

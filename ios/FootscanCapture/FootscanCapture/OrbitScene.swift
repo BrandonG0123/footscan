@@ -76,12 +76,16 @@ struct OrbitScene: View {
     var interactive = true
     @State private var model = OrbitModel()
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.scenePhase) private var scenePhase
+    /// Only animate while some of it is on screen and the app is in front:
+    /// a scene nobody can see shouldn't keep the graphics chip busy.
+    @State private var onScreen = true
     private let cycle: Double = 9
 
     var body: some View {
         GeometryReader { geo in
             let size = geo.size
-            TimelineView(.animation(minimumInterval: 1 / 60, paused: reduceMotion)) { timeline in
+            TimelineView(.animation(minimumInterval: 1 / 60, paused: reduceMotion || !onScreen || scenePhase != .active)) { timeline in
                 let frame = frameFor(timeline.date)
                 Canvas { ctx, _ in draw(&ctx, size: size, frame: frame) }
             }
@@ -99,6 +103,7 @@ struct OrbitScene: View {
             } : nil)
         }
         .aspectRatio(1.2, contentMode: .fit)
+        .onScrollVisibilityChange(threshold: 0.05) { onScreen = $0 }
         .accessibilityElement()
         .accessibilityLabel("A phone circles a foot standing on the printed mat, taking photos from every side; the foot then becomes an insole shaped to it.")
         .accessibilityAddTraits(.isImage)
