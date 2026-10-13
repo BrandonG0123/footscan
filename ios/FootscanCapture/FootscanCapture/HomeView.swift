@@ -33,7 +33,7 @@ struct RootView: View {
         // Scans that couldn't go before go now: when a studio is connected
         // (or reconnected), when the app comes back to the front, and when
         // "send automatically" is switched on.
-        .onChange(of: studio.link) { _, link in if link != nil { sendWaiting() } }
+        .onChange(of: studio.connections) { sendWaiting() }
         .onChange(of: scenePhase) { _, phase in if phase == .active { sendWaiting() } }
         .onChange(of: settings.autoSend) { _, on in if on { sendWaiting() } }
     }

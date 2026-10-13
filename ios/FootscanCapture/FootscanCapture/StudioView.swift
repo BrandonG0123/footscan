@@ -8,6 +8,9 @@ final class StudioConnection {
     var link: StudioLink?
     private(set) var key: String?
     var status: String?
+    /// Goes up by one on every successful connect, including reconnecting to
+    /// the same studio, so waiting scans can be sent then.
+    private(set) var connections = 0
 
     init() {
         if let saved = StudioStore.load() { link = saved.link; key = saved.key }
@@ -34,6 +37,7 @@ final class StudioConnection {
         StudioStore.save(parsed.link, key: parsed.key)
         link = parsed.link
         key = parsed.key
+        connections += 1
         status = "Connected to \(parsed.link.host)."
         return true
     }
@@ -44,6 +48,7 @@ final class StudioConnection {
         do {
             try await client.check()
             status = "The studio is answering."
+            connections += 1 // back in touch: let waiting scans go
         } catch {
             status = error.localizedDescription
         }

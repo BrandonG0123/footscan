@@ -70,6 +70,8 @@ final class ScanLibrary {
         sendingWaiting = true
         defer { sendingWaiting = false }
         for scan in scans.reversed() {
+            // checked before every upload: switching "send automatically" off stops the queue
+            guard settings.autoSend else { break }
             guard studio.client != nil, work[scan.folder] == nil, scan.hasOBJ, let rec = scan.record,
                   rec.studioCaptureID == nil, !rec.subject.isFoot || rec.loadKg != nil else { continue }
             await send(scan, studio: studio)
