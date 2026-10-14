@@ -714,3 +714,21 @@ def test_studio_insole_needs_a_foot(servers):
     op, _, _ = servers
     cid = body(call(f"{op}/api/captures", "POST", {"condition": "object", "session": "L1", "method": "imported_mesh"}))["id"]
     assert call(f"{op}/api/captures/{cid}/insole", "POST", {})[0] == 400
+
+
+def test_two_insole_builds_at_once_both_succeed_and_leave_one_clean_result(servers):
+    """Two studio tabs pressing Make insole together: no half-written or lost files."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    op, _, data = servers
+    cid = body(call(f"{op}/api/captures", "POST", {"condition": "swb", "foot": "right", "session": "LIDAR",
+                                                    "load_kg": 30, "method": "imported_mesh"}))["id"]
+    call(f"{op}/api/captures/{cid}/mesh?ext=obj&up=y", "PUT", _object_capture_foot("right"),
+         {"Content-Type": "application/octet-stream"})
+    with ThreadPoolExecutor(2) as pool:
+        results = list(pool.map(lambda _: call(f"{op}/api/captures/{cid}/insole", "POST", {}), range(2)))
+    assert [r[0] for r in results] == [200, 200]
+    assert all("error" not in json.loads(r[1]) for r in results)
+    folder = data / "captures" / cid
+    assert sorted(p.name for p in folder.iterdir() if p.name.startswith("insole")) == ["insole"]  # no leftovers
+    assert {p.name for p in (folder / "insole").iterdir()} >= {"insole.3mf", "summary.html", "print-notes.txt"}

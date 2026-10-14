@@ -147,21 +147,22 @@
     const btn = e.target.closest("[data-insole]");
     if (!btn) return;
     const id = btn.dataset.insole;
-    const box = document.getElementById(`insole-${id}`);
+    const capture = all.find((c) => c.capture_id === id);
     btn.disabled = true;
     btn.textContent = "Making the insole…";
+    let result;
     try {
       const r = await fetch(`/api/captures/${encodeURIComponent(id)}/insole`, { method: "POST" });
       const out = await r.json();
       if (!r.ok) throw new Error(out.error || r.status);
-      box.innerHTML = insoleHtml(id, out);
-      btn.textContent = out.error ? "Make insole" : "Remake insole";
+      result = out;
     } catch (err) {
-      box.innerHTML = `<p class="hint" style="color:var(--warn)">Couldn't make it: ${esc(err.message)}</p>`;
-      btn.textContent = "Make insole";
-    } finally {
-      btn.disabled = false;
+      result = { error: `Couldn't make it: ${err.message}` };
     }
+    // Keep the result with the capture, then redraw from that, so filtering (even
+    // mid-build) neither loses it nor brings back an older one.
+    if (capture) capture.insole = result;
+    render();
   });
 
   $("f-cond").addEventListener("change", render);

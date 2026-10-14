@@ -68,6 +68,7 @@ import shutil
 import socket
 import ssl
 import subprocess
+import threading
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -310,6 +311,7 @@ def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check
                  submissions_per_hour: int = SUBMISSIONS_PER_HOUR, allow_indexing: bool = True,
                  public: bool = False, cert_fingerprint: str | None = None):
     runner = recon_jobs.ReconRunner()
+    insole_locks: dict[str, threading.Lock] = {}
     captures_dir = data_dir / "captures"
     submissions_dir = data_dir / "submissions"
     limiter = RateLimiter(submissions_per_hour)
@@ -572,13 +574,16 @@ def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check
                 return self.send_file(f, INSOLE_FILES[name], headers={
                     "Content-Disposition": f'attachment; filename="{d.name}-{name}"'} if not name.endswith(".html") else None)
             if method == "POST" and not rest:
-                meta = read_json(d / "capture.json")
-                foot = meta.get("foot")
-                if foot not in FEET:
-                    raise BadRequest("an insole needs a foot capture (left or right)")
-                result = make_insole(d, meta)
-                meta["insole"] = result
-                write_json(d / "capture.json", meta)
+                # One build per capture at a time (two studio tabs): the second waits for the first.
+                with insole_locks.setdefault(d.name, threading.Lock()):
+                    meta = read_json(d / "capture.json")
+                    foot = meta.get("foot")
+                    if foot not in FEET:
+                        raise BadRequest("an insole needs a foot capture (left or right)")
+                    result = make_insole(d, meta)
+                    meta = read_json(d / "capture.json")  # re-read: don't undo other changes made meanwhile
+                    meta["insole"] = result
+                    write_json(d / "capture.json", meta)
                 return self.send_json(result)
             raise FileNotFoundError
 
@@ -1018,13 +1023,17 @@ def make_insole(folder: Path, meta: dict) -> dict:
     except (ValueError, insole_mod.InsoleError) as e:
         return dict(error=str(e))
     out = folder / "insole"
-    tmp = folder / "insole.part"
-    shutil.rmtree(tmp, ignore_errors=True)
-    files = insole_mod.write_outputs(ins, tmp, "insole", f"{meta.get('capture_id', folder.name)}, {source}")
-    # fixed names, so the studio can link them
-    (tmp / "insole-summary.html").rename(tmp / "summary.html")
-    shutil.rmtree(out, ignore_errors=True)
-    tmp.rename(out)
+    tmp = folder / f"insole.part-{secrets.token_hex(4)}"  # this request's own: never shared with another
+    try:
+        insole_mod.write_outputs(ins, tmp, "insole", f"{meta.get('capture_id', folder.name)}, {source}")
+        (tmp / "insole-summary.html").rename(tmp / "summary.html")  # fixed names, so the studio can link them
+        old = folder / f"insole.old-{secrets.token_hex(4)}"
+        if out.exists():
+            out.rename(old)
+        tmp.rename(out)
+        shutil.rmtree(old, ignore_errors=True)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
     r = ins.report
     return dict(made=now_iso(), foot=foot, length_mm=r["length_mm"], width_mm=r["width_mm"], height_mm=r["height_mm"],
                 max_fill_mm=r["max_fill_mm"], sole=r["sole"], bed=r["bed_fit"], warnings=r["warnings"],
