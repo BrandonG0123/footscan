@@ -25,6 +25,14 @@ function show(name) {
 
 let setup = null;
 let scanner = null;
+let saving = false;
+let saved = false;
+
+// For the iPhone app's Done button: is there anything here that closing would lose?
+window.footscanCaptureState = () => ({
+  uploading: saving,
+  unsaved: !saved && (!views.live.hidden || !views.review.hidden) ? (scanner?.frames.length || 0) : 0,
+});
 let stageView = null;
 const isObject = () => NOT_A_FOOT.includes(form.condition.value);
 
@@ -56,6 +64,7 @@ form.addEventListener("change", syncSetup);
   };
   pick("condition", q.get("condition"));
   pick("foot", q.get("foot"));
+  if (q.get("from") === "app") $("phone-hint").hidden = true; // already on the phone, inside the app
   const session = q.get("session");
   if (session && /^[A-Za-z0-9_-]{1,20}$/.test(session)) form.session.value = session;
 }
@@ -228,6 +237,7 @@ $("btn-save").addEventListener("click", async () => {
   if (scanner.simulated) return;
   const btns = ["btn-save", "btn-more", "btn-discard"].map($);
   btns.forEach((b) => (b.disabled = true));
+  saving = true;
   $("upload").hidden = false;
   await scanner.ready();
   const kept = scanner.keptFrames();
@@ -256,10 +266,13 @@ $("btn-save").addEventListener("click", async () => {
     });
     if (!done.ok) throw new Error((await done.json()).error);
     setProgress(kept.length, "Saved.");
+    saved = true;
     scanner.close();
     setTimeout(() => (location.href = `/studio/captures.html#${created.id}`), 600);
   } catch (err) {
     $("upload-label").textContent = `Upload failed: ${err.message}`;
     btns.forEach((b) => (b.disabled = false));
+  } finally {
+    saving = false;
   }
 });

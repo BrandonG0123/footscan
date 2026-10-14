@@ -31,6 +31,10 @@ struct PhotoCaptureView: View {
 
     @State private var loading = true
     @State private var failure: String?
+    @State private var handle = WebHandle()
+    @State private var unsavedPhotos = 0
+    @State private var confirmDiscard = false
+    @State private var stillSending = false
 
     private var url: URL {
         var c = URLComponents(url: link.url.appending(path: "studio/capture.html"), resolvingAgainstBaseURL: false)!
@@ -44,7 +48,7 @@ struct PhotoCaptureView: View {
     var body: some View {
         NavigationStack {
             ZStack {
-                StudioWebView(url: url, link: link, loading: $loading, failure: $failure)
+                StudioWebView(url: url, link: link, handle: handle, loading: $loading, failure: $failure)
                     .ignoresSafeArea(edges: .bottom)
                 if loading && failure == nil { ProgressView("Opening the studio's camera…") }
                 if let failure {
@@ -57,8 +61,45 @@ struct PhotoCaptureView: View {
             }
             .navigationTitle("Photos + mat")
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done", action: onClose) } }
+            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { Task { await done() } } } }
+            .interactiveDismissDisabled()
+            .confirmationDialog("Discard \(unsavedPhotos) photo\(unsavedPhotos == 1 ? "" : "s")?", isPresented: $confirmDiscard,
+                                titleVisibility: .visible) {
+                Button("Discard and close", role: .destructive, action: onClose)
+                Button("Keep scanning", role: .cancel) {}
+            } message: {
+                Text("They haven't been saved to the studio yet. To keep them, tap Save to library first.")
+            }
+            .alert("Still sending to the studio", isPresented: $stillSending) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text("Wait until it says Saved, then close. Closing now would stop the upload.")
+            }
         }
+    }
+
+    /// Done: close straight away unless that would lose photos or cut off an upload.
+    private func done() async {
+        guard let state = await handle.captureState() else { return onClose() }
+        if state.uploading { stillSending = true }
+        else if state.unsaved > 0 { unsavedPhotos = state.unsaved; confirmDiscard = true }
+        else { onClose() }
+    }
+}
+
+/// Lets the SwiftUI side ask the page about its state.
+@MainActor
+final class WebHandle {
+    weak var webView: WKWebView?
+
+    struct State: Decodable { let uploading: Bool; let unsaved: Int }
+
+    func captureState() async -> State? {
+        guard let webView,
+              let json = try? await webView.evaluateJavaScript(
+                  "window.footscanCaptureState ? JSON.stringify(window.footscanCaptureState()) : null") as? String,
+              let data = json.data(using: .utf8) else { return nil }
+        return try? JSONDecoder().decode(State.self, from: data)
     }
 }
 
@@ -66,6 +107,7 @@ struct PhotoCaptureView: View {
 private struct StudioWebView: UIViewRepresentable {
     let url: URL
     let link: StudioLink
+    let handle: WebHandle
     @Binding var loading: Bool
     @Binding var failure: String?
 
@@ -81,6 +123,7 @@ private struct StudioWebView: UIViewRepresentable {
         view.uiDelegate = context.coordinator
         view.allowsBackForwardNavigationGestures = false
         view.load(URLRequest(url: url))
+        handle.webView = view
         return view
     }
 
@@ -109,6 +152,34 @@ private struct StudioWebView: UIViewRepresentable {
         func webView(_ webView: WKWebView, requestMediaCapturePermissionFor origin: WKSecurityOrigin,
                      initiatedByFrame frame: WKFrameInfo, type: WKMediaCaptureType) async -> WKPermissionDecision {
             isStudio(origin.host) && type == .camera ? .grant : .deny
+        }
+
+        // The page's own "Discard N frames?" and messages: shown as native dialogs.
+        func webView(_ webView: WKWebView, runJavaScriptConfirmPanelWithMessage message: String,
+                     initiatedByFrame frame: WKFrameInfo) async -> Bool {
+            await withCheckedContinuation { done in
+                let alert = UIAlertController(title: nil, message: message, preferredStyle: .alert)
+                alert.addAction(UIAlertAction(title: "Cancel", style: .cancel) { _ in done.resume(returning: false) })
+                alert.addAction(UIAlertAction(title: "OK", style: .destructive) { _ in done.resume(returning: true) })
+                guard let top = Self.top(from: webView) else { return done.resume(returning: false) }
+                top.present(alert, animated: true)
+            }
+        }
+
+        func webView(_ webView: WKWebView, runJavaScriptAlertPanelWithMessage message: String,
+                     initiatedByFrame frame: WKFrameInfo) async {
+            await withCheckedContinuation { (done: CheckedContinuation<Void, Never>) in
+                let alert = UIAlertController(title: nil, message: message, preferredStyle: .alert)
+                alert.addAction(UIAlertAction(title: "OK", style: .default) { _ in done.resume() })
+                guard let top = Self.top(from: webView) else { return done.resume() }
+                top.present(alert, animated: true)
+            }
+        }
+
+        private static func top(from view: UIView) -> UIViewController? {
+            var vc = view.window?.rootViewController
+            while let next = vc?.presentedViewController { vc = next }
+            return vc
         }
 
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
