@@ -164,6 +164,30 @@ def cmd_accuracy_mesh(args) -> int:
     return 0
 
 
+def cmd_insole(args) -> int:
+    from .insole import InsoleError, from_scan, write_outputs
+    from .recon.imported import load_geometry, to_millimetres
+
+    try:
+        mesh, units, _ = to_millimetres(load_geometry(args.mesh))
+        ins = from_scan(mesh, args.foot)
+    except (InsoleError, ValueError) as err:
+        print(f"{args.mesh}: {err}", file=sys.stderr)
+        return 1
+    files = write_outputs(ins, Path(args.output), f"{args.foot}-insole", str(args.mesh))
+    r = ins.report
+    print(f"first-fit {args.foot} insole: {r['length_mm']} x {r['width_mm']} mm, {r['volume_cm3']} cm3, "
+          f"highest fill {r['max_fill_mm']} mm (from {units})")
+    print(f"  sole seen by the scan: {r['sole']['seen']:.0%} of the footprint, {r['sole']['seen_under_arch']:.0%} under the arch")
+    print(f"  bed: {r['bed_fit']['how']}")
+    for w in r["warnings"]:
+        print(f"  warning: {w}", file=sys.stderr)
+    for k, v in files.items():
+        print(f"  {k}: {v}")
+    print("NOT A MEDICAL DEVICE. No posting. Walking-only break-in; no sport until the summary sheet is signed.")
+    return 0
+
+
 def cmd_export_measures(args) -> int:
     from .landmarks import export_rows, list_picks
 
@@ -237,6 +261,12 @@ def main(argv=None) -> int:
     am.add_argument("--calipers", help="JSON of caliper measurements of the print")
     am.add_argument("-o", "--output", help="write the full report as JSON")
     am.set_defaults(func=cmd_accuracy_mesh)
+
+    ins = sub.add_parser("insole", help="first-fit insole (3MF + STL + clinician summary sheet) from a foot scan on the mat")
+    ins.add_argument("mesh", help="foot scan in the mat frame (z up, floor at z = 0): mm, cm or m")
+    ins.add_argument("--foot", choices=["left", "right"], required=True)
+    ins.add_argument("-o", "--output", required=True, help="folder for the files")
+    ins.set_defaults(func=cmd_insole)
 
     ex = sub.add_parser("export-measures", help="landmark picks of research captures -> repeatability CSV")
     ex.add_argument("--data", default="data", help="data folder (default: data/)")

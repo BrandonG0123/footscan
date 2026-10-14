@@ -31,7 +31,7 @@ starts with proving the measurements are repeatable before any CAD.
 | 1 | Marker board PDF + guided capture page (+ LiDAR path) | **built — untested on a real printed mat** |
 | 2 | Reconstruction (COLMAP) + accuracy study ([docs/phase2-reconstruction.md](docs/phase2-reconstruction.md)) | **built — awaiting real scans** |
 | 3 | Landmark viewer ([docs/phase3-landmarks.md](docs/phase3-landmarks.md)) | **built — awaiting real scans** |
-| 4 | Parametric generator (CadQuery) + zonal lattice | not started |
+| 4 | Insole generator: first fit built ([docs/insole.md](docs/insole.md)); posting + zonal lattice not started | **first fit built — tested on synthetic feet only** |
 | 5 | Lattice coupon compression testing | not started |
 | 6 | Pressure validation | not started |
 | 7 | Fit iteration + writeup ([docs/fit-log.md](docs/fit-log.md)) | not started |
