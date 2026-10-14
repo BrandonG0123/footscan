@@ -1074,6 +1074,8 @@ def make_insole(folder: Path, meta: dict) -> dict:
             out.rename(old)
         tmp.rename(out)
         shutil.rmtree(old, ignore_errors=True)
+    except OSError as e:  # e.g. the disk filled while writing: a failed build, handled like any other
+        return dict(error=f"couldn't save the insole files ({e})")
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
     r = ins.report

@@ -779,3 +779,23 @@ def test_a_failed_insole_rebuild_leaves_nothing_downloadable(servers):
     assert "error" in r
     assert call(f"{op}/api/captures/{cid}/insole/insole.3mf")[0] == 409
     assert not (data / "captures" / cid / "insole").exists()
+
+
+def test_a_failed_save_counts_as_a_failed_build(servers, monkeypatch):
+    """If writing the files fails (disk full), the old insole must not stay on offer as if current."""
+    from footscan import insole as insole_mod
+
+    op, _, data = servers
+    cid = body(call(f"{op}/api/captures", "POST", {"condition": "swb", "foot": "right", "session": "LIDAR",
+                                                    "load_kg": 30, "method": "imported_mesh"}))["id"]
+    call(f"{op}/api/captures/{cid}/mesh?ext=obj&up=y", "PUT", _object_capture_foot("right"),
+         {"Content-Type": "application/octet-stream"})
+    assert call(f"{op}/api/captures/{cid}/insole", "POST", {})[0] == 200
+
+    def full_disk(*a, **k):
+        raise OSError(28, "No space left on device")
+    monkeypatch.setattr(insole_mod, "write_outputs", full_disk)
+    r = body(call(f"{op}/api/captures/{cid}/insole", "POST", {}))
+    assert "No space left" in r["error"]
+    assert call(f"{op}/api/captures/{cid}/insole/insole.3mf")[0] == 409
+    assert not [p for p in (data / "captures" / cid).iterdir() if p.name.startswith("insole")]
