@@ -103,3 +103,26 @@ def test_the_3mf_is_millimetres_one_closed_object_on_the_bed(right, tmp_path):
 def test_bed_fit(length, width, fits, how):
     r = insole.bed_fit(length, width, 256)
     assert r["fits"] == fits and (how is None or r["how"] == how)
+
+
+def test_an_external_scan_in_any_orientation_lands_on_the_mat_and_checks_out(tmp_path):
+    """scripts/external_foot.py: a closed foot (sole visible, as when scanned off the ground),
+    in metres, turned and moved anywhere, comes out flat on the mat with sensible checks."""
+    import sys
+    from pathlib import Path
+
+    import trimesh
+
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+    import external_foot as ef
+
+    m = synth.block_foot(0.0, "right", origin=(0, 0), floor_cut=False)
+    m.update_faces(m.triangles_center[:, 2] < 60)  # an ankle stub, not a whole leg
+    m.remove_unreferenced_vertices()
+    m.apply_transform(trimesh.transformations.euler_matrix(1.1, -0.4, 2.3))
+    m.apply_scale(0.001)
+    path = tmp_path / "foot.obj"
+    m.export(path)
+
+    assert ef.main([str(path), "--foot", "right", "-o", str(tmp_path / "out")]) == 0  # every check ok
+    assert ef.main([str(path), "--foot", "left", "-o", str(tmp_path / "out2")]) == 2  # wrong foot is noticed
