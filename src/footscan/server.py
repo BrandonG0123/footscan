@@ -568,9 +568,10 @@ def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check
                 name = rest[0]
                 if name not in INSOLE_FILES:
                     raise FileNotFoundError
-                if insole_is_stale(d, read_json(d / "capture.json")):
-                    return self.send_json({"error": "the 3D model has changed since this insole was made: "
-                                                    "make the insole again"}, HTTPStatus.CONFLICT)
+                if not insole_downloadable(d, read_json(d / "capture.json")):
+                    return self.send_json({"error": "this insole doesn't match the scan's current 3D model "
+                                                    "(it changed, or the last attempt failed): make the insole again"},
+                                          HTTPStatus.CONFLICT)
                 f = out / name
                 if not f.is_file():
                     raise FileNotFoundError
@@ -584,6 +585,8 @@ def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check
                     if foot not in FEET:
                         raise BadRequest("an insole needs a foot capture (left or right)")
                     result = make_insole(d, meta)
+                    if "error" in result:  # a failed attempt leaves nothing printable behind
+                        shutil.rmtree(d / "insole", ignore_errors=True)
                     meta = read_json(d / "capture.json")  # re-read: don't undo other changes made meanwhile
                     meta["insole"] = result
                     write_json(d / "capture.json", meta)
@@ -1027,6 +1030,13 @@ def insole_is_stale(folder: Path, meta: dict) -> bool:
     return bool(ins) and "error" not in ins and ins.get("source") != source_stamp(insole_source(folder, meta))
 
 
+def insole_downloadable(folder: Path, meta: dict) -> bool:
+    """Only an insole from a successful build whose source model is still the current one."""
+    ins = meta.get("insole") or {}
+    current = source_stamp(insole_source(folder, meta))
+    return bool(ins) and "error" not in ins and current is not None and ins.get("source") == current
+
+
 def make_insole(folder: Path, meta: dict) -> dict:
     """First-fit insole for a foot capture: an imported model (iPhone app) or a footscan reconstruction.
 
@@ -1052,6 +1062,8 @@ def make_insole(folder: Path, meta: dict) -> dict:
             return dict(error="this capture has no 3D model yet: build it (3D model) or import one first")
     except (ValueError, insole_mod.InsoleError) as e:
         return dict(error=str(e))
+    except Exception as e:  # noqa: BLE001 - an unreadable or broken model is reported, never a crash
+        return dict(error=f"couldn't make an insole from this model ({type(e).__name__}: {e})")
     out = folder / "insole"
     tmp = folder / f"insole.part-{secrets.token_hex(4)}"  # this request's own: never shared with another
     try:

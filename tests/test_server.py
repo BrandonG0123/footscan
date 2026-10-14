@@ -764,3 +764,18 @@ def test_an_insole_goes_stale_when_its_model_changes(servers, tmp_path):
     put()
     listed = [c for c in body(call(f"{op}/api/captures")) if c["capture_id"] == cid][0]
     assert "insole" not in listed and not (data / "captures" / cid / "insole").exists()
+
+
+def test_a_failed_insole_rebuild_leaves_nothing_downloadable(servers):
+    op, _, data = servers
+    cid = body(call(f"{op}/api/captures", "POST", {"condition": "swb", "foot": "right", "session": "LIDAR",
+                                                    "load_kg": 30, "method": "imported_mesh"}))["id"]
+    call(f"{op}/api/captures/{cid}/mesh?ext=obj&up=y", "PUT", _object_capture_foot("right"),
+         {"Content-Type": "application/octet-stream"})
+    assert call(f"{op}/api/captures/{cid}/insole", "POST", {})[0] == 200
+    # the model file is replaced by one that can't be read (e.g. a rebuild that died half-written)
+    (data / "captures" / cid / "mesh.ply").write_bytes(b"ply\nformat ascii 1.0\nelement vertex 3\nend_header\n")
+    r = body(call(f"{op}/api/captures/{cid}/insole", "POST", {}))
+    assert "error" in r
+    assert call(f"{op}/api/captures/{cid}/insole/insole.3mf")[0] == 409
+    assert not (data / "captures" / cid / "insole").exists()
