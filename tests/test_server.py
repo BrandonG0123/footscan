@@ -668,3 +668,49 @@ def test_certificate_fingerprint_is_the_sha256_of_the_certificate(tmp_path):
     cert, _ = ensure_cert(tmp_path)
     fp = cert_fingerprint(cert)
     assert fp == hashlib.sha256(ssl.PEM_cert_to_DER_cert(cert.read_text())).hexdigest() and len(fp) == 64
+
+
+# ---- first-fit insole from the studio ------------------------------------------
+
+def _object_capture_foot(foot="right"):
+    """A synthetic foot (with leg) as the iPhone app would export it: metres, Y up, turned."""
+    import numpy as np
+    import trimesh
+
+    import synth
+    from footscan.recon import imported
+
+    m = synth.block_foot(0.0, foot, origin=(0, 0))
+    T = np.eye(4)
+    c, s = np.cos(np.radians(63)), np.sin(np.radians(63))
+    T[:2, :2] = [[c, -s], [s, c]]
+    m.apply_transform(T)
+    m.apply_transform(np.block([[imported.UP["y"].T, np.zeros((3, 1))], [np.zeros((1, 3)), np.ones((1, 1))]]))
+    m.apply_scale(0.001)
+    return m.export(file_type="obj").encode()
+
+
+def test_studio_makes_a_first_fit_insole_from_an_imported_foot(servers):
+    op, phone, _ = servers
+    cid = body(call(f"{op}/api/captures", "POST", {"condition": "swb", "foot": "left", "session": "LIDAR",
+                                                    "load_kg": 30, "method": "imported_mesh"}))["id"]
+    assert call(f"{op}/api/captures/{cid}/mesh?ext=obj&up=y", "PUT", _object_capture_foot("left"),
+                {"Content-Type": "application/octet-stream"})[0] == 200
+    assert call(f"{phone}/api/captures/{cid}/insole", "POST", {})[0] == 403  # studio only
+    st, raw, _ = call(f"{op}/api/captures/{cid}/insole", "POST", {})
+    assert st == 200, raw
+    r = json.loads(raw)
+    assert r["foot"] == "left" and r["max_fill_mm"] == pytest.approx(11.0, abs=0.6) and r["warnings"] == []
+    for name in ("insole.3mf", "summary.html", "print-notes.txt", "insole.stl"):
+        st, data, h = call(f"{op}/api/captures/{cid}/insole/{name}")
+        assert st == 200 and len(data) > 100, name
+    assert b"NOT A MEDICAL DEVICE" in call(f"{op}/api/captures/{cid}/insole/summary.html")[1]
+    assert call(f"{op}/api/captures/{cid}/insole/../capture.json")[0] == 404
+    listed = [c for c in body(call(f"{op}/api/captures")) if c["capture_id"] == cid][0]
+    assert listed["insole"]["max_fill_mm"] == r["max_fill_mm"]
+
+
+def test_studio_insole_needs_a_foot(servers):
+    op, _, _ = servers
+    cid = body(call(f"{op}/api/captures", "POST", {"condition": "object", "session": "L1", "method": "imported_mesh"}))["id"]
+    assert call(f"{op}/api/captures/{cid}/insole", "POST", {})[0] == 400

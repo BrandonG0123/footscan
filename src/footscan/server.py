@@ -559,6 +559,29 @@ def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check
                                    "--host 0.0.0.0 --https, then open this page again.")
             return dict(available=True, url=info["scan_url"].rstrip("/"), key=studio_key, fingerprint=cert_fingerprint)
 
+        def insole_api(self, method: str, d: Path, rest: list[str]):
+            """First-fit insole from a foot capture: POST makes it, GET <file> downloads it."""
+            out = d / "insole"
+            if method == "GET" and len(rest) == 1:
+                name = rest[0]
+                if name not in INSOLE_FILES:
+                    raise FileNotFoundError
+                f = out / name
+                if not f.is_file():
+                    raise FileNotFoundError
+                return self.send_file(f, INSOLE_FILES[name], headers={
+                    "Content-Disposition": f'attachment; filename="{d.name}-{name}"'} if not name.endswith(".html") else None)
+            if method == "POST" and not rest:
+                meta = read_json(d / "capture.json")
+                foot = meta.get("foot")
+                if foot not in FEET:
+                    raise BadRequest("an insole needs a foot capture (left or right)")
+                result = make_insole(d, meta)
+                meta["insole"] = result
+                write_json(d / "capture.json", meta)
+                return self.send_json(result)
+            raise FileNotFoundError
+
         def studio_info(self) -> dict:
             host, port = self.server.server_address[:2]
             scheme = "https" if secure_cookie else "http"
@@ -908,6 +931,8 @@ def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check
                 if not f.is_file():
                     raise FileNotFoundError
                 return self.send_file(f, "application/json")
+            if p[1:2] == ["insole"]:
+                return self.insole_api(method, d, p[2:])
             if p[1:] == ["complete"] and method == "POST":
                 body = self.json_body()
                 frames = body.get("frames", [])
@@ -963,6 +988,47 @@ def import_mesh(src: Path, dst: Path) -> dict:
 
 
 UP_AXES = ("y", "z")
+INSOLE_FILES = {"insole.3mf": "model/3mf", "insole.stl": "model/stl",
+                "summary.html": "text/html; charset=utf-8", "print-notes.txt": "text/plain; charset=utf-8",
+                "insole.json": "application/json"}
+
+
+def make_insole(folder: Path, meta: dict) -> dict:
+    """First-fit insole for a foot capture: an imported model (iPhone app) or a footscan reconstruction.
+
+    Files go to <capture>/insole/. Returns a short report (or {"error": ...}).
+    """
+    import shutil
+
+    from . import insole as insole_mod
+    from .recon import foot_prep
+    from .recon.imported import load_geometry
+
+    foot = meta["foot"]
+    try:
+        if meta.get("method") == "imported_mesh" and (folder / "mesh.ply").is_file():
+            up = (meta.get("mesh") or {}).get("up", "y")
+            ins, _ = foot_prep.insole_from_object_capture(load_geometry(folder / "mesh.ply"), foot, up=up)
+            source = f"imported model ({(meta.get('notes') or 'scanning app')[:80]})"
+        elif (folder / "recon" / "mesh.ply").is_file():
+            ins = insole_mod.from_scan(load_geometry(folder / "recon" / "mesh.ply"), foot)
+            source = "footscan photo reconstruction"
+        else:
+            return dict(error="this capture has no 3D model yet: build it (3D model) or import one first")
+    except (ValueError, insole_mod.InsoleError) as e:
+        return dict(error=str(e))
+    out = folder / "insole"
+    tmp = folder / "insole.part"
+    shutil.rmtree(tmp, ignore_errors=True)
+    files = insole_mod.write_outputs(ins, tmp, "insole", f"{meta.get('capture_id', folder.name)}, {source}")
+    # fixed names, so the studio can link them
+    (tmp / "insole-summary.html").rename(tmp / "summary.html")
+    shutil.rmtree(out, ignore_errors=True)
+    tmp.rename(out)
+    r = ins.report
+    return dict(made=now_iso(), foot=foot, length_mm=r["length_mm"], width_mm=r["width_mm"], height_mm=r["height_mm"],
+                max_fill_mm=r["max_fill_mm"], sole=r["sole"], bed=r["bed_fit"], warnings=r["warnings"],
+                files=sorted(INSOLE_FILES))
 
 
 def score_imported(folder: Path, up: str) -> dict:

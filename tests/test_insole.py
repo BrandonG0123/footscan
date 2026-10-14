@@ -126,3 +126,58 @@ def test_an_external_scan_in_any_orientation_lands_on_the_mat_and_checks_out(tmp
 
     assert ef.main([str(path), "--foot", "right", "-o", str(tmp_path / "out")]) == 0  # every check ok
     assert ef.main([str(path), "--foot", "left", "-o", str(tmp_path / "out2")]) == 2  # wrong foot is noticed
+
+
+@pytest.mark.parametrize("foot,floor", [("right", True), ("left", True), ("right", False)])
+def test_object_capture_foot_is_levelled_trimmed_and_makes_the_right_insole(foot, floor):
+    """iPhone app output (metres, Y up, turned, leg included, with or without floor) -> correct insole."""
+    import trimesh
+
+    from footscan.recon import foot_prep, imported
+
+    parts = [synth.block_foot(0.0, foot, origin=(0, 0))]
+    if floor:
+        top = trimesh.Trimesh([[-80, -80, 0], [330, -80, 0], [330, 170, 0], [-80, 170, 0]], [[0, 1, 2], [0, 2, 3]])
+        parts.append(top.subdivide().subdivide().subdivide())
+    m = trimesh.util.concatenate(parts)
+    T = np.eye(4)
+    c, s = np.cos(np.radians(63)), np.sin(np.radians(63))
+    T[:2, :2] = [[c, -s], [s, c]]
+    T[:3, 3] = [40, -25, 7]
+    m.apply_transform(T)
+    m.apply_transform(np.block([[imported.UP["y"].T, np.zeros((3, 1))], [np.zeros((1, 3)), np.ones((1, 1))]]))
+    m.apply_scale(0.001)
+
+    ins, placed = foot_prep.insole_from_object_capture(m, foot)
+    prep = ins.report["prep"]
+    assert prep["heel_from"] == "the leg stands over it"
+    assert placed.vertices[:, 2].max() <= foot_prep.LEG_TRIM_MM + 0.5  # leg trimmed
+    assert ins.report["sole"]["holes"] < 0.01                             # the cut is lidded, not read as holes
+    # without a floor in the scan the lowest points stand in for it, a fraction of a mm high
+    assert ins.report["max_fill_mm"] == pytest.approx(11.0, abs=0.1 if floor else 0.6)
+    inner = ins.report["max_fill_at_mm"]["y"] > 0 if foot == "right" else ins.report["max_fill_at_mm"]["y"] < 0
+    assert inner and ins.report["warnings"] == []
+
+
+def test_a_closed_underside_is_flagged_as_possibly_invented():
+    """Object Capture closes a model's bottom; a 'foot' whose whole sole is a surface gets a loud warning."""
+    from footscan.recon import foot_prep
+
+    closed = synth.block_foot(0.0, "right", origin=(0, 0), floor_cut=False)
+    ins, _ = foot_prep.insole_from_object_capture(closed, "right", up="z")
+    assert any("MAY BE INVENTED" in w for w in ins.report["warnings"])
+
+
+def test_something_that_isnt_a_foot_is_flagged():
+    """A shoe-sized box with a narrow footprint isn't a foot on the floor."""
+    import trimesh
+
+    from footscan.recon import foot_prep
+
+    box = trimesh.creation.box(extents=[160.0, 45.0, 40.0])
+    box.apply_translation([0, 0, 20.0])
+    v, f = trimesh.remesh.subdivide_to_size(box.vertices, box.faces, max_edge=2.0)
+    box = trimesh.Trimesh(v, f)
+    box.update_faces(~(box.face_normals[:, 2] < -0.99))
+    ins, _ = foot_prep.insole_from_object_capture(box, "right", up="z")
+    assert any("DOESN'T LOOK LIKE A FOOT" in w for w in ins.report["warnings"])

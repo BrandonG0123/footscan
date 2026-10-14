@@ -116,10 +116,53 @@
           ${c.status === "complete" && c.frame_files?.length && c.condition !== "object"
             ? `<a class="btn secondary" href="/studio/model.html?capture=${encodeURIComponent(c.capture_id)}">3D model</a>` : ""}
           ${c.foot && (c.frame_files?.length || c.mesh)
-            ? `<a class="btn secondary" href="/studio/landmarks.html?capture=${encodeURIComponent(c.capture_id)}">Landmarks</a>` : ""}</p>
+            ? `<a class="btn secondary" href="/studio/landmarks.html?capture=${encodeURIComponent(c.capture_id)}">Landmarks</a>` : ""}
+          ${c.foot && (c.frame_files?.length || c.mesh)
+            ? `<button class="btn secondary" type="button" data-insole="${esc(c.capture_id)}">${c.insole && !c.insole.error ? "Remake insole" : "Make insole"}</button>` : ""}</p>
+        <div class="insole-out" id="insole-${esc(c.capture_id)}">${c.insole ? insoleHtml(c.capture_id, c.insole) : ""}</div>
       </div></article>`;
     }).join("");
   }
+
+  // First-fit insole: not a medical device; no posting; walking-only until a clinician signs the sheet.
+  function insoleHtml(id, r) {
+    if (r.error) return `<p class="hint" style="color:var(--warn);margin:8px 0 0">${esc(r.error)}</p>`;
+    const base = `/api/captures/${encodeURIComponent(id)}/insole/`;
+    const warn = (r.warnings || []).map((w) => `<li>${esc(w)}</li>`).join("");
+    return `<div class="card" style="margin-top:10px;padding:12px">
+      <strong>First-fit insole</strong> <span class="badge">${esc(r.foot)} foot</span> <span class="badge">no posting</span>
+      <p class="hint" style="margin:6px 0">${r.length_mm} × ${r.width_mm} mm, ${r.height_mm} mm tall · highest arch fill ${r.max_fill_mm} mm ·
+        sole seen ${Math.round(100 * r.sole.seen)}% (arch ${Math.round(100 * r.sole.seen_under_arch)}%) · bed: ${esc(r.bed.how)}</p>
+      ${warn ? `<ul class="checklist" style="margin:6px 0;color:var(--warn)">${warn}</ul>` : ""}
+      <p class="btn-row" style="margin:8px 0 0">
+        <a class="btn" href="${base}insole.3mf">3MF for Bambu Studio</a>
+        <a class="btn secondary" href="${base}summary.html" target="_blank" rel="noopener">Summary sheet</a>
+        <a class="btn secondary" href="${base}print-notes.txt" target="_blank" rel="noopener">Print notes</a>
+        <a class="btn secondary" href="${base}insole.stl">STL</a></p>
+      <p class="hint" style="margin:8px 0 0">Not a medical device. Walking-only break-in; no sport until a clinician has signed the summary sheet.</p>
+    </div>`;
+  }
+
+  document.addEventListener("click", async (e) => {
+    const btn = e.target.closest("[data-insole]");
+    if (!btn) return;
+    const id = btn.dataset.insole;
+    const box = document.getElementById(`insole-${id}`);
+    btn.disabled = true;
+    btn.textContent = "Making the insole…";
+    try {
+      const r = await fetch(`/api/captures/${encodeURIComponent(id)}/insole`, { method: "POST" });
+      const out = await r.json();
+      if (!r.ok) throw new Error(out.error || r.status);
+      box.innerHTML = insoleHtml(id, out);
+      btn.textContent = out.error ? "Make insole" : "Remake insole";
+    } catch (err) {
+      box.innerHTML = `<p class="hint" style="color:var(--warn)">Couldn't make it: ${esc(err.message)}</p>`;
+      btn.textContent = "Make insole";
+    } finally {
+      btn.disabled = false;
+    }
+  });
 
   $("f-cond").addEventListener("change", render);
   $("f-foot").addEventListener("change", render);

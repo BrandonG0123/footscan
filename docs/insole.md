@@ -20,6 +20,39 @@ reconstructions are; mm, cm or m are detected. It writes:
 | `print-notes.txt` | Starting points for TPU. Untested on this design (that's Phase 5). |
 | `right-insole.json` | Everything above as data. |
 
+## From the iPhone app
+
+Scan the foot with Footscan on the iPhone (*Right foot* / *Left foot*,
+seated, with a low lap aimed under the inner arch), send it to the studio,
+then in the studio's **Research library** press **Make insole** on that
+scan's card. It shows the size, the arch fill and any warnings, with
+buttons for the 3MF, the summary sheet, the print notes and an STL.
+
+Behind the button (`src/footscan/recon/foot_prep.py`):
+
+1. **Level**: the app's Y-up model becomes Z-up. If the scan kept the floor,
+   the floor is found, levelled and cut away; if not, the lowest scanned
+   points stand in for it (the arch then comes out about 0.5 mm low).
+2. **Densify**: the phone's quick model is coarse (points ~5 mm apart); its
+   triangles are split to 2 mm (adds points, not shape).
+3. **Point the foot**: the footprint's length gives the line, the leg (or,
+   without one, the taller ankle end) marks the heel.
+4. **Trim the leg** above 70 mm and close the cut, so the shin can't be
+   taken for foot and the cut isn't read as holes.
+
+Two loud warnings say when not to print:
+- **DOESN'T LOOK LIKE A FOOT ON THE FLOOR**: the part touching the floor
+  isn't foot-sized or foot-shaped (adult: about 180-330 mm long, 0.28-0.50
+  as wide as long).
+- **THE SOLE MAY BE INVENTED**: the model has a surface under almost all
+  of the footprint. A foot resting on the floor hides most of its sole, and
+  Object Capture closes a model's bottom by itself, so that underside is
+  probably guessed. The arch shape can't be trusted.
+
+Checked on the phone's real shoe scan: both warnings fire (its floor
+contact is 165 x 48 mm, and its whole underside is closed), as they should
+for something that isn't a foot.
+
 ## How the shape is made
 
 The bottom of the foot is the input that matters: the insole's top surface
