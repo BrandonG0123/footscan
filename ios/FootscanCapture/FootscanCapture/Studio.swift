@@ -78,21 +78,24 @@ final class PinnedTrust: NSObject, URLSessionDelegate {
 
     func urlSession(_ session: URLSession, didReceive challenge: URLAuthenticationChallenge,
                     completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
+        let (disposition, credential) = Self.decide(challenge, fingerprint: fingerprint)
+        completionHandler(disposition, credential)
+    }
+
+    /// The pinning rule, shared by uploads and the in-app capture page.
+    static func decide(_ challenge: URLAuthenticationChallenge, fingerprint: String?)
+        -> (URLSession.AuthChallengeDisposition, URLCredential?) {
         guard challenge.protectionSpace.authenticationMethod == NSURLAuthenticationMethodServerTrust,
               let trust = challenge.protectionSpace.serverTrust else {
-            return completionHandler(.performDefaultHandling, nil)
+            return (.performDefaultHandling, nil)
         }
-        guard let fingerprint else { return completionHandler(.performDefaultHandling, nil) }
+        guard let fingerprint else { return (.performDefaultHandling, nil) }
         guard let chain = SecTrustCopyCertificateChain(trust) as? [SecCertificate], let leaf = chain.first else {
-            return completionHandler(.cancelAuthenticationChallenge, nil)
+            return (.cancelAuthenticationChallenge, nil)
         }
         let der = SecCertificateCopyData(leaf) as Data
         let got = SHA256.hash(data: der).map { String(format: "%02x", $0) }.joined()
-        if got == fingerprint {
-            completionHandler(.useCredential, URLCredential(trust: trust))
-        } else {
-            completionHandler(.cancelAuthenticationChallenge, nil) // not the Mac we paired with
-        }
+        return got == fingerprint ? (.useCredential, URLCredential(trust: trust)) : (.cancelAuthenticationChallenge, nil) // not the Mac we paired with
     }
 }
 

@@ -140,7 +140,7 @@ struct OnboardingView: View {
 
     private var cameraPage: some View {
         VStack(alignment: .leading, spacing: 16) {
-            header("The camera", "Scanning uses the camera and the LiDAR sensor next to it. Photos stay on this phone unless you send them.", symbol: "camera.aperture")
+            header("The camera", "Scanning uses the camera (and, on iPhones that have one, the LiDAR sensor next to it). Nothing leaves this phone unless you send it.", symbol: "camera.aperture")
             HStack(spacing: 14) {
                 Image(systemName: cameraSymbol)
                     .font(.system(size: 30, weight: .semibold))

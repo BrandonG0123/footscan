@@ -79,7 +79,7 @@ struct PrepSheet: View {
                     dismiss()
                 }
                 .buttonStyle(PrimaryButtonStyle())
-                .disabled(!ObjectCaptureSession.isSupported || (mustTick && ticked.count < subject.checklist.count))
+                .disabled(mustTick && ticked.count < subject.checklist.count)
                 .padding(.horizontal, 20).padding(.vertical, 10)
                 .background(.bar)
             }

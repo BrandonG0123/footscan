@@ -45,6 +45,20 @@ function syncSetup() {
   });
 }
 form.addEventListener("change", syncSetup);
+
+// Opened from the iPhone app (?condition=swb&foot=right&session=PHOTO&from=app): pre-choose
+// what's being scanned, so the person only adds what the app can't know (the scale reading).
+{
+  const q = new URLSearchParams(location.search);
+  const pick = (name, value) => {
+    const box = value && form.querySelector(`input[name="${name}"][value="${CSS.escape(value)}"]`);
+    if (box) box.checked = true;
+  };
+  pick("condition", q.get("condition"));
+  pick("foot", q.get("foot"));
+  const session = q.get("session");
+  if (session && /^[A-Za-z0-9_-]{1,20}$/.test(session)) form.session.value = session;
+}
 syncSetup();
 
 form.addEventListener("submit", async (e) => {

@@ -56,6 +56,7 @@ struct HomeView: View {
     @State private var showStudio = false
     @State private var error: String?
     @State private var startAfterPrep: Subject?
+    @State private var photoCapture: Subject?
 
     struct PrepRequest: Identifiable {
         let subject: Subject
@@ -107,6 +108,14 @@ struct HomeView: View {
         }) { req in
             PrepSheet(subject: req.subject, mustTick: req.mustTick) { startAfterPrep = req.subject }
                 .presentationDragIndicator(.visible)
+        }
+        .fullScreenCover(item: $photoCapture) { s in
+            if let link = studio.link, let key = studio.client?.key {
+                PhotoCaptureView(subject: s, link: link, key: key) {
+                    settings.markPrepared(s)
+                    photoCapture = nil
+                }
+            }
         }
         .fullScreenCover(item: $capturing) { scan in
             CaptureView(scan: scan, onDone: { done in
@@ -172,16 +181,20 @@ struct HomeView: View {
             .onChange(of: subjectRaw) { _, new in withAnimation(.smooth) { reader.scrollTo(new, anchor: .center) } }
             }
 
+            methodPicker
+
             Button {
-                start()
+                if method == .photos && studio.client == nil { showStudio = true } else { start() }
             } label: {
-                Label(ObjectCaptureSession.isSupported ? "Scan \(subject.label.lowercased())" : "Needs an iPhone with LiDAR",
-                      systemImage: "camera.viewfinder")
+                Label(method == .photos && studio.client == nil
+                      ? "Connect to your studio first"
+                      : "Scan \(subject.label.lowercased())",
+                      systemImage: method == .photos && studio.client == nil ? "desktopcomputer" : "camera.viewfinder")
                     .contentTransition(.numericText())
             }
             .buttonStyle(PrimaryButtonStyle())
-            .disabled(!ObjectCaptureSession.isSupported)
             .animation(.smooth, value: subjectRaw)
+            .animation(.smooth, value: method)
 
             HStack {
                 if settings.hasPrepared(subject) {
@@ -246,7 +259,7 @@ struct HomeView: View {
         for s in library.scans where library.work[s.folder] == nil {
             guard let r = s.record else { continue }
             if let p = library.problems[s.folder] { return (s, "\(r.subject.label) needs a look", p) }
-            if s.photoCount > 0 && !s.hasOBJ && ObjectCaptureSession.isSupported {
+            if s.photoCount > 0 && !s.hasOBJ && CaptureMethod.lidarAvailable {
                 return (s, "Finish your \(r.subject.label.lowercased()) scan", "Its 3D model hasn't been built yet.")
             }
             if studio.client != nil, s.hasOBJ, r.studioCaptureID == nil, r.subject.isFoot, r.loadKg == nil {
@@ -291,11 +304,39 @@ struct HomeView: View {
 
     // MARK: actions
 
+    /// The way this phone will scan: the chosen one, or photos where 3D capture isn't available.
+    private var method: CaptureMethod { CaptureMethod.lidarAvailable ? settings.method : .photos }
+
+    @ViewBuilder private var methodPicker: some View {
+        @Bindable var settings = settings
+        if CaptureMethod.lidarAvailable {
+            VStack(alignment: .leading, spacing: 6) {
+                Picker("How to scan", selection: $settings.method) {
+                    ForEach(CaptureMethod.allCases) { Text($0.label).tag($0) }
+                }
+                .pickerStyle(.segmented)
+                Text(method.detail).font(.footnote).foregroundStyle(Color.fsMuted)
+                    .contentTransition(.opacity)
+            }
+            .sensoryFeedback(.selection, trigger: settings.method)
+        } else {
+            Label("This iPhone scans with photos on the printed mat (it can't run Apple's 3D capture). The studio on your Mac builds the model.",
+                  systemImage: "camera.on.rectangle")
+                .font(.footnote).foregroundStyle(Color.fsMuted)
+        }
+    }
+
     private func start() {
         if settings.hasPrepared(subject) { begin(subject) } else { prep = PrepRequest(subject: subject, mustTick: true) }
     }
 
     private func begin(_ s: Subject) {
+        if method == .photos {
+            // photos go straight to the studio: nothing big is kept on the phone
+            guard studio.client != nil else { showStudio = true; return }
+            photoCapture = s
+            return
+        }
         if let problem = DiskSpace.captureProblem() {
             withAnimation(.smooth) { error = problem }
             UINotificationFeedbackGenerator().notificationOccurred(.warning)
