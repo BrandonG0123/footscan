@@ -141,12 +141,44 @@ private struct StudioWebView: UIViewRepresentable {
             return PinnedTrust.decide(challenge, fingerprint: parent.link.fingerprint)
         }
 
-        // Stay on the studio: anything else opens in Safari instead.
+        // Stay on the studio: anything else opens in Safari instead. And leaving
+        // the capture page (a menu link) mustn't lose photos: same rule as Done.
         func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction) async -> WKNavigationActionPolicy {
             guard let target = action.request.url else { return .cancel }
-            if isStudio(target.host()) || target.scheme == "about" { return .allow }
-            await UIApplication.shared.open(target)
-            return .cancel
+            guard isStudio(target.host()) || target.scheme == "about" else {
+                await UIApplication.shared.open(target)
+                return .cancel
+            }
+            let leavingPage = action.targetFrame?.isMainFrame != false && target.path() != webView.url?.path()
+            guard leavingPage, let state = await parent.handle.captureState() else { return .allow }
+            if state.uploading {
+                await Self.tell(webView, "Still sending to the studio. Wait until it says Saved, then go on.")
+                return .cancel
+            }
+            if state.unsaved > 0 {
+                let discard = await Self.ask(webView, "Leave this page and discard \(state.unsaved) unsaved photo\(state.unsaved == 1 ? "" : "s")?")
+                return discard ? .allow : .cancel
+            }
+            return .allow
+        }
+
+        private static func tell(_ webView: WKWebView, _ message: String) async {
+            await withCheckedContinuation { (done: CheckedContinuation<Void, Never>) in
+                let alert = UIAlertController(title: nil, message: message, preferredStyle: .alert)
+                alert.addAction(UIAlertAction(title: "OK", style: .default) { _ in done.resume() })
+                guard let top = top(from: webView) else { return done.resume() }
+                top.present(alert, animated: true)
+            }
+        }
+
+        private static func ask(_ webView: WKWebView, _ message: String) async -> Bool {
+            await withCheckedContinuation { done in
+                let alert = UIAlertController(title: nil, message: message, preferredStyle: .alert)
+                alert.addAction(UIAlertAction(title: "Keep scanning", style: .cancel) { _ in done.resume(returning: false) })
+                alert.addAction(UIAlertAction(title: "Discard", style: .destructive) { _ in done.resume(returning: true) })
+                guard let top = top(from: webView) else { return done.resume(returning: false) }
+                top.present(alert, animated: true)
+            }
         }
 
         func webView(_ webView: WKWebView, requestMediaCapturePermissionFor origin: WKSecurityOrigin,
@@ -157,23 +189,12 @@ private struct StudioWebView: UIViewRepresentable {
         // The page's own "Discard N frames?" and messages: shown as native dialogs.
         func webView(_ webView: WKWebView, runJavaScriptConfirmPanelWithMessage message: String,
                      initiatedByFrame frame: WKFrameInfo) async -> Bool {
-            await withCheckedContinuation { done in
-                let alert = UIAlertController(title: nil, message: message, preferredStyle: .alert)
-                alert.addAction(UIAlertAction(title: "Cancel", style: .cancel) { _ in done.resume(returning: false) })
-                alert.addAction(UIAlertAction(title: "OK", style: .destructive) { _ in done.resume(returning: true) })
-                guard let top = Self.top(from: webView) else { return done.resume(returning: false) }
-                top.present(alert, animated: true)
-            }
+            await Self.ask(webView, message)
         }
 
         func webView(_ webView: WKWebView, runJavaScriptAlertPanelWithMessage message: String,
                      initiatedByFrame frame: WKFrameInfo) async {
-            await withCheckedContinuation { (done: CheckedContinuation<Void, Never>) in
-                let alert = UIAlertController(title: nil, message: message, preferredStyle: .alert)
-                alert.addAction(UIAlertAction(title: "OK", style: .default) { _ in done.resume() })
-                guard let top = Self.top(from: webView) else { return done.resume() }
-                top.present(alert, animated: true)
-            }
+            await Self.tell(webView, message)
         }
 
         private static func top(from view: UIView) -> UIViewController? {
