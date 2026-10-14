@@ -127,6 +127,8 @@
   // First-fit insole: not a medical device; no posting; walking-only until a clinician signs the sheet.
   function insoleHtml(id, r) {
     if (r.error) return `<p class="hint" style="color:var(--warn);margin:8px 0 0">${esc(r.error)}</p>`;
+    if (r.stale) return `<p class="hint" style="color:var(--warn);margin:8px 0 0">The 3D model has changed since this insole was
+      made, so it no longer matches. Press Make insole to make it again.</p>`;
     const base = `/api/captures/${encodeURIComponent(id)}/insole/`;
     const warn = (r.warnings || []).map((w) => `<li>${esc(w)}</li>`).join("");
     return `<div class="card" style="margin-top:10px;padding:12px">

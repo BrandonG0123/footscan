@@ -732,3 +732,35 @@ def test_two_insole_builds_at_once_both_succeed_and_leave_one_clean_result(serve
     folder = data / "captures" / cid
     assert sorted(p.name for p in folder.iterdir() if p.name.startswith("insole")) == ["insole"]  # no leftovers
     assert {p.name for p in (folder / "insole").iterdir()} >= {"insole.3mf", "summary.html", "print-notes.txt"}
+
+
+def test_an_insole_goes_stale_when_its_model_changes(servers, tmp_path):
+    """Never offer an insole made from a model that has since been replaced or rebuilt."""
+    import os
+    import time
+
+    op, _, data = servers
+    cid = body(call(f"{op}/api/captures", "POST", {"condition": "swb", "foot": "right", "session": "LIDAR",
+                                                    "load_kg": 30, "method": "imported_mesh"}))["id"]
+    put = lambda: call(f"{op}/api/captures/{cid}/mesh?ext=obj&up=y", "PUT", _object_capture_foot("right"),
+                       {"Content-Type": "application/octet-stream"})
+    put()
+    assert call(f"{op}/api/captures/{cid}/insole", "POST", {})[0] == 200
+    assert call(f"{op}/api/captures/{cid}/insole/insole.3mf")[0] == 200
+
+    # the model file changes underneath (e.g. rebuilt): marked stale, downloads refused
+    mesh = data / "captures" / cid / "mesh.ply"
+    later = time.time() + 5
+    os.utime(mesh, (later, later))
+    listed = [c for c in body(call(f"{op}/api/captures")) if c["capture_id"] == cid][0]
+    assert listed["insole"].get("stale") is True
+    assert call(f"{op}/api/captures/{cid}/insole/insole.3mf")[0] == 409
+
+    # making it again clears that
+    assert call(f"{op}/api/captures/{cid}/insole", "POST", {})[0] == 200
+    assert call(f"{op}/api/captures/{cid}/insole/insole.3mf")[0] == 200
+
+    # a new import removes the old insole altogether
+    put()
+    listed = [c for c in body(call(f"{op}/api/captures")) if c["capture_id"] == cid][0]
+    assert "insole" not in listed and not (data / "captures" / cid / "insole").exists()

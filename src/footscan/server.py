@@ -568,6 +568,9 @@ def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check
                 name = rest[0]
                 if name not in INSOLE_FILES:
                     raise FileNotFoundError
+                if insole_is_stale(d, read_json(d / "capture.json")):
+                    return self.send_json({"error": "the 3D model has changed since this insole was made: "
+                                                    "make the insole again"}, HTTPStatus.CONFLICT)
                 f = out / name
                 if not f.is_file():
                     raise FileNotFoundError
@@ -925,6 +928,9 @@ def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check
                 stats["up"] = up
                 meta = read_json(d / "capture.json")
                 meta.update(status="complete", mesh=stats, frame_files=[])
+                # an insole made from the old model no longer matches: remove it
+                meta.pop("insole", None)
+                shutil.rmtree(d / "insole", ignore_errors=True)
                 # The calibration object made by another app (e.g. the iPhone
                 # test app): score it now, against the object's true shape.
                 if meta.get("condition") == "calibration":
@@ -998,6 +1004,29 @@ INSOLE_FILES = {"insole.3mf": "model/3mf", "insole.stl": "model/stl",
                 "insole.json": "application/json"}
 
 
+def insole_source(folder: Path, meta: dict) -> Path | None:
+    """The model an insole is made from: the imported model, else footscan's reconstruction."""
+    if meta.get("method") == "imported_mesh" and (folder / "mesh.ply").is_file():
+        return folder / "mesh.ply"
+    if (folder / "recon" / "mesh.ply").is_file():
+        return folder / "recon" / "mesh.ply"
+    return None
+
+
+def source_stamp(path: Path | None) -> str | None:
+    """Cheap fingerprint of a model file (size and modification time): changes when it's replaced or rebuilt."""
+    if path is None or not path.is_file():
+        return None
+    st = path.stat()
+    return f"{path.name}:{st.st_size}:{st.st_mtime_ns}"
+
+
+def insole_is_stale(folder: Path, meta: dict) -> bool:
+    """Was this capture's model replaced or rebuilt after its insole was made?"""
+    ins = meta.get("insole") or {}
+    return bool(ins) and "error" not in ins and ins.get("source") != source_stamp(insole_source(folder, meta))
+
+
 def make_insole(folder: Path, meta: dict) -> dict:
     """First-fit insole for a foot capture: an imported model (iPhone app) or a footscan reconstruction.
 
@@ -1010,6 +1039,7 @@ def make_insole(folder: Path, meta: dict) -> dict:
     from .recon.imported import load_geometry
 
     foot = meta["foot"]
+    stamp = source_stamp(insole_source(folder, meta))
     try:
         if meta.get("method") == "imported_mesh" and (folder / "mesh.ply").is_file():
             up = (meta.get("mesh") or {}).get("up", "y")
@@ -1037,7 +1067,7 @@ def make_insole(folder: Path, meta: dict) -> dict:
     r = ins.report
     return dict(made=now_iso(), foot=foot, length_mm=r["length_mm"], width_mm=r["width_mm"], height_mm=r["height_mm"],
                 max_fill_mm=r["max_fill_mm"], sole=r["sole"], bed=r["bed_fit"], warnings=r["warnings"],
-                files=sorted(INSOLE_FILES))
+                files=sorted(INSOLE_FILES), source=stamp)
 
 
 def score_imported(folder: Path, up: str) -> dict:
@@ -1075,6 +1105,8 @@ def list_captures(captures_dir: Path) -> list[dict]:
         except json.JSONDecodeError:
             continue
         meta.pop("frames", None)
+        if meta.get("insole") and insole_is_stale(f.parent, meta):
+            meta["insole"] = {**meta["insole"], "stale": True}
         out.append(meta)
     return sorted(out, key=lambda m: m.get("created", ""), reverse=True)
 
