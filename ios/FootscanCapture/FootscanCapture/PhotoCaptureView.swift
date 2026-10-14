@@ -149,7 +149,15 @@ private struct StudioWebView: UIViewRepresentable {
                 await UIApplication.shared.open(target)
                 return .cancel
             }
-            let leavingPage = action.targetFrame?.isMainFrame != false && target.path() != webView.url?.path()
+            // Any main-frame page load counts (even reloading this same page); only a jump
+            // within the page (#anchor on the same address) keeps the photos.
+            func withoutFragment(_ u: URL?) -> String? {
+                guard let u, var c = URLComponents(url: u, resolvingAgainstBaseURL: false) else { return nil }
+                c.fragment = nil
+                return c.string
+            }
+            let samePageJump = target.fragment != nil && withoutFragment(target) == withoutFragment(webView.url)
+            let leavingPage = action.targetFrame?.isMainFrame != false && !samePageJump
             guard leavingPage, let state = await parent.handle.captureState() else { return .allow }
             if state.uploading {
                 await Self.tell(webView, "Still sending to the studio. Wait until it says Saved, then go on.")
