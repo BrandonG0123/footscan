@@ -81,8 +81,11 @@ def _densify(placed, info):
     return placed
 
 
-def _largest_piece(mesh):
-    """The biggest connected piece by area (drops stray bits the scan picked up)."""
+def _largest_piece(mesh, reaches_z: float | None = None):
+    """The biggest connected piece by area (drops stray bits the scan picked up).
+
+    With ``reaches_z``, only pieces that reach up to that height count.
+    Returns (piece, second-biggest area / biggest area)."""
     from scipy.sparse import coo_matrix
     from scipy.sparse.csgraph import connected_components
 
@@ -92,7 +95,13 @@ def _largest_piece(mesh):
     count, label = connected_components(g, directed=False)
     if count <= 1:
         return mesh, 0.0
-    areas = np.bincount(label, weights=mesh.area_faces)
+    areas = np.bincount(label, weights=mesh.area_faces, minlength=count)
+    if reaches_z is not None:
+        top = np.full(count, -np.inf)
+        np.maximum.at(top, label, mesh.triangles_center[:, 2])
+        areas[top < reaches_z] = 0.0
+        if not areas.any():
+            return mesh, 0.0  # nothing qualifies: the caller's own check says so
     order = np.argsort(areas)[::-1]
     out = mesh.copy()
     out.update_faces(label == order[0])
@@ -257,29 +266,47 @@ PRINT_MAX_DEPTH_MM = 90.0   # deeper than this is the box's sides or the table, 
 PRINT_EDGE_MM = 4.0         # ignore this close to the foam's outer edge (the box's walls)
 PRINT_MIN_AREA_MM2 = 8000.0
 FOAM_TOP_MIN_AREA_MM2 = 5000.0  # the foam's top round the print: a few times this, even for one narrow block
+FOAM_TOP_MAX_TILT_DEG = 25.0    # the box may sit this far off level
 
 
-def _foam_top(m):
-    """The foam's flat top: the highest big level surface. -> (a point on it, its normal, its points)."""
-    flat = m.face_normals[:, 2] > 0.97
-    if not flat.any():
+def _foam_top(m, tries: int = 200, seed: int = 0):
+    """The foam's flat top: the highest big flat surface. -> (a point on it, its normal, its points).
+
+    Planes are found whole, at whatever modest tilt the box sits (a table
+    needn't be level, and the phone's sense of level is close, not exact):
+    pick a patch of upward-facing surface (bigger triangles more often), fit
+    its plane, and collect everything lying on that plane and facing the same
+    way. Planes of at least ``FOAM_TOP_MIN_AREA_MM2`` are candidates; the
+    highest is the foam's top (a table round the box, or a flat-bottomed
+    print, is lower).
+    """
+    from scipy.spatial import cKDTree
+
+    up = m.face_normals[:, 2] > np.cos(np.radians(FOAM_TOP_MAX_TILT_DEG))
+    if not up.any():
         raise FootPrepError("no flat foam surface found: is this a scan of a foam box from above?")
-    z = m.triangles_center[flat, 2]
-    a = m.area_faces[flat]
-    bins = np.arange(z.min() - 1, z.max() + 2, 1.0)
-    hist, edges = np.histogram(z, bins=bins, weights=a)
-    hist = np.convolve(hist, [1, 1, 1])[1:-1]  # each height with its neighbours (same length as hist)
-    big = np.nonzero(hist >= FOAM_TOP_MIN_AREA_MM2)[0]
-    if not len(big):
+    C, N, A = m.triangles_center[up], m.face_normals[up], m.area_faces[up]
+    tree = cKDTree(C)
+    rng = np.random.default_rng(seed)
+    same_way = np.cos(np.radians(10.0))
+    best = None
+    for i in rng.choice(len(C), size=min(tries, len(C)), replace=False, p=A / A.sum()):
+        nb = tree.query_ball_point(C[i], 15.0)
+        c = np.average(C[nb], axis=0, weights=A[nb])
+        n = np.average(N[nb], axis=0, weights=A[nb])
+        n /= np.linalg.norm(n)
+        on = (np.abs((C - c) @ n) < 2.5) & (N @ n > same_way)
+        if A[on].sum() < FOAM_TOP_MIN_AREA_MM2:
+            continue
+        height = float(np.average(C[on, 2], weights=A[on]))
+        if best is None or height > best[0] + 5.0 or (abs(height - best[0]) <= 5.0 and A[on].sum() > best[3]):
+            best = (height, c, n, float(A[on].sum()))
+    if best is None:
         raise FootPrepError("no flat foam surface found: is this a scan of a foam box from above?")
-    top_bin = big.max()  # the highest of the big level surfaces (a table round the box is lower)
-    z0 = (edges[top_bin] + edges[top_bin + 1]) / 2
-    # Fit the plane exactly (the phone's sense of level is close, not exact),
-    # then gather the whole top again against the fitted plane and refit: a
-    # slight tilt spreads a big top over several heights.
-    c, n = np.array([0.0, 0.0, z0]), np.array([0.0, 0.0, 1.0])
+    _, c, n, _ = best
+    # Refit exactly from everything on it, twice (each fit gathers the whole top better).
     for _ in range(3):
-        on = flat & (np.abs((m.triangles_center - c) @ n) < 2.5)
+        on = (np.abs((m.triangles_center - c) @ n) < 2.5) & (m.face_normals @ n > same_way)
         P = m.vertices[np.unique(m.faces[on])]
         c = P.mean(0)
         n = np.linalg.eigh(np.cov((P - c).T))[1][:, 0]  # least-spread direction (3 x 3: any number of points)
@@ -327,8 +354,9 @@ def prepare_impression(mesh, up: str = "y", trim_mm: float | None = LEG_TRIM_MM)
         raise FootPrepError("no print found below the foam's top surface")
     m.update_faces(keep)
     m.remove_unreferenced_vertices()
-    m, other = _largest_piece(m)
-    if m.vertices[:, 2].max() < -PRINT_BELOW_TOP_MM - 5:
+    # a print opens at the foam's top: pieces that don't reach up to it (a table showing under the box) aren't prints
+    m, other = _largest_piece(m, reaches_z=-PRINT_BELOW_TOP_MM - 5)
+    if not len(m.faces) or m.vertices[:, 2].max() < -PRINT_BELOW_TOP_MM - 5:
         raise FootPrepError("what's below the foam's top doesn't reach up to it, so it isn't a print in the foam")
     m = _densify(m, info)  # only the print: the box and the table aren't needed in detail
     if m.area < PRINT_MIN_AREA_MM2:

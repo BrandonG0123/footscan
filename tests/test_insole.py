@@ -260,3 +260,17 @@ def test_a_foam_box_with_no_print_is_refused():
     block.apply_translation([0, 0, 35.0])
     with pytest.raises(foot_prep.FootPrepError):
         foot_prep.prepare_impression(block, up="z")
+
+
+@pytest.mark.parametrize("tilt", [5.0, 8.0])
+def test_a_densely_meshed_foam_print_on_a_tilted_table_reads_the_same(tilt):
+    """The foam's top is found as a whole plane, however finely it's meshed, with the box a few degrees off level."""
+    from footscan.recon import foot_prep
+
+    m = synth.foam_print("right", depth=30.0).subdivide().subdivide().subdivide()
+    m = _as_object_capture(m, tilt_deg=tilt)
+    ins, _ = foot_prep.insole_from_object_capture(m, "right", kind="impression")
+    r = ins.report
+    assert r["prep"]["foam_top_tilt_deg"] == pytest.approx(tilt, abs=0.1)
+    assert r["prep"]["print_deepest_mm"] == pytest.approx(30.0, abs=0.2)
+    assert r["max_fill_mm"] == pytest.approx(11.0, abs=0.1) and r["warnings"] == []
