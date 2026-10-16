@@ -402,3 +402,52 @@ def dome_foot(length: float = 240.0, width: float = 92.0, height: float = 58.0):
     m.update_faces(m.triangles_center[:, 2] > 0)
     m.remove_unreferenced_vertices()
     return m
+
+
+def shaped_foot(foot: str = "right", leg: bool = True):
+    """SYNTHETIC foot-shaped solid for tests, with a heel narrower than the ball of the foot.
+
+    Foot coordinates (x forward, y toward the foot's left, z up), mm: the
+    plan is the rubber band round three circles (heel r 32 at x 32, ball
+    r 50 at x 165, toes r 28 at x 222, all on y = 45): 250 long, 64 wide
+    at the heel, 100 at the ball. 25 mm thick; a 12 mm high arch tunnel
+    under the inner side (x 70-150, from 14 mm inside the centre line
+    outward; inner = left for a right foot); optionally a 28 mm radius leg
+    over the heel at (45, 45), up to 140 mm. Closed (the sole is a surface).
+    """
+    import manifold3d as m3
+    import shapely
+    import trimesh
+    from shapely.geometry import Point
+
+    M = m3.Manifold
+    plan = shapely.convex_hull(shapely.union_all([Point(32, 45).buffer(32, 64), Point(165, 45).buffer(50, 64),
+                                                  Point(222, 45).buffer(28, 64)]))
+    ring = np.asarray(shapely.geometry.polygon.orient(plan, 1.0).exterior.coords)[:-1]
+    body = M.extrude(m3.CrossSection([ring], m3.FillRule.Positive), 25.0)
+    y0 = 59.0 if foot == "right" else -40.0
+    solid = body - M.cube((80.0, 71.0, 13.0)).translate((70.0, y0, -1.0))
+    if leg:
+        solid = solid + M.cylinder(120.0, 28.0, 28.0, 96).translate((45.0, 45.0, 20.0))
+    mm = solid.to_mesh()
+    return trimesh.Trimesh(np.asarray(mm.vert_properties)[:, :3], np.asarray(mm.tri_verts), process=True)
+
+
+def foam_print(foot: str = "right", depth: float = 30.0):
+    """SYNTHETIC foam impression box: a 330 x 130 x 70 mm block with ``shaped_foot`` pressed
+    ``depth`` mm straight down into it (the foam is crushed everywhere above the sole,
+    and left alone under the arch), on a table. Closed, as Object Capture leaves a model."""
+    import manifold3d as m3
+    import trimesh
+
+    M = m3.Manifold
+    foot_mm = shaped_foot(foot, leg=False)
+    f = M(m3.Mesh(vert_properties=np.asarray(foot_mm.vertices, dtype=np.float32),
+                  tri_verts=np.asarray(foot_mm.faces, dtype=np.uint32)))
+    sole_z = 70.0 - depth
+    sweep = M.batch_boolean([f.translate((0.0, 0.0, sole_z + k)) for k in range(0, 100, 20)], m3.OpType.Add)
+    block = M.cube((330.0, 130.0, 70.0)).translate((-40.0, -20.0, 0.0))
+    mm = (block - sweep).to_mesh()
+    m = trimesh.Trimesh(np.asarray(mm.vert_properties)[:, :3], np.asarray(mm.tri_verts), process=True)
+    table = trimesh.Trimesh([[-120, -100, 0], [370, -100, 0], [370, 210, 0], [-120, 210, 0]], [[0, 1, 2], [0, 2, 3]])
+    return trimesh.util.concatenate([m, table])

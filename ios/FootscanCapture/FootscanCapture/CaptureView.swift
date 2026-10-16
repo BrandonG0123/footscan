@@ -29,7 +29,7 @@ struct CaptureView: View {
             if let session {
                 ObjectCaptureView(session: session)
                     .ignoresSafeArea()
-                Controls(session: session, passes: $passes, onCancel: cancel)
+                Controls(session: session, subject: scan.record?.subject ?? .other, passes: $passes, onCancel: cancel)
                     .task { await follow(session) }
             } else if let startError {
                 VStack(spacing: 16) {
@@ -97,6 +97,7 @@ struct CaptureView: View {
 /// The buttons and words at the bottom of the camera view.
 private struct Controls: View {
     let session: ObjectCaptureSession
+    let subject: Subject
     @Binding var passes: Int
     var onCancel: () -> Void
 
@@ -171,12 +172,27 @@ private struct Controls: View {
     private var instruction: String {
         switch session.state {
         case .initializing: "Getting the camera ready…"
-        case .ready: "Point the phone at it, from about arm's length."
-        case .detecting: "A box appears round it. Drag the box's edges so it holds just the object, then Start."
+        case .ready:
+            switch subject.scanKind {
+            case "sole_up": "Point the phone down at the sole, from about arm's length."
+            case "impression": "Point the phone at the foam box, from about arm's length."
+            default: "Point the phone at it, from about arm's length."
+            }
+        case .detecting:
+            switch subject.scanKind {
+            case "sole_up": "Drag the box's edges so it holds the foot and a hand's width of the leg, then Start."
+            case "impression": "Drag the box's edges so it holds the whole foam box, then Start."
+            default: "A box appears round it. Drag the box's edges so it holds just the object, then Start."
+            }
         case .capturing:
-            session.userCompletedScanPass
-                ? "Lap done. Best results: 2 or 3 laps, one higher up looking down, one low. Then Finish."
-                : "Walk slowly all the way round. Keep it in the middle of the screen."
+            switch (subject.scanKind, session.userCompletedScanPass) {
+            case ("sole_up", false): "Move slowly over the whole sole, heel to toes, then down each side. Keep the sole in the middle of the screen."
+            case ("sole_up", true): "Lap done. One more, closer and looking straight down at the arch, makes it better. Then Finish."
+            case ("impression", false): "Walk slowly all the way round, looking down into the print. Keep it in the middle of the screen."
+            case ("impression", true): "Lap done. One more, higher up and looking straight down into the print, makes it better. Then Finish."
+            case (_, true): "Lap done. Best results: 2 or 3 laps, one higher up looking down, one low. Then Finish."
+            default: "Walk slowly all the way round. Keep it in the middle of the screen."
+            }
         case .finishing: "Saving the last photos…"
         case .completed: "Done."
         case .failed: "Something went wrong."

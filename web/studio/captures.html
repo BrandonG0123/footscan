@@ -51,6 +51,7 @@
 <script type="module">
   const $ = (id) => document.getElementById(id);
   const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
+  const KIND_BADGE = { sole_up: `<span class="badge">sole up</span>`, impression: `<span class="badge">foam print</span>` };
   let all = [];
 
   async function load() {
@@ -95,7 +96,7 @@
       const cov = s.coverage_completeness == null ? "—" : `${Math.round(100 * s.coverage_completeness)}%`;
       return `<article class="card cap" id="${esc(c.capture_id)}">${thumb}<div>
         <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:4px">
-          <span class="badge brand">${esc(c.condition)}</span>${c.foot ? `<span class="badge">${esc(c.foot)} foot</span>` : c.condition === "calibration" ? `<span class="badge">accuracy study</span>` : `<span class="badge warn">not measurable</span>`}${status}</div>
+          <span class="badge brand">${esc(c.condition)}</span>${KIND_BADGE[c.scan_kind] ?? ""}${c.foot ? `<span class="badge">${esc(c.foot)} foot</span>` : c.condition === "calibration" ? `<span class="badge">accuracy study</span>` : `<span class="badge warn">not measurable</span>`}${status}</div>
         <h3 class="mono">${esc(c.capture_id)}</h3>
         <dl>
           <div><dt>Session</dt><dd>${esc(c.session)}</dd></div>

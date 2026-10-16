@@ -48,7 +48,7 @@ struct HomeView: View {
     @Environment(StudioConnection.self) private var studio
     @Environment(ScanLibrary.self) private var library
 
-    @AppStorage("lastSubject") private var subjectRaw = Subject.other.rawValue
+    @AppStorage("lastSubject") private var subjectRaw = Subject.rightSole.rawValue
     @State private var capturing: Scan?
     @State private var path: [Scan] = []
     @State private var prep: PrepRequest?
@@ -64,7 +64,12 @@ struct HomeView: View {
         var id: String { subject.rawValue + (mustTick ? "!" : "") }
     }
 
-    private var subject: Subject { Subject(rawValue: subjectRaw) ?? .other }
+    /// What this phone can scan: sole and foam-print scans need Apple's 3D capture.
+    private var subjects: [Subject] { Subject.allCases.filter { CaptureMethod.lidarAvailable || !$0.needs3DCapture } }
+
+    private var subject: Subject {
+        Subject(rawValue: subjectRaw).flatMap { subjects.contains($0) ? $0 : nil } ?? subjects[0]
+    }
 
     var body: some View {
         NavigationStack(path: $path) {
@@ -157,7 +162,7 @@ struct HomeView: View {
             ScrollViewReader { reader in
             ScrollView(.horizontal) {
                 HStack(spacing: 12) {
-                    ForEach(Subject.allCases) { s in
+                    ForEach(subjects) { s in
                         SubjectCard(subject: s, selected: s == subject, firstTime: !settings.hasPrepared(s)) {
                             withAnimation(.spring(duration: 0.35, bounce: 0.35)) { subjectRaw = s.rawValue }
                         }
@@ -262,7 +267,7 @@ struct HomeView: View {
             if s.photoCount > 0 && !s.hasOBJ && CaptureMethod.lidarAvailable {
                 return (s, "Finish your \(r.subject.label.lowercased()) scan", "Its 3D model hasn't been built yet.")
             }
-            if studio.client != nil, s.hasOBJ, r.studioCaptureID == nil, r.subject.isFoot, r.loadKg == nil {
+            if studio.client != nil, s.hasOBJ, r.studioCaptureID == nil, r.subject.needsScale, r.loadKg == nil {
                 return (s, "Add the scale reading", "Then your \(r.subject.label.lowercased()) scan can go to the studio.")
             }
         }
@@ -305,11 +310,18 @@ struct HomeView: View {
     // MARK: actions
 
     /// The way this phone will scan: the chosen one, or photos where 3D capture isn't available.
-    private var method: CaptureMethod { CaptureMethod.lidarAvailable ? settings.method : .photos }
+    private var method: CaptureMethod {
+        guard CaptureMethod.lidarAvailable else { return .photos }
+        return subject.needs3DCapture ? .lidar : settings.method
+    }
 
     @ViewBuilder private var methodPicker: some View {
         @Bindable var settings = settings
-        if CaptureMethod.lidarAvailable {
+        if subject.needs3DCapture {
+            Label("Uses 3D capture: the phone builds the model, then sends it to your studio for the insole.",
+                  systemImage: "cube.transparent")
+                .font(.footnote).foregroundStyle(Color.fsMuted)
+        } else if CaptureMethod.lidarAvailable {
             VStack(alignment: .leading, spacing: 6) {
                 Picker("How to scan", selection: $settings.method) {
                     ForEach(CaptureMethod.allCases) { Text($0.label).tag($0) }
@@ -367,12 +379,13 @@ private struct SubjectCard: View {
                     .foregroundStyle(selected ? Color.fsAccentInk : Color.fsBrand)
                     .frame(width: 44, height: 44)
                     .background(selected ? Color.fsAccent : Color.fsBrandSoft, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-                    .scaleEffect(x: subject == .leftFoot ? -1 : 1)
+                    .scaleEffect(x: subject.isLeft ? -1 : 1)
                     .symbolEffect(.bounce, value: selected)
                 Spacer(minLength: 0)
                 Text(subject.shortLabel).font(.headline).foregroundStyle(selected ? Color.fsBrandInk : Color.fsInk)
                     .lineLimit(1).minimumScaleFactor(0.8)
-                Text(firstTime ? "First time" : "Ready").font(.caption.weight(.semibold))
+                Text(firstTime ? "First time · \(subject.purpose)" : subject.purpose).font(.caption.weight(.semibold))
+                    .lineLimit(1).minimumScaleFactor(0.8)
                     .foregroundStyle(selected ? Color.fsBrandInk.opacity(0.8) : Color.fsMuted)
             }
             .padding(14)

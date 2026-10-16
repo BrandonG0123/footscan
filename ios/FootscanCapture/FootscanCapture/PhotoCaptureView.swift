@@ -16,8 +16,8 @@ extension Subject {
     var studioCondition: (condition: String, foot: String?) {
         switch self {
         case .calibration: ("calibration", nil)
-        case .rightFoot: ("swb", "right")
-        case .leftFoot: ("swb", "left")
+        case .rightSole, .leftSole: ("nwb_relaxed", side)
+        case .rightPrint, .leftPrint, .rightFoot, .leftFoot: ("swb", side)
         case .other: ("object", nil)
         }
     }

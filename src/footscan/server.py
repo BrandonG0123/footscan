@@ -89,6 +89,11 @@ CONDITIONS = {"nwb", "nwb_relaxed", "swb", "fwb", "object", "calibration"}
 UNSCALED_CONDITIONS = {"object"}
 NON_FOOT_CONDITIONS = {"object", "calibration"}
 METHODS = {"bare_skin", "speckle_sock", "marker_dots", "foam_impression", "imported_mesh"}
+# What a foot capture shows: the foot resting on the floor (sole hidden), the sole facing the camera
+# (lying face down, knee bent), or the print a foot left in a foam box. Decides how Make insole reads it.
+SCAN_KINDS = ("foot", "sole_up", "impression")
+KIND_LABELS = {"foot": "foot resting on the floor", "sole_up": "sole-up scan (unloaded)",
+               "impression": "foam print (semi-weight-bearing)"}
 FEET = ("left", "right")
 REQUIRED_ACKS = ("not_medical_device", "clinician_review", "break_in", "photo_consent")
 OPERATOR_STATUSES = {"received", "needs_rescan", "archived"}
@@ -184,14 +189,23 @@ def validate_setup(body: dict) -> dict:
         raise BadRequest("session: 1-20 letters, digits, - or _")
     if method not in METHODS:
         raise BadRequest(f"method must be one of {sorted(METHODS)}")
+    kind = body.get("scan_kind") or "foot"
+    if kind not in SCAN_KINDS:
+        raise BadRequest(f"scan_kind must be one of {list(SCAN_KINDS)}")
+    if kind != "foot" and is_object:
+        raise BadRequest("scan_kind is for foot captures")
     load = parse_load(body.get("load_kg"))
-    if cond in ("swb", "fwb") and load is None:
+    # a foam print records the shape the foam took, not a scale reading
+    if cond in ("swb", "fwb") and load is None and kind != "impression":
         raise BadRequest("weight-bearing captures need the scale reading (load_kg)")
-    return dict(
+    out = dict(
         foot=foot, condition=cond, session=session, method=method, load_kg=load,
         measurable=not is_object,
         notes=str(body.get("notes", ""))[:2000], device=str(body.get("device", ""))[:300],
     )
+    if not is_object:
+        out["scan_kind"] = kind
+    return out
 
 
 def parse_load(value) -> float | None:
@@ -1053,8 +1067,9 @@ def make_insole(folder: Path, meta: dict) -> dict:
     try:
         if meta.get("method") == "imported_mesh" and (folder / "mesh.ply").is_file():
             up = (meta.get("mesh") or {}).get("up", "y")
-            ins, _ = foot_prep.insole_from_object_capture(load_geometry(folder / "mesh.ply"), foot, up=up)
-            source = f"imported model ({(meta.get('notes') or 'scanning app')[:80]})"
+            kind = meta.get("scan_kind") or "foot"
+            ins, _ = foot_prep.insole_from_object_capture(load_geometry(folder / "mesh.ply"), foot, up=up, kind=kind)
+            source = f"{KIND_LABELS[kind]}, imported model ({(meta.get('notes') or 'scanning app')[:80]})"
         elif (folder / "recon" / "mesh.ply").is_file():
             ins = insole_mod.from_scan(load_geometry(folder / "recon" / "mesh.ply"), foot)
             source = "footscan photo reconstruction"

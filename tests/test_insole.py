@@ -181,3 +181,82 @@ def test_something_that_isnt_a_foot_is_flagged():
     box.update_faces(~(box.face_normals[:, 2] < -0.99))
     ins, _ = foot_prep.insole_from_object_capture(box, "right", up="z")
     assert any("DOESN'T LOOK LIKE A FOOT" in w for w in ins.report["warnings"])
+
+
+def _as_object_capture(m, yaw_deg=63.0, tilt_deg=0.0):
+    """Mat-frame mm -> how the iPhone app hands it over: turned, maybe not quite level, Y up, metres."""
+    import trimesh
+
+    from footscan.recon import imported
+
+    T = trimesh.transformations.rotation_matrix(np.radians(yaw_deg), [0, 0, 1])
+    T[:3, 3] = [40, -25, 7]
+    m.apply_transform(T)
+    if tilt_deg:
+        m.apply_transform(trimesh.transformations.rotation_matrix(np.radians(tilt_deg), [1, 0.3, 0]))
+    m.apply_transform(np.block([[imported.UP["y"].T, np.zeros((3, 1))], [np.zeros((1, 3)), np.ones((1, 1))]]))
+    m.apply_scale(0.001)
+    return m
+
+
+@pytest.mark.parametrize("foot", ["right", "left"])
+def test_a_sole_up_scan_is_turned_over_rested_and_makes_the_right_insole(foot):
+    """Lying face down, knee bent, sole to the ceiling, foot relaxed (tipped 25 degrees), a bed below:
+    turned over, rested on heel and ball, leg trimmed, the 12 mm arch gives 11 mm of fill on the inner side."""
+    import trimesh
+
+    from footscan.recon import foot_prep
+
+    m = synth.shaped_foot(foot)
+    m.apply_transform(trimesh.transformations.rotation_matrix(np.radians(25), [0, 1, 0], [0, 45, 0]))
+    m.apply_transform(np.diag([1.0, -1, -1, 1]))  # sole up, leg hanging down
+    bed = trimesh.creation.box(extents=[600, 400, 20])
+    bed.apply_translation([100, 45, -420])
+    m = _as_object_capture(trimesh.util.concatenate([m, bed]))
+
+    ins, placed = foot_prep.insole_from_object_capture(m, foot, kind="sole_up")
+    r = ins.report
+    assert r["prep"]["tipped_to_rest_deg"] == pytest.approx(25.0, abs=0.2)
+    assert r["prep"]["heel_from"] == "the leg stands over it"
+    assert placed.vertices[:, 2].max() <= foot_prep.LEG_TRIM_MM + 0.5
+    assert r["sole"]["seen_under_arch"] > 0.95 and r["sole"]["holes"] < 0.01
+    assert r["max_fill_mm"] == pytest.approx(11.0, abs=0.1)
+    assert (r["max_fill_at_mm"]["y"] > 0) == (foot == "right")  # inner side
+    assert r["warnings"] == []
+
+
+@pytest.mark.parametrize("foot", ["right", "left"])
+def test_a_foam_print_is_found_flipped_rested_and_makes_the_right_insole(foot):
+    """A foot pressed 30 mm into a foam block on a table, scanned with the box 1.5 degrees off level:
+    the print is cut out of box and table, the heel found by width, 11 mm of fill on the inner side."""
+    from footscan.recon import foot_prep
+
+    m = _as_object_capture(synth.foam_print(foot, depth=30.0), tilt_deg=1.5)
+    ins, placed = foot_prep.insole_from_object_capture(m, foot, kind="impression")
+    r = ins.report
+    assert r["prep"]["print_deepest_mm"] == pytest.approx(30.0, abs=0.2)
+    assert r["prep"]["foam_top_tilt_deg"] == pytest.approx(1.5, abs=0.1)
+    assert r["prep"]["heel_from"].startswith("the narrower end")
+    assert r["sole"]["seen"] > 0.95 and r["sole"]["holes"] < 0.01
+    assert r["max_fill_mm"] == pytest.approx(11.0, abs=0.1)
+    assert (r["max_fill_at_mm"]["y"] > 0) == (foot == "right")
+    assert r["length_mm"] == pytest.approx(256.3, abs=1.0)  # 250 mm foot + margins
+    assert r["warnings"] == []
+
+
+def test_a_print_of_the_other_foot_is_noticed():
+    from footscan.recon import foot_prep
+
+    ins, _ = foot_prep.insole_from_object_capture(synth.foam_print("right"), "left", up="z", kind="impression")
+    assert any("ARCH IS ON THE OUTSIDE" in w for w in ins.report["warnings"])
+
+
+def test_a_foam_box_with_no_print_is_refused():
+    import trimesh
+
+    from footscan.recon import foot_prep
+
+    block = trimesh.creation.box(extents=[330.0, 130.0, 70.0])
+    block.apply_translation([0, 0, 35.0])
+    with pytest.raises(foot_prep.FootPrepError):
+        foot_prep.prepare_impression(block, up="z")

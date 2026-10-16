@@ -177,12 +177,7 @@ struct StudioClient {
     func upload(_ scan: Scan, record: ScanRecord) async throws -> Sent {
         // A quick hello first: a studio that isn't there fails in seconds, not after a long upload timeout.
         try await check(timeout: 6)
-        let (condition, foot): (String, String?) = switch record.subject {
-        case .calibration: ("calibration", nil)
-        case .rightFoot: ("swb", "right")
-        case .leftFoot: ("swb", "left")
-        case .other: ("object", nil)
-        }
+        let (condition, foot) = record.subject.studioCondition
         var setup: [String: Any] = [
             "condition": condition, "session": "LIDAR", "method": "imported_mesh",
             "device": "\(record.device), iOS \(record.systemVersion)",
@@ -190,6 +185,7 @@ struct StudioClient {
                 + "\(record.scanPasses ?? 1) lap(s), model built on the phone",
         ]
         if let foot { setup["foot"] = foot }
+        if let kind = record.subject.scanKind { setup["scan_kind"] = kind }
         if let load = record.loadKg { setup["load_kg"] = load }
         let created = try await send(request("api/captures", method: "POST",
                                              body: try JSONSerialization.data(withJSONObject: setup)))

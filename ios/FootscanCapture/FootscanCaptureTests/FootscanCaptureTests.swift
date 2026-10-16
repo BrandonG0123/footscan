@@ -83,15 +83,34 @@ struct ScanList {
         #expect(back.subject == .leftFoot && back.loadKg == 31.5 && back.studioCaptureID == "LIDAR_swb_L_1")
     }
 
-    @Test func onlyFeetNeedAScaleReading() {
-        #expect(Subject.allCases.filter(\.isFoot) == [.rightFoot, .leftFoot])
+    @Test func onlyAFootRestingOnTheFloorNeedsAScaleReading() {
+        #expect(Subject.allCases.filter(\.needsScale) == [.rightFoot, .leftFoot])
     }
 
-    @Test func everyKindHasAGetReadyListAndFootListsMentionTheScale() {
+    @Test func everyKindHasAGetReadyListAndOnlyScaleListsMentionTheScale() {
         for s in Subject.allCases { #expect(!s.checklist.isEmpty) }
         for s in Subject.allCases where s.isFoot {
-            #expect(s.checklist.contains { $0.1.localizedCaseInsensitiveContains("scale") })
+            #expect(s.checklist.contains { $0.1.localizedCaseInsensitiveContains("scale") } == s.needsScale)
         }
+    }
+
+    @Test func soleScansComeFirstAndTellTheStudioHowToReadThem() {
+        #expect(Array(Subject.allCases.prefix(4)) == [.rightSole, .leftSole, .rightPrint, .leftPrint])
+        #expect(Subject.allCases.filter(\.needs3DCapture) == [.rightSole, .leftSole, .rightPrint, .leftPrint])
+        #expect(Subject.rightSole.scanKind == "sole_up" && Subject.leftPrint.scanKind == "impression")
+        #expect(Subject.rightFoot.scanKind == "foot" && Subject.other.scanKind == nil && Subject.calibration.scanKind == nil)
+        #expect(Subject.rightSole.studioCondition == ("nwb_relaxed", "right"))
+        #expect(Subject.leftPrint.studioCondition == ("swb", "left"))
+        #expect(Subject.allCases.filter(\.isLeft) == [.leftSole, .leftPrint, .leftFoot])
+    }
+
+    @Test func scansSavedBeforeTheNewKindsStillRead() throws {
+        // a scan.json written by the earlier app (no new fields) still decodes, as the same subject
+        let json = #"{"subject":"right-foot","created":"2026-10-12T21:58:43Z","device":"iPhone18,1","systemVersion":"26.6.2","appVersion":"0.1","modelBuiltOnPhone":true,"units":"m","note":"n"}"#
+        let dec = JSONDecoder()
+        dec.dateDecodingStrategy = .iso8601
+        let rec = try dec.decode(ScanRecord.self, from: Data(json.utf8))
+        #expect(rec.subject == .rightFoot && rec.subject.needsScale)
     }
 }
 

@@ -22,8 +22,25 @@ reconstructions are; mm, cm or m are detected. It writes:
 
 ## From the iPhone app
 
-Scan the foot with Footscan on the iPhone (*Right foot* / *Left foot*,
-seated, with a low lap aimed under the inner arch), send it to the studio,
+The insole is the shape of the bottom of the foot, so the app's first
+scans are the two that show it:
+
+- **Right / Left sole**: lie face down, bend the knee so the sole faces the
+  ceiling, foot relaxed; someone else scans over the sole and down the
+  sides. Nothing presses on the foot, so the arch is as high as it is
+  unloaded (the generator's 20 mm arch cap still applies). Available today,
+  no equipment.
+- **Right / Left foam print**: press the foot into a foam impression box
+  while seated, lift it out, scan the print from all round with the box on
+  a table. Partly loaded, the way many orthotic labs take a foot's shape,
+  and the print holds still for as long as the scan takes. The studio
+  reports the print's depth (`print_deepest_mm`), so it can be checked with
+  calipers at the heel.
+
+*Whole right / left foot* (seated, foot on the floor) is still there for
+size and shape, but it can't see the sole (see the warning below).
+
+Scan with Footscan on the iPhone, send it to the studio,
 then in the studio's **Research library** press **Make insole** on that
 scan's card. It shows the size, the arch fill and any warnings, with
 buttons for the 3MF, the summary sheet, the print notes and an STL.
@@ -48,6 +65,24 @@ Two loud warnings say when not to print:
   of the footprint. A foot resting on the floor hides most of its sole, and
   Object Capture closes a model's bottom by itself, so that underside is
   probably guessed. The arch shape can't be trusted.
+
+A sole-up scan is turned over (the phone knows which way was up), cut
+below the bed and rested on its heel and ball: the floor is the face of
+the scan's convex hull right under its centre, so a foot tipped by its own
+relaxed ankle lands flat. A foam print is cut out of the box (below the
+foam's flat top, inside its outline, facing up), its triangles turned to
+face down the way the sole did, and rested the same way; the heel is its
+narrower end. Both add warnings if less than 60% of the sole was scanned,
+if the arch comes out on the outer side ("is this really the right foot?")
+or, for a print, if the two ends are almost the same width.
+
+Checked on synthetic feet with a 12 mm arch (tests/test_insole.py): sole
+up, tipped 25 degrees, with a bed in the scan, and a print pressed 30 mm
+into a foam block on a table with the box 1.5 degrees off level, each in
+metres, Y up, turned. Both give 11.0 mm of fill (12 minus the 1 mm relief)
+on the inner side for each foot, the tip and tilt are recovered (25.0 and
+1.5 degrees) and the print's depth reads 30.0 mm. Not yet checked on a
+real scan of either kind.
 
 Checked on the phone's real shoe scan: both warnings fire (its floor
 contact is 165 x 48 mm, and its whole underside is closed), as they should

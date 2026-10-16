@@ -72,7 +72,12 @@ swiftc -O ios/tools/reconstruct-mac.swift -o /tmp/reconstruct-mac
 
 ## Feet
 
-Scan *Right foot* / *Left foot* the same way (sit, foot flat on the mat,
+For an insole, scan the sole: *Right/Left sole* (lying face down, knee
+bent, sole to the ceiling) or *Right/Left foam print* (the print in a foam
+impression box). Both use 3D capture, need no mat and no scale reading,
+and go straight to the studio for **Make insole** (see docs/insole.md).
+
+Scan *Whole right foot* / *Whole left foot* the same way (sit, foot flat on the mat,
 keep still; someone else holds the phone). There is no ground truth for a
 foot, so these go to the studio's **Import 3D**, then **Landmarks**, like
 any imported scan, for comparison with photo scans of the same foot.

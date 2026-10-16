@@ -16,6 +16,13 @@ import Foundation
 import UIKit
 
 enum Subject: String, CaseIterable, Identifiable, Codable {
+    // The bottom of the foot is what the insole is made from, so the scans
+    // that show it come first: the sole facing the camera, and the print a
+    // foot leaves in a foam box.
+    case rightSole = "right-sole"
+    case leftSole = "left-sole"
+    case rightPrint = "right-foam-print"
+    case leftPrint = "left-foam-print"
     case calibration = "calibration-object"
     case rightFoot = "right-foot"
     case leftFoot = "left-foot"
@@ -23,29 +30,83 @@ enum Subject: String, CaseIterable, Identifiable, Codable {
 
     var id: String { rawValue }
 
-    var isFoot: Bool { self == .rightFoot || self == .leftFoot }
+    /// "right" or "left" for anything of a foot; nil otherwise.
+    var side: String? {
+        switch self {
+        case .rightSole, .rightPrint, .rightFoot: "right"
+        case .leftSole, .leftPrint, .leftFoot: "left"
+        case .calibration, .other: nil
+        }
+    }
+
+    var isFoot: Bool { side != nil }
+    var isLeft: Bool { side == "left" }
+
+    /// A foot resting on the floor, seated: the studio needs the bathroom-scale reading under it.
+    var needsScale: Bool { self == .rightFoot || self == .leftFoot }
+
+    /// How the studio's Make insole should read the model.
+    var scanKind: String? {
+        switch self {
+        case .rightSole, .leftSole: "sole_up"
+        case .rightPrint, .leftPrint: "impression"
+        case .rightFoot, .leftFoot: "foot"
+        case .calibration, .other: nil
+        }
+    }
+
+    /// Sole and foam-print scans use Apple's 3D capture (the printed mat can't go under a raised sole or a foam box).
+    var needs3DCapture: Bool {
+        switch self {
+        case .rightSole, .leftSole, .rightPrint, .leftPrint: true
+        default: false
+        }
+    }
 
     /// For the small cards on the home screen.
     var shortLabel: String {
         switch self {
+        case .rightSole: "Right sole"
+        case .leftSole: "Left sole"
+        case .rightPrint: "Right foam print"
+        case .leftPrint: "Left foam print"
         case .calibration: "Calibration"
-        case .rightFoot: "Right foot"
-        case .leftFoot: "Left foot"
+        case .rightFoot: "Whole right foot"
+        case .leftFoot: "Whole left foot"
         case .other: "Anything"
         }
     }
 
     var label: String {
         switch self {
+        case .rightSole: "Right sole"
+        case .leftSole: "Left sole"
+        case .rightPrint: "Right foam print"
+        case .leftPrint: "Left foam print"
         case .calibration: "Calibration object"
-        case .rightFoot: "Right foot"
-        case .leftFoot: "Left foot"
+        case .rightFoot: "Whole right foot"
+        case .leftFoot: "Whole left foot"
         case .other: "Anything else"
+        }
+    }
+
+    /// One line under the card: what this scan is for.
+    var purpose: String {
+        switch self {
+        case .rightSole, .leftSole: "Sole up, today"
+        case .rightPrint, .leftPrint: "Most accurate"
+        case .calibration: "Check accuracy"
+        case .rightFoot, .leftFoot: "Size, not sole"
+        case .other: "Practice"
         }
     }
 
     var howTo: String {
         switch self {
+        case .rightSole, .leftSole:
+            "Lie face down on a bed, bend this knee so the sole faces the ceiling, and let the foot relax. Someone else scans the sole from above and round both sides."
+        case .rightPrint, .leftPrint:
+            "Press this foot straight down into a foam impression box while seated, lift it straight out, and scan the print from all round, with the box on a table."
         case .calibration:
             "Put the printed calibration object on a plain, matte table with space to walk all the way round. Even light, no harsh shadows."
         case .rightFoot, .leftFoot:

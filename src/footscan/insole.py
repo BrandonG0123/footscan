@@ -146,6 +146,7 @@ def silhouette(mesh):
     low = V[V[:, 2] < SILHOUETTE_HEIGHT_MM][:, :2]
     if len(low) < 50:
         raise InsoleError("almost nothing of the foot near the floor: is this a standing or seated scan on the mat?")
+    low = np.unique(low.round(2), axis=0)  # repeated points (dense or lidded scans) can trip GEOS up
     poly = shapely.concave_hull(MultiPoint(low), ratio=0.15)
     poly = poly.buffer(4.0).buffer(-4.0)  # close small gaps between scan points
     if poly.geom_type != "Polygon":

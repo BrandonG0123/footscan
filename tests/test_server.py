@@ -710,6 +710,36 @@ def test_studio_makes_a_first_fit_insole_from_an_imported_foot(servers):
     assert listed["insole"]["max_fill_mm"] == r["max_fill_mm"]
 
 
+def test_studio_makes_an_insole_from_a_foam_print_without_a_scale_reading(servers):
+    """The app sends a foam print as condition swb, scan_kind impression, no load: Make insole reads it as a print."""
+    import numpy as np
+
+    import synth
+    from footscan.recon import imported
+
+    op, _, data = servers
+    cid = body(call(f"{op}/api/captures", "POST", {"condition": "swb", "foot": "right", "session": "LIDAR",
+                                                    "method": "imported_mesh", "scan_kind": "impression"}))["id"]
+    assert json.loads((data / "captures" / cid / "capture.json").read_text())["scan_kind"] == "impression"
+    m = synth.foam_print("right")
+    m.apply_transform(np.block([[imported.UP["y"].T, np.zeros((3, 1))], [np.zeros((1, 3)), np.ones((1, 1))]]))
+    m.apply_scale(0.001)
+    assert call(f"{op}/api/captures/{cid}/mesh?ext=obj&up=y", "PUT", m.export(file_type="obj").encode(),
+                {"Content-Type": "application/octet-stream"})[0] == 200
+    st, raw, _ = call(f"{op}/api/captures/{cid}/insole", "POST", {})
+    assert st == 200, raw
+    r = json.loads(raw)
+    assert r["max_fill_mm"] == pytest.approx(11.0, abs=0.1) and r["warnings"] == []
+    assert b"foam print" in call(f"{op}/api/captures/{cid}/insole/summary.html")[1]
+    # a standing foot still needs the scale reading; kinds are checked
+    assert call(f"{op}/api/captures", "POST", {"condition": "swb", "foot": "right", "session": "S1",
+                                               "scan_kind": "foot"})[0] == 400
+    assert call(f"{op}/api/captures", "POST", {"condition": "nwb_relaxed", "foot": "right", "session": "S1",
+                                               "scan_kind": "sideways"})[0] == 400
+    assert call(f"{op}/api/captures", "POST", {"condition": "object", "session": "S1",
+                                               "scan_kind": "sole_up"})[0] == 400
+
+
 def test_studio_insole_needs_a_foot(servers):
     op, _, _ = servers
     cid = body(call(f"{op}/api/captures", "POST", {"condition": "object", "session": "L1", "method": "imported_mesh"}))["id"]

@@ -43,6 +43,8 @@
         <div class="field">
           <label for="condition">What was scanned?</label>
           <select id="condition">
+            <option value="nwb_relaxed:sole_up">Sole up: lying face down, knee bent, sole to the ceiling</option>
+            <option value="swb:impression">Foam print: the dent the foot left in a foam box</option>
             <option value="swb">Foot, seated (semi-weight-bearing)</option>
             <option value="fwb">Foot, standing (full weight-bearing)</option>
             <option value="nwb_relaxed">Foot, unloaded and relaxed</option>
@@ -147,11 +149,14 @@
   const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
   let file = null;
 
+  // "condition:kind" for the scans that show the sole (sole up, foam print); plain condition otherwise
+  const choice = () => { const [cond, kind] = $("condition").value.split(":"); return { cond, kind: kind || "foot" }; };
+
   function sync() {
-    const c = $("condition").value;
+    const { cond: c, kind } = choice();
     $("foot-field").hidden = c === "object" || c === "calibration";
     $("up-field").hidden = c !== "calibration";
-    $("load-field").hidden = c !== "swb" && c !== "fwb";
+    $("load-field").hidden = (c !== "swb" && c !== "fwb") || kind === "impression";
   }
   $("condition").addEventListener("change", sync);
   sync();
@@ -238,11 +243,11 @@
   $("form").addEventListener("submit", async (e) => {
     e.preventDefault();
     const ext = file?.name.split(".").pop().toLowerCase();
-    const cond = $("condition").value;
+    const { cond, kind } = choice();
     const errors = [];
     if (!file) errors.push("Choose a 3D file first.");
     else if (!["obj", "ply", "stl", "glb", "gltf", "off"].includes(ext)) errors.push("That file type can't be read. Export as OBJ or PLY.");
-    if ((cond === "swb" || cond === "fwb") && !$("load").value) errors.push("Enter the scale reading for a loaded scan.");
+    if ((cond === "swb" || cond === "fwb") && kind === "foot" && !$("load").value) errors.push("Enter the scale reading for a loaded scan.");
     $("errors").textContent = errors.join(" ");
     if (errors.length) return;
 
@@ -254,7 +259,8 @@
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           condition: cond, foot: cond === "object" || cond === "calibration" ? null : $("foot").value, session: $("session").value.trim(),
-          load_kg: $("load").value || null, method: "imported_mesh", notes: $("notes").value,
+          load_kg: kind === "impression" ? null : $("load").value || null, method: "imported_mesh", notes: $("notes").value,
+          ...(cond === "object" || cond === "calibration" ? {} : { scan_kind: kind }),
         }),
       });
       const created = await r.json();

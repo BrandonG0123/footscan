@@ -7,9 +7,10 @@ import SwiftUI
 extension Subject {
     var symbol: String {
         switch self {
+        case .rightSole, .leftSole: "shoeprints.fill"
+        case .rightPrint, .leftPrint: "shippingbox.fill"
         case .calibration: "cube.fill"
-        case .rightFoot: "shoeprints.fill"
-        case .leftFoot: "shoeprints.fill"
+        case .rightFoot, .leftFoot: "figure.seated.side.right"
         case .other: "sparkles"
         }
     }
@@ -17,6 +18,18 @@ extension Subject {
     /// What to have ready before scanning this: (symbol, title, detail).
     var checklist: [(String, String, String)] {
         switch self {
+        case .rightSole, .leftSole: [
+            ("bed.double.fill", "Lie face down, knee bent", "On a bed or sofa. Bend this knee so the sole faces the ceiling, and let the foot hang relaxed: don't point or pull back the toes."),
+            ("shoeprints.fill", "Bare foot, or a thin snug sock", "Nothing loose or thick. A sock with a pattern can help the scan; it adds its thickness to the shape."),
+            ("person.2.fill", "Someone else holds the phone", "They scan from above: slowly over the whole sole, then down both sides. The sole is what matters."),
+            ("figure.yoga", "Keep the foot still", "Rest your chin on your hands and breathe slowly. If the foot sways, the scan blurs."),
+        ]
+        case .rightPrint, .leftPrint: [
+            ("shippingbox.fill", "A foam impression box", "Sold for orthotic casting. One block per foot; a clinician or athletic trainer may have them."),
+            ("figure.seated.side.right", "Seated, press straight down", "Knee over the ankle. Push the foot down until the heel and toes are sunk in, then lift it straight up without rocking."),
+            ("table.furniture.fill", "Box on a table, in even light", "With room to walk all the way round. The phone must see into the print from every side."),
+            ("ruler.fill", "Calipers ready (optional)", "Measure how deep the heel print is; the studio reports the scan's depth, so you can compare."),
+        ]
         case .calibration: [
             ("printer.fill", "Printed at 100%", "Matte, light-coloured filament; no supports."),
             ("table.furniture.fill", "On a plain, matte table", "With room to walk all the way round it."),
@@ -54,7 +67,7 @@ struct PrepSheet: View {
                             .foregroundStyle(Color.fsBrandInk)
                             .frame(width: 56, height: 56)
                             .background(Color.fsBrand, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-                            .scaleEffect(x: subject == .leftFoot ? -1 : 1)
+                            .scaleEffect(x: subject.isLeft ? -1 : 1)
                         VStack(alignment: .leading, spacing: 2) {
                             Text(mustTick ? "Before your first scan" : "Tips").font(.subheadline.weight(.semibold)).foregroundStyle(Color.fsMuted)
                             Text(subject.label).font(.system(.title2, design: .rounded, weight: .bold))

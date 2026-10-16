@@ -57,7 +57,7 @@ final class ScanLibrary {
     func finish(_ scan: Scan, settings: AppSettings, studio: StudioConnection) async {
         if !scan.hasModel { await build(scan) } else if !scan.hasOBJ { await convert(scan) }
         guard scan.hasOBJ, settings.autoSend, studio.client != nil, let rec = scan.record,
-              rec.studioCaptureID == nil, !rec.subject.isFoot || rec.loadKg != nil else { return }
+              rec.studioCaptureID == nil, !rec.subject.needsScale || rec.loadKg != nil else { return }
         await send(scan, studio: studio)
     }
 
@@ -73,7 +73,7 @@ final class ScanLibrary {
             // checked before every upload: switching "send automatically" off stops the queue
             guard settings.autoSend else { break }
             guard studio.client != nil, work[scan.folder] == nil, scan.hasOBJ, let rec = scan.record,
-                  rec.studioCaptureID == nil, !rec.subject.isFoot || rec.loadKg != nil else { continue }
+                  rec.studioCaptureID == nil, !rec.subject.needsScale || rec.loadKg != nil else { continue }
             await send(scan, studio: studio)
             // the studio isn't answering: don't try every other scan against it too
             if unreachable.contains(scan.folder) { break }

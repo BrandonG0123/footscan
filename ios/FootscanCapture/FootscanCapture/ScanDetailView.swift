@@ -168,7 +168,7 @@ struct ScanDetailView: View {
             return "Sent to \(rec?.studioHost ?? "the studio")\(when)"
         }
         if studio.client == nil { return "Not connected to a studio" }
-        if rec?.subject.isFoot == true && rec?.loadKg == nil { return "Add the scale reading, then send" }
+        if rec?.subject.needsScale == true && rec?.loadKg == nil { return "Add the scale reading, then send" }
         if scan.hasOBJ { return "Ready to send" }
         return settings.autoSend ? "Sends by itself once the model is ready" : "Waiting for the model"
     }
@@ -179,7 +179,7 @@ struct ScanDetailView: View {
                 Button("Connect") { showStudio = true }.buttonStyle(.bordered)
             } else if scan.hasOBJ {
                 VStack(alignment: .leading, spacing: 8) {
-                    if rec.subject.isFoot && rec.studioCaptureID == nil {
+                    if rec.subject.needsScale && rec.studioCaptureID == nil {
                         HStack {
                             Image(systemName: "scalemass").foregroundStyle(Color.fsBrand)
                             TextField("Scale reading", text: $loadText)
@@ -196,7 +196,7 @@ struct ScanDetailView: View {
                         }
                         .buttonStyle(.borderedProminent)
                         // the reading on screen is what gets sent: never fall back to an older saved one
-                        .disabled(rec.subject.isFoot && parsedLoad == nil)
+                        .disabled(rec.subject.needsScale && parsedLoad == nil)
                     } else {
                         // already there: sending again makes a second copy, so it's a quiet option
                         Button("Send another copy") {
