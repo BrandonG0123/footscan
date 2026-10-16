@@ -282,7 +282,7 @@ def _foam_top(m):
         on = flat & (np.abs((m.triangles_center - c) @ n) < 2.5)
         P = m.vertices[np.unique(m.faces[on])]
         c = P.mean(0)
-        n = np.linalg.svd(P - c)[2][2]
+        n = np.linalg.eigh(np.cov((P - c).T))[1][:, 0]  # least-spread direction (3 x 3: any number of points)
         n = n if n[2] > 0 else -n
     return c, n, P
 
