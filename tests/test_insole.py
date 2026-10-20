@@ -389,3 +389,14 @@ def test_if_the_exact_outline_fails_the_insole_still_covers_the_whole_foot(monke
     ins = insole.from_scan(synth.block_foot(37.0, "right"), "right")
     assert ins.report["length_mm"] > 240 and ins.report["width_mm"] > 90
     assert any("convex outline" in w for w in ins.report["warnings"])
+
+
+@pytest.mark.parametrize("depth", [12.0, 30.0, 45.0])
+def test_a_coarse_print_of_any_depth_is_found(depth):
+    """A coarse model (a phone's quick one): wall triangles span the whole depth, their centres far
+    below the foam's top, yet the print opens at the top and must be found."""
+    from footscan.recon import foot_prep
+
+    placed, info = foot_prep.prepare_impression(synth.foam_print("right", depth=depth), up="z", foot="right")
+    assert info["print_deepest_mm"] == pytest.approx(depth, abs=0.3)
+    assert ("shallow_warning" in info) == (depth < foot_prep.PRINT_SHALLOW_MM)

@@ -157,7 +157,7 @@ def _denoise(m, info):
 def _pieces(mesh, reaches_z: float | None = None):
     """Connected pieces as face masks, biggest (by area) first, with their areas.
 
-    With ``reaches_z``, only pieces that reach up to that height count."""
+    With ``reaches_z``, only pieces that reach up to that height (with any corner) count."""
     from scipy.sparse import coo_matrix
     from scipy.sparse.csgraph import connected_components
 
@@ -167,8 +167,10 @@ def _pieces(mesh, reaches_z: float | None = None):
     count, label = connected_components(g, directed=False)
     areas = np.bincount(label, weights=mesh.area_faces, minlength=count)
     if reaches_z is not None:
+        # by each triangle's highest corner, not its centre: a coarse print's wall triangles reach
+        # the foam's top with their corners while their centres sit well below it
         top = np.full(count, -np.inf)
-        np.maximum.at(top, label, mesh.triangles_center[:, 2])
+        np.maximum.at(top, label, mesh.vertices[mesh.faces][:, :, 2].max(axis=1))
         areas[top < reaches_z] = 0.0
     order = [i for i in np.argsort(areas)[::-1] if areas[i] > 0]
     return [(label == i, float(areas[i])) for i in order]
@@ -191,7 +193,7 @@ def _largest_piece(mesh, reaches_z: float | None = None):
     areas = np.bincount(label, weights=mesh.area_faces, minlength=count)
     if reaches_z is not None:
         top = np.full(count, -np.inf)
-        np.maximum.at(top, label, mesh.triangles_center[:, 2])
+        np.maximum.at(top, label, mesh.vertices[mesh.faces][:, :, 2].max(axis=1))
         areas[top < reaches_z] = 0.0
         if not areas.any():
             return mesh, 0.0  # nothing qualifies: the caller's own check says so
