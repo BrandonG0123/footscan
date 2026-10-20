@@ -126,7 +126,8 @@ async function startLive(simulated) {
       setChip("chip-sensor", s.viewSource === "mat" ? "ok" : s.hasView ? "idle" : "bad", VIEW[s.viewSource] || "Position unknown");
       $("frames-label").textContent = `${s.kept} / ${TARGET_FRAMES}`;
       $("frames-bar").style.width = `${Math.min(100, (100 * s.kept) / TARGET_FRAMES)}%`;
-      $("coverage-label").textContent = s.completeness == null ? "no sensor" : `${Math.round(100 * s.completeness)}%`;
+      // completeness is null until a kept photo has a known angle: 0% if angles are coming, "no sensor" if not
+      $("coverage-label").textContent = s.completeness == null ? (s.hasView ? "0%" : "no sensor") : `${Math.round(100 * s.completeness)}%`;
       $("coverage-bar").style.width = `${s.completeness == null ? 0 : 100 * s.completeness}%`;
       $("stat-kept").textContent = s.kept;
       $("stat-blur").textContent = scanner.rejected.blur;
