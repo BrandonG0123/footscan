@@ -400,3 +400,23 @@ def test_a_coarse_print_of_any_depth_is_found(depth):
     placed, info = foot_prep.prepare_impression(synth.foam_print("right", depth=depth), up="z", foot="right")
     assert info["print_deepest_mm"] == pytest.approx(depth, abs=0.3)
     assert ("shallow_warning" in info) == (depth < foot_prep.PRINT_SHALLOW_MM)
+
+
+@pytest.mark.parametrize("bed_below_sole", [200.0, 250.0, 420.0])
+def test_a_bed_close_under_a_sole_up_scan_is_not_taken_for_the_foot(bed_below_sole):
+    """Lying face down with a short leg, a knee bent past a right angle or a pillow under the shin,
+    the bed can be 200-300 mm from the sole: found and cut away, never mistaken for the scan."""
+    import trimesh
+
+    from footscan.recon import foot_prep
+
+    m = synth.refined(synth.shaped_foot("right"))
+    m.apply_transform(trimesh.transformations.rotation_matrix(np.radians(25), [0, 1, 0], [0, 45, 0]))
+    m.apply_transform(np.diag([1.0, -1, -1, 1]))  # sole up; its top surface is now at about z = -25 ... 0
+    bed = trimesh.creation.box(extents=[700, 500, 30])
+    bed.apply_translation([100, 45, m.vertices[:, 2].max() - bed_below_sole - 15])
+    ins, _ = foot_prep.insole_from_object_capture(_as_object_capture(trimesh.util.concatenate([m, bed])), "right",
+                                                  kind="sole_up")
+    fp = ins.report["prep"]["footprint_mm"]
+    assert fp["length"] == pytest.approx(250, abs=5) and fp["width"] == pytest.approx(100, abs=5)
+    assert ins.report["max_fill_mm"] == pytest.approx(11.0, abs=0.3)

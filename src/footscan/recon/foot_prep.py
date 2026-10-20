@@ -436,6 +436,38 @@ def prepare(mesh, up: str = "y", trim_mm: float | None = LEG_TRIM_MM):
 SOLE_UP_KEEP_MM = 300.0     # keep this much above the lowest point: the foot tipped as far as 50 degrees (toes
                             # lowest, heel ~190 mm up) plus enough shin to find the heel by; the bed is ~400 away
 SOLE_UP_MAX_TIP_DEG = 50.0
+BED_MIN_AREA_MM2 = 20000.0  # a flat, level surface this big, well above the sole, is what the person lies on
+BED_ABOVE_SOLE_MM = 100.0   # ...at least this far above the sole (the foot itself is never that flat and level)
+BED_CLEARANCE_MM = 15.0     # cut this far short of it
+
+
+def _bed_height(m) -> float | None:
+    """In a turned-over sole-up scan: the height of the nearest big flat level surface above the
+    sole (the bed, sofa or table the person lies on), or None.
+
+    Turned over, the bed is above the foot and level (the phone knows which
+    way is up). Its triangles face straight up or down; summed by height
+    (5 mm steps), the lowest step more than ``BED_ABOVE_SOLE_MM`` above the
+    sole with ``BED_MIN_AREA_MM2`` of them is the bed. Without this, a bed
+    within ``SOLE_UP_KEEP_MM`` of the sole (a short leg, a knee bent past a
+    right angle, a pillow under the shin) would be kept, and being bigger
+    than the foot, taken for the scan.
+    """
+    level = np.abs(m.face_normals[:, 2]) > 0.95
+    if not level.any():
+        return None
+    z = m.triangles_center[level, 2]
+    a = m.area_faces[level]
+    lo = float(m.vertices[:, 2].min())
+    edges = np.arange(lo, z.max() + 5.0, 5.0)
+    if len(edges) < 2:
+        return None
+    hist, edges = np.histogram(z, bins=edges, weights=a)
+    hist = hist + np.r_[hist[1:], 0]  # each step with the next: a surface on a step boundary isn't split
+    for i in np.nonzero(hist >= BED_MIN_AREA_MM2)[0]:
+        if edges[i] > lo + BED_ABOVE_SOLE_MM:
+            return float(edges[i])
+    return None
 
 
 def prepare_sole_up(mesh, up: str = "y", trim_mm: float | None = LEG_TRIM_MM):
@@ -443,8 +475,9 @@ def prepare_sole_up(mesh, up: str = "y", trim_mm: float | None = LEG_TRIM_MM):
 
     1. Turn it over: the phone knows which way was up, so the sole now faces
        down and the shin stands up from it, as if standing (but unloaded).
-    2. Keep the bottom ``SOLE_UP_KEEP_MM`` (the foot and some shin; the bed
-       and the rest of the leg go) and the biggest connected piece.
+    2. Keep the bottom ``SOLE_UP_KEEP_MM`` (the foot and some shin; the rest
+       of the leg goes), or less if a bed is found nearer (``_bed_height``),
+       and the biggest connected piece.
     3. Rest it on a flat floor (``rest_on_hull``): the heel and the ball of
        the foot touch, the arch stays as high as it was scanned.
     4. Toes to +y (the shin is over the heel), centre, trim the shin, lid it.
@@ -457,9 +490,14 @@ def prepare_sole_up(mesh, up: str = "y", trim_mm: float | None = LEG_TRIM_MM):
     _move(m, _shift(0, 0, -m.vertices[:, 2].min()), track)
     info = dict(kind="sole_up", units_detected=units, up_axis=up,
                 floor="sole-up scan: turned over, then rested on the heel and the ball of the foot")
-    m = _densify(m, info)
-    m.update_faces(m.triangles_center[:, 2] < SOLE_UP_KEEP_MM)
+    keep = SOLE_UP_KEEP_MM
+    bed = _bed_height(m)
+    if bed is not None and bed - BED_CLEARANCE_MM < keep:
+        keep = bed - BED_CLEARANCE_MM
+        info["bed_found_mm"] = round(bed, 1)
+    m.update_faces(m.triangles_center[:, 2] < keep)
     m.remove_unreferenced_vertices()
+    m = _densify(m, info)  # after the cut: the bed and the rest of the leg needn't be split up
     m, other = _largest_piece(m)
     if other > 0.2:
         info["pieces_warning"] = "the scan had more than one large piece; the biggest was used"
