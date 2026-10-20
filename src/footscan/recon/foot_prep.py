@@ -533,26 +533,54 @@ def _foam_top(m, tries: int = 200, seed: int = 0):
     return c, n, P
 
 
+def _foam_blocks(m):
+    """Outline of each foam block's top (the scan levelled, top at z = 0), shrunk by
+    ``PRINT_EDGE_MM``, as one (multi)polygon. Each block separately: one outline round two
+    blocks would take in the walls and bottoms between them."""
+    import shapely
+    from shapely.geometry import MultiPoint
+
+    # by height alone: on a rough scan the top's little triangles tilt every which way, and a test
+    # of which way they face breaks the top into fragments too small to count as a block
+    on = np.abs(m.triangles_center[:, 2]) < 2.5
+    top = m.copy()
+    top.update_faces(on)
+    top.remove_unreferenced_vertices()
+    polys = []
+    for mask, area in _pieces(top):
+        if area < FOAM_TOP_MIN_AREA_MM2:
+            continue
+        P = top.vertices[np.unique(top.faces[mask])]
+        polys.append(shapely.convex_hull(MultiPoint(P[:, :2])).buffer(-PRINT_EDGE_MM))
+    if not polys:
+        raise FootPrepError("no flat foam surface found: is this a scan of a foam box from above?")
+    return shapely.union_all(polys)
+
+
 def _looks_like(placed) -> str | None:
     """Which foot a sole (mat frame, toes toward +y) looks like, from where its arch is.
 
     The arch is on the inner side: across the middle of the foot, the sole
     stands higher there. Facing the toes, a right foot's inner side is on the
-    left (-x), a left foot's on the right (+x). None if the two sides are
-    within a millimetre of each other.
+    left (-x), a left foot's on the right (+x). Compared by surface area
+    (the area-weighted average height of each side's underside), not by
+    point count, which depends on how finely each part happens to be meshed.
+    None if the two sides are within a millimetre of each other.
     """
-    V, N = placed.vertices, placed.vertex_normals
-    y0, y1 = V[:, 1].min(), V[:, 1].max()
+    C, A, N = placed.triangles_center, placed.area_faces, placed.face_normals
+    y0, y1 = placed.vertices[:, 1].min(), placed.vertices[:, 1].max()
     L = y1 - y0
-    sole = (N[:, 2] < -0.5) & (V[:, 1] > y0 + 0.35 * L) & (V[:, 1] < y0 + 0.6 * L) & (V[:, 2] < 30)
-    if sole.sum() < 20:
+    sole = (N[:, 2] < -0.5) & (C[:, 1] > y0 + 0.35 * L) & (C[:, 1] < y0 + 0.6 * L) & (C[:, 2] < 30)
+    if A[sole].sum() < 500.0:
         return None
-    cx = np.median(V[sole, 0])
-    left = V[sole & (V[:, 0] < cx), 2]
-    right = V[sole & (V[:, 0] >= cx), 2]
-    if not len(left) or not len(right) or abs(np.mean(left) - np.mean(right)) < 1.0:
+    cx = np.average(C[sole, 0], weights=A[sole])
+    sides = [sole & (C[:, 0] < cx), sole & (C[:, 0] >= cx)]
+    if any(A[k].sum() < 100.0 for k in sides):
         return None
-    return "right" if np.mean(left) > np.mean(right) else "left"
+    hl, hr = (float(np.average(C[k, 2], weights=A[k])) for k in sides)
+    if abs(hl - hr) < 1.0:
+        return None
+    return "right" if hl > hr else "left"
 
 
 def prepare_impression(mesh, up: str = "y", trim_mm: float | None = LEG_TRIM_MM, foot: str | None = None):
@@ -588,13 +616,15 @@ def prepare_impression(mesh, up: str = "y", trim_mm: float | None = LEG_TRIM_MM,
     T[:3, 3] = -R @ c
     _move(m, T, track)  # foam top at z = 0, level
     info["foam_top_tilt_deg"] = round(float(np.degrees(np.arccos(np.clip(n[2], -1, 1)))), 2)
-    outline = shapely.convex_hull(MultiPoint(((top_pts - c) @ R.T)[:, :2])).buffer(-PRINT_EDGE_MM)
+    outline = _foam_blocks(m)
     ctr = m.triangles_center
     inside = shapely.contains_xy(outline, m.vertices[:, 0], m.vertices[:, 1])[m.faces].all(axis=1)
-    # Below the top, inside the foam's outline. No test of which way triangles face (a rough scan's
-    # tilt every which way): the box's closed-off bottom and any table under it are separate pieces
-    # that don't reach up to the foam's top, and are left out below.
-    keep = (ctr[:, 2] < -PRINT_BELOW_TOP_MM) & (ctr[:, 2] > -PRINT_MAX_DEPTH_MM) & inside
+    # Below the top, inside a block's outline, and not facing straight down (a box's closed-off
+    # bottom does; a rough scan's print triangles tilt every which way, but not that far). Each
+    # block has its own outline, so the walls between two blocks are outside both. Anything left
+    # that doesn't reach up to the foam's top (a table under the box) is dropped below.
+    keep = ((ctr[:, 2] < -PRINT_BELOW_TOP_MM) & (ctr[:, 2] > -PRINT_MAX_DEPTH_MM) & inside
+            & (m.face_normals[:, 2] > -0.9))
     if not keep.any():
         raise FootPrepError("no print found below the foam's top surface")
     m.update_faces(keep)

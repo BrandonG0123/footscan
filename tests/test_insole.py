@@ -330,3 +330,24 @@ def test_long_gentle_undulations_are_shape_not_noise():
 
     ins, _ = foot_prep.insole_from_object_capture(_sole_up_scan("right", 0.7, wavy=True), "right", kind="sole_up")
     assert ins.report["prep"]["surface_noise_mm"] <= foot_prep.NOISY_SCAN_MM
+
+
+@pytest.mark.parametrize("foot", ["right", "left"])
+def test_two_foam_blocks_side_by_side_give_the_right_print_not_a_box(foot):
+    """A box with a block for each foot, scanned together (a gap between the blocks): each block
+    is outlined on its own, so the walls and bottoms between them are never taken for a print,
+    and the print that looks like the chosen foot is used."""
+    import trimesh
+
+    from footscan.recon import foot_prep
+
+    right = synth.refined(synth.foam_print("right"), 3.0)
+    left = synth.refined(synth.foam_print("left"), 3.0)
+    left.apply_translation([0, 160, 0])
+    m = _as_object_capture(trimesh.util.concatenate([right, left]))
+    ins, _ = foot_prep.insole_from_object_capture(m, foot, kind="impression")
+    r = ins.report
+    assert r["prep"]["print_deepest_mm"] == pytest.approx(30.0, abs=0.3)
+    assert r["prep"]["footprint_mm"]["length"] == pytest.approx(250.0, abs=3.0)
+    assert (r["max_fill_at_mm"]["y"] > 0) == (foot == "right")
+    assert "used the one that looks like" in r["prep"].get("pieces_note", "")
