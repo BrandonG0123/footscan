@@ -315,7 +315,12 @@ export class Scanner {
     const completeness = hasView ? this.coverage.completeness() : null;
     const next = hasView ? nextMissing(this.coverage, view) : null;
     const done = kept >= this.targetFrames && (!hasView || completeness >= 1);
-    const covered = coveredEnough({ hasView, completeness, kept, targetFrames: this.targetFrames });
+    // Whether angles are known is a fact about the scan, not this frame: a moment without the mat
+    // (or the sensors) mustn't swap the coverage rule for the photo count, or the other way round.
+    const measured = this.keptFrames().some((f) => f.cell);  // the same frames the coverage map counts
+    const covered = coveredEnough({
+      hasView: measured, completeness: measured ? this.coverage.completeness() : null, kept, targetFrames: this.targetFrames,
+    });
     // Progress for a single bar: frames and coverage both have to be there.
     const progress = Math.min(kept / this.targetFrames, completeness ?? 1);
     const matMarkers = this.mat && now - this.mat.at < MAT_FRESH_MS ? this.mat.markers.length : 0;

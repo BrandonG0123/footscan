@@ -122,9 +122,10 @@ export function cellFor({ azimuth, elevation }) {
 
 /**
  * May the scan finish? Only once every angle has its photos, never on a
- * photo count alone: twenty photos can all come from one side. Without
- * motion sensors the angles can't be known, so the full frame target stands
- * in for them.
+ * photo count alone: twenty photos can all come from one side. If no kept
+ * photo has a known angle (no motion sensors, no mat pose), the angles can't
+ * be known, so the full frame target stands in for them. ``hasView`` means
+ * "the scan has measured angles", not "this frame has one".
  */
 export function coveredEnough({ hasView, completeness, kept, targetFrames }) {
   if (kept === 0) return false;
