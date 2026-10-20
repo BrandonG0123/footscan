@@ -138,22 +138,23 @@ struct HomeView: View {
 
     // MARK: sections
 
+    /// Where you are on the way to an insole, in one compact card (with the
+    /// not-a-medical-device line built in). It fades as the page scrolls up.
     private var hero: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            OrbitScene(interactive: false)
-                .frame(height: 240)
-                .frame(maxWidth: .infinity)
-            SafetyStrip()
+        InsolePath(step: insoleStep, studioConnected: studio.link != nil) {
+            withAnimation(.spring(duration: 0.35, bounce: 0.35)) { subjectRaw = subjects.first(where: \.needs3DCapture)?.rawValue ?? subjectRaw }
         }
-        // The scene and the safety strip shrink back and fade together as the
-        // page scrolls up (so the strip never shows through the title bar);
-        // they stretch a little on pull-down.
         .visualEffect { content, proxy in
-            let y: CGFloat = proxy.frame(in: .scrollView).minY
-            let up: CGFloat = min(1, max(0, -y / 200))
-            let grow: CGFloat = y > 0 ? 1 + y / 900 : 1 - up * 0.18
-            return content.scaleEffect(grow, anchor: .bottom).opacity(Double(1 - up)).blur(radius: up * 4)
+            let up: CGFloat = min(1, max(0, -proxy.frame(in: .scrollView).minY / 160))
+            return content.opacity(Double(1 - up)).scaleEffect(1 - up * 0.04, anchor: .bottom)
         }
+    }
+
+    /// 0 scan the sole, 1 send it, 2 make the insole on the Mac (sign-off follows there).
+    private var insoleStep: Int {
+        let soles = library.scans.filter { $0.record?.subject.needs3DCapture == true && $0.hasOBJ }
+        if soles.contains(where: { $0.record?.studioCaptureID != nil }) { return 2 }
+        return soles.isEmpty ? 0 : 1
     }
 
     private var newScan: some View {
@@ -482,6 +483,122 @@ struct ScanThumb: View {
             }
             if let ui = UIImage(contentsOfFile: scan.thumbnail.path()) {
                 withAnimation(.smooth) { image = ui }
+            }
+        }
+    }
+}
+
+// MARK: - the way to an insole
+
+private struct InsolePath: View {
+    let step: Int
+    let studioConnected: Bool
+    var onScanSole: () -> Void
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    private let steps: [(symbol: String, label: String)] = [
+        ("shoeprints.fill", "Scan sole"), ("arrow.up.forward.app.fill", "Send"),
+        ("cube.fill", "Make insole"), ("checkmark.seal.fill", "Sign-off"),
+    ]
+
+    private var title: String {
+        ["Scan the bottom of your foot", "Send it to your studio", "Make the insole on your Mac"][step]
+    }
+
+    private var detail: String {
+        switch step {
+        case 0: CaptureMethod.lidarAvailable
+            ? "Sole up or a foam print: it's the shape the insole is made from."
+            : "Sole and foam-print scans need an iPhone with LiDAR (a Pro model)."
+        case 1: studioConnected ? "It goes by itself when the phone is on the same Wi-Fi as the Mac."
+                                : "Connect to the studio on your Mac; then it goes by itself."
+        default: "Research library, then Make insole. A podiatrist or athletic trainer signs the summary sheet before you play in it."
+        }
+    }
+
+    var body: some View {
+        Button(action: { if step == 0 { onScanSole() } }) {
+            VStack(alignment: .leading, spacing: 14) {
+                HStack(alignment: .firstTextBaseline) {
+                    Text("YOUR INSOLE").font(.caption.weight(.heavy)).tracking(1.2).foregroundStyle(Color.fsAccent)
+                    Spacer()
+                    Text("Step \(step + 1) of 4").font(.caption.weight(.semibold).monospacedDigit())
+                        .foregroundStyle(.white.opacity(0.6))
+                        .contentTransition(.numericText())
+                }
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(title).font(.system(.title3, design: .rounded, weight: .bold)).foregroundStyle(.white)
+                    Text(detail).font(.subheadline).foregroundStyle(.white.opacity(0.72))
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .id(step)
+                .transition(.asymmetric(insertion: .move(edge: .trailing).combined(with: .opacity),
+                                        removal: .move(edge: .leading).combined(with: .opacity)))
+                track
+                Divider().overlay(Color.white.opacity(0.12))
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text("NOT A MEDICAL DEVICE").font(.caption2.weight(.heavy)).foregroundStyle(Color.fsAccent)
+                    Text("See a foot doctor before sport.").font(.caption2).foregroundStyle(.white.opacity(0.7))
+                }
+            }
+            .padding(18)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background {
+                RoundedRectangle(cornerRadius: 24, style: .continuous)
+                    .fill(LinearGradient(colors: [Color(light: 0x15201f, dark: 0x0a0f0e), Color(light: 0x0e4f4a, dark: 0x113a36)],
+                                         startPoint: .topLeading, endPoint: .bottomTrailing))
+            }
+            .overlay(RoundedRectangle(cornerRadius: 24, style: .continuous).stroke(Color.fsAccent.opacity(0.25), lineWidth: 1))
+            .shadow(color: Color.fsBrand.opacity(0.25), radius: 18, y: 8)
+        }
+        .buttonStyle(PressableStyle())
+        .animation(.spring(duration: 0.5, bounce: 0.2), value: step)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Your insole, step \(step + 1) of 4: \(title). \(detail) Not a medical device.")
+    }
+
+    private var track: some View {
+        HStack(alignment: .top, spacing: 0) {
+            ForEach(steps.indices, id: \.self) { i in
+                VStack(spacing: 6) {
+                    node(i)
+                    Text(steps[i].label).font(.caption2.weight(i == step ? .bold : .medium))
+                        .foregroundStyle(i <= step ? .white : .white.opacity(0.45))
+                        .lineLimit(1).minimumScaleFactor(0.8)
+                }
+                .frame(maxWidth: .infinity)
+                .background(alignment: .top) {
+                    if i < steps.count - 1 {  // the line to the next step, filled once this one is done
+                        GeometryReader { g in
+                            Capsule().fill(Color.white.opacity(0.15))
+                                .overlay(alignment: .leading) {
+                                    Capsule().fill(Color.fsAccent).frame(width: i < step ? g.size.width : 0)
+                                }
+                                .frame(width: g.size.width - 40, height: 3)
+                                .offset(x: g.size.width / 2 + 20, y: 15)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func node(_ i: Int) -> some View {
+        let done = i < step, current = i == step
+        return ZStack {
+            Circle().fill(done ? Color.fsAccent.opacity(0.18) : current ? Color.fsAccent : Color.white.opacity(0.08))
+            Circle().stroke(done || current ? Color.fsAccent : Color.white.opacity(0.25), lineWidth: 1.5)
+            Image(systemName: done ? "checkmark" : steps[i].symbol)
+                .font(.system(size: 13, weight: .bold))
+                .foregroundStyle(current ? Color.fsAccentInk : done ? Color.fsAccent : .white.opacity(0.5))
+                .contentTransition(.symbolEffect(.replace))
+        }
+        .frame(width: 32, height: 32)
+        .background {
+            if current && !reduceMotion {  // a slow glow round the step you're on
+                Circle().fill(Color.fsAccent.opacity(0.35))
+                    .phaseAnimator([false, true]) { c, on in c.scaleEffect(on ? 1.55 : 1).opacity(on ? 0 : 0.8) }
+                        animation: { _ in .easeOut(duration: 1.6) }
             }
         }
     }

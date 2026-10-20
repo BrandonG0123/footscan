@@ -27,10 +27,21 @@ struct CaptureView: View {
         ZStack {
             Color.black.ignoresSafeArea()
             if let session {
-                ObjectCaptureView(session: session)
-                    .ignoresSafeArea()
-                Controls(session: session, subject: scan.record?.subject ?? .other, passes: $passes, onCancel: cancel)
-                    .task { await follow(session) }
+                // The camera view gets its own space and nothing is drawn over its
+                // middle or bottom, where Object Capture draws the box and the
+                // progress ring: the hints sit along its top edge, the
+                // instructions and buttons in a panel below it.
+                VStack(spacing: 8) {
+                    ObjectCaptureView(session: session)
+                        .clipShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
+                        .overlay(alignment: .top) {
+                            Controls(session: session, subject: scan.record?.subject ?? .other, passes: $passes,
+                                     part: .top, onCancel: cancel)
+                        }
+                    Controls(session: session, subject: scan.record?.subject ?? .other, passes: $passes,
+                             part: .panel, onCancel: cancel)
+                }
+                .task { await follow(session) }
             } else if let startError {
                 VStack(spacing: 16) {
                     Text(startError).foregroundStyle(.white).multilineTextAlignment(.center)
@@ -94,11 +105,14 @@ struct CaptureView: View {
     }
 }
 
-/// The buttons and words at the bottom of the camera view.
+/// The capture's controls: along the camera view's top edge, and in a panel below it.
 private struct Controls: View {
     let session: ObjectCaptureSession
     let subject: Subject
     @Binding var passes: Int
+    /// The cancel button, photo count and hints (over the top edge of the camera), or the panel below it.
+    enum Part { case top, panel }
+    var part: Part
     var onCancel: () -> Void
 
     /// Where you are: 0 point at it, 1 fit the box, 2 walk round.
@@ -111,7 +125,16 @@ private struct Controls: View {
     }
 
     var body: some View {
-        VStack {
+        Group {
+            switch part {
+            case .top: top
+            case .panel: panel
+            }
+        }
+    }
+
+    private var top: some View {
+        VStack(spacing: 0) {
             HStack {
                 Button(action: onCancel) {
                     Image(systemName: "xmark").font(.headline).frame(width: 40, height: 40)
@@ -135,35 +158,39 @@ private struct Controls: View {
                     .transition(.move(edge: .top).combined(with: .opacity))
                 }
             }
-            .padding()
-            Spacer()
+            .padding(12)
             if let tip = feedbackText {
                 Label(tip, systemImage: "exclamationmark.triangle.fill")
                     .font(.headline)
                     .padding(.horizontal, 14).padding(.vertical, 9)
                     .background(Color.fsAccent, in: Capsule())
                     .foregroundStyle(Color.fsAccentInk)
-                    .transition(.scale(scale: 0.85).combined(with: .opacity))
-                    .padding(.bottom, 10)
+                    .transition(.move(edge: .top).combined(with: .opacity))
+                    .padding(.top, 4)
             }
-            VStack(spacing: 14) {
-                StepDots(index: stepIndex)
-                Text(instruction)
-                    .font(.title3.weight(.semibold))
-                    .multilineTextAlignment(.center)
-                    .foregroundStyle(.white)
-                    .contentTransition(.opacity)
-                    .fixedSize(horizontal: false, vertical: true)
-                buttons
-            }
-            .padding(18)
-            .background(.ultraThinMaterial.opacity(0.92), in: RoundedRectangle(cornerRadius: 28, style: .continuous))
-            .environment(\.colorScheme, .dark)
-            .padding(.horizontal, 12)
-            .padding(.bottom, 8)
         }
         .animation(.spring(duration: 0.35, bounce: 0.3), value: feedbackText)
+    }
+
+    private var panel: some View {
+        VStack(spacing: 14) {
+            StepDots(index: stepIndex)
+            Text(instruction)
+                .font(.title3.weight(.semibold))
+                .multilineTextAlignment(.center)
+                .foregroundStyle(.white)
+                .contentTransition(.opacity)
+                .fixedSize(horizontal: false, vertical: true)
+            buttons
+        }
+        .padding(18)
+        .frame(maxWidth: .infinity)
+        .background(Color.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 28, style: .continuous))
+        .environment(\.colorScheme, .dark)
+        .padding(.horizontal, 12)
+        .padding(.bottom, 8)
         .animation(.spring(duration: 0.45, bounce: 0.2), value: stepIndex)
+        // the haptics live here only: the top part is a second copy of this view
         .sensoryFeedback(.selection, trigger: session.numberOfShotsTaken)
         .sensoryFeedback(.success, trigger: session.userCompletedScanPass)
         .sensoryFeedback(.impact(weight: .medium), trigger: stepIndex)
