@@ -419,14 +419,15 @@ def _orient_and_trim(placed, info, trim_mm, heel_by: str = "leg", track: list | 
 
 def prepare(mesh, up: str = "y", trim_mm: float | None = LEG_TRIM_MM):
     """Any-units, Object-Capture-frame foot -> (mat-frame mesh, decisions). Doesn't modify the input."""
-    mm, units, _ = imported.to_millimetres(mesh)
+    mm, units, factor = imported.to_millimetres(mesh)
     placed, _, floor_info = imported.to_floor_frame(mm, up)
+    track = [np.array(floor_info["transform"]) @ np.diag([factor, factor, factor, 1.0])]
     info = dict(kind="foot", units_detected=units, up_axis=up, floor=floor_info["floor"])
     if "floor_tilt_corrected_deg" in floor_info:
         info["floor_tilt_corrected_deg"] = floor_info["floor_tilt_corrected_deg"]
     placed = _densify(placed, info)
     placed = _denoise(placed, info)
-    return _orient_and_trim(placed, info, trim_mm), info
+    return _orient_and_trim(placed, info, trim_mm, track=track), info
 
 
 # A sole-up scan: lying face down, knee bent, the sole facing the ceiling.

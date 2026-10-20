@@ -351,3 +351,41 @@ def test_two_foam_blocks_side_by_side_give_the_right_print_not_a_box(foot):
     assert r["prep"]["footprint_mm"]["length"] == pytest.approx(250.0, abs=3.0)
     assert (r["max_fill_at_mm"]["y"] > 0) == (foot == "right")
     assert "used the one that looks like" in r["prep"].get("pieces_note", "")
+
+
+@pytest.mark.parametrize("kind", ["foot", "sole_up", "impression"])
+def test_the_recorded_transform_maps_the_scan_as_handed_over_onto_the_prepared_one(kind):
+    """prep.to_mat (scan as the app hands it over -> mat frame) must be the whole turn and move,
+    for every kind: a point of the input, moved by it, lands where that point is in the result."""
+    import trimesh
+
+    from footscan.recon import foot_prep
+
+    if kind == "foot":
+        m = _as_object_capture(synth.block_foot(0.0, "right", origin=(0, 0)))
+    elif kind == "sole_up":
+        m = _sole_up_scan("right")
+    else:
+        m = _as_object_capture(synth.foam_print("right"))
+    ins, placed = foot_prep.insole_from_object_capture(m, "right", kind=kind)
+    T = np.array(ins.report["prep"]["to_mat"])
+    moved = m.copy()
+    moved.apply_transform(T)
+    # every prepared point lies (to within smoothing) on the moved input's surface; the
+    # preparation splits triangles, so its points needn't be the input's own corners
+    sample = placed.vertices[placed.vertices[:, 2] < 60][::50]
+    _, d, _ = trimesh.proximity.closest_point(moved, sample)
+    assert np.median(d) < 0.5
+
+
+def test_if_the_exact_outline_fails_the_insole_still_covers_the_whole_foot(monkeypatch):
+    """GEOS has thrown on some dense scans; the fallback must be a filled outline, never a fragment."""
+    import shapely
+
+    def boom(*a, **k):
+        raise shapely.errors.GEOSException("forced")
+
+    monkeypatch.setattr(shapely, "concave_hull", boom)
+    ins = insole.from_scan(synth.block_foot(37.0, "right"), "right")
+    assert ins.report["length_mm"] > 240 and ins.report["width_mm"] > 90
+    assert any("convex outline" in w for w in ins.report["warnings"])

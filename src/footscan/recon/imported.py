@@ -199,6 +199,7 @@ def to_floor_frame(mesh_mm, up: str = "y", n_samples: int = 60_000, seed: int = 
         m.apply_transform(L)
         info.update(floor="no table in the scan: the object's lowest scanned points are taken as where it stood "
                           "(heights are measured from them)")
+    info["transform"] = (L @ T).tolist()  # the turn and move applied: millimetre input -> this frame
     return m, floor_pts, info
 
 

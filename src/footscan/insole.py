@@ -137,8 +137,13 @@ def sole_heights(mesh, xs: np.ndarray, ys: np.ndarray, inside: np.ndarray):
     return H, S
 
 
-def silhouette(mesh):
-    """The foot seen from above (below SILHOUETTE_HEIGHT_MM), as a polygon."""
+def silhouette(mesh, notes: list | None = None):
+    """The foot seen from above (below SILHOUETTE_HEIGHT_MM), as a polygon.
+
+    If GEOS can't make the concave outline, the convex one (the rubber band
+    round the foot) is used instead: always filled, never smaller than the
+    foot, a few mm wider along the inner arch. A note saying so goes in
+    ``notes``."""
     import shapely
     from shapely.geometry import MultiPoint
 
@@ -153,7 +158,10 @@ def silhouette(mesh):
     try:
         poly = shapely.concave_hull(MultiPoint(low), ratio=0.15)
     except shapely.errors.GEOSException:
-        poly = MultiPoint(low).buffer(3.0).buffer(-3.0)  # the same outline, the slow sure way
+        poly = shapely.convex_hull(MultiPoint(low))
+        if notes is not None:
+            notes.append("the outline is the foot's convex outline (the exact one couldn't be made from this scan): "
+                         "the insole is a few mm wider along the inner arch than the foot")
     poly = poly.buffer(4.0).buffer(-4.0)  # close small gaps between scan points
     if poly.geom_type != "Polygon":
         poly = max(poly.geoms, key=lambda g: g.area)
@@ -175,7 +183,8 @@ def build(foot_mesh, foot: str, params: InsoleParams | None = None) -> Insole:
     if foot not in ("left", "right"):
         raise InsoleError("foot must be 'left' or 'right'")
     m = output_frame(foot_mesh, foot)
-    sil = silhouette(m)
+    outline_notes: list[str] = []
+    sil = silhouette(m, outline_notes)
     x0, y0, x1, y1 = sil.bounds
     length = x1 - x0
 
@@ -254,6 +263,7 @@ def build(foot_mesh, foot: str, params: InsoleParams | None = None) -> Insole:
                         "If the arch isn't actually flat on the floor, scan again with a low lap aimed under the inner arch.")
     if holes > 0.05:
         warnings.append(f"{holes:.0%} of the area under the foot is a hole in the scan (taken as flat).")
+    warnings += outline_notes
     if clipped.any():
         warnings.append(f"the fill was clipped by the safety caps over {clipped[in_sil].mean():.1%} of the foot "
                         f"(arch {p.max_arch_fill_mm} mm, heel {p.heel_cup_depth_mm} mm).")
