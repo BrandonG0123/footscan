@@ -574,28 +574,57 @@ def _foam_top(m, tries: int = 200, seed: int = 0):
     return c, n, P
 
 
+BLOCK_GAP_MM = 20.0  # patches of foam top closer than this are one block (a gap in the scan, not between blocks)
+
+
 def _foam_blocks(m):
     """Outline of each foam block's top (the scan levelled, top at z = 0), shrunk by
-    ``PRINT_EDGE_MM``, as one (multi)polygon. Each block separately: one outline round two
-    blocks would take in the walls and bottoms between them."""
+    ``PRINT_EDGE_MM``, as one (multi)polygon.
+
+    The top is gathered by height alone (on a rough scan its little
+    triangles tilt every which way) and split into connected patches.
+    Patches closer than ``BLOCK_GAP_MM`` belong to one block: missing scan
+    data can split one block's top, and an outline per fragment would cut
+    the print under it. Blocks further apart get an outline each, so the
+    walls between them aren't inside one.
+    """
     import shapely
     from shapely.geometry import MultiPoint
 
-    # by height alone: on a rough scan the top's little triangles tilt every which way, and a test
-    # of which way they face breaks the top into fragments too small to count as a block
     on = np.abs(m.triangles_center[:, 2]) < 2.5
     top = m.copy()
     top.update_faces(on)
     top.remove_unreferenced_vertices()
-    polys = []
+    patches = []
     for mask, area in _pieces(top):
-        if area < FOAM_TOP_MIN_AREA_MM2:
+        if area < 0.1 * FOAM_TOP_MIN_AREA_MM2:  # crumbs and specks
             continue
-        P = top.vertices[np.unique(top.faces[mask])]
-        polys.append(shapely.convex_hull(MultiPoint(P[:, :2])).buffer(-PRINT_EDGE_MM))
-    if not polys:
+        P = top.vertices[np.unique(top.faces[mask])][:, :2]
+        patches.append((shapely.convex_hull(MultiPoint(P)), P, area))
+    # group patches within BLOCK_GAP_MM of each other
+    groups = shapely.union_all([h.buffer(BLOCK_GAP_MM / 2) for h, _, _ in patches]) if patches else None
+    blocks = []
+    for g in getattr(groups, "geoms", [groups] if groups is not None else []):
+        members = [(P, a) for h, P, a in patches if g.intersects(h)]
+        if sum(a for _, a in members) < FOAM_TOP_MIN_AREA_MM2:
+            continue
+        blocks.append(shapely.convex_hull(MultiPoint(np.vstack([P for P, _ in members]))).buffer(-PRINT_EDGE_MM))
+    if not blocks:
         raise FootPrepError("no flat foam surface found: is this a scan of a foam box from above?")
-    return shapely.union_all(polys)
+    return shapely.union_all(blocks)
+
+
+def _table_depth(m) -> float | None:
+    """How far below the foam's top (the scan levelled, top at z = 0) the table round the box is:
+    the biggest level, upward-facing surface more than 20 mm down, or None. Nothing a print holds
+    is that deep or deeper."""
+    up = (m.face_normals[:, 2] > 0.95) & (m.triangles_center[:, 2] < -20.0)
+    if not up.any():
+        return None
+    z, a = m.triangles_center[up, 2], m.area_faces[up]
+    hist, edges = np.histogram(z, bins=np.arange(z.min() - 1, z.max() + 6, 5.0), weights=a)
+    i = int(np.argmax(hist))
+    return float(-edges[i]) if hist[i] >= FOAM_TOP_MIN_AREA_MM2 else None
 
 
 def _looks_like(placed) -> str | None:
@@ -664,7 +693,11 @@ def prepare_impression(mesh, up: str = "y", trim_mm: float | None = LEG_TRIM_MM,
     # bottom does; a rough scan's print triangles tilt every which way, but not that far). Each
     # block has its own outline, so the walls between two blocks are outside both. Anything left
     # that doesn't reach up to the foam's top (a table under the box) is dropped below.
-    keep = ((ctr[:, 2] < -PRINT_BELOW_TOP_MM) & (ctr[:, 2] > -PRINT_MAX_DEPTH_MM) & inside
+    deepest = PRINT_MAX_DEPTH_MM
+    table = _table_depth(m)
+    if table is not None:
+        deepest = min(deepest, table - 5.0)  # the table showing between blocks or round the box isn't a print
+    keep = ((ctr[:, 2] < -PRINT_BELOW_TOP_MM) & (ctr[:, 2] > -deepest) & inside
             & (m.face_normals[:, 2] > -0.9))
     if not keep.any():
         raise FootPrepError("no print found below the foam's top surface")
@@ -674,7 +707,13 @@ def prepare_impression(mesh, up: str = "y", trim_mm: float | None = LEG_TRIM_MM,
     pieces = _pieces(m, reaches_z=-PRINT_BELOW_TOP_MM - 5)
     if not pieces:
         raise FootPrepError("what's below the foam's top doesn't reach up to it, so it isn't a print in the foam")
-    candidates = [pieces[0]] + [p for p in pieces[1:2] if p[1] > 0.4 * pieces[0][1]]
+    # ranked by upward-facing area: a print's bottom faces up out of the foam; the walls between two
+    # blocks (and any box side the scan caught) stand upright, however big they are
+    up_area = [(mask, float(m.area_faces[mask & (m.face_normals[:, 2] > 0.5)].sum())) for mask, _ in pieces]
+    up_area.sort(key=lambda t: -t[1])
+    if up_area[0][1] < PRINT_MIN_AREA_MM2 / 2:
+        raise FootPrepError("nothing below the foam's top faces up like the bottom of a print")
+    candidates = [up_area[0]] + [p for p in up_area[1:2] if p[1] > 0.4 * up_area[0][1]]
 
     results = []
     for mask, _area in candidates:

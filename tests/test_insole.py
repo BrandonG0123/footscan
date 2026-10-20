@@ -420,3 +420,33 @@ def test_a_bed_close_under_a_sole_up_scan_is_not_taken_for_the_foot(bed_below_so
     fp = ins.report["prep"]["footprint_mm"]
     assert fp["length"] == pytest.approx(250, abs=5) and fp["width"] == pytest.approx(100, abs=5)
     assert ins.report["max_fill_mm"] == pytest.approx(11.0, abs=0.3)
+
+
+def test_a_gap_in_the_scanned_foam_top_doesnt_cut_the_print():
+    """Missing scan data splits the foam's top into two patches; they're one block, and the whole
+    250 mm print is kept (not half of it, not 'two prints')."""
+    from footscan.recon import foot_prep
+
+    m = synth.refined(synth.foam_print("right"), 3.0)
+    gap = (m.triangles_center[:, 2] > 66) & (np.abs(m.triangles_center[:, 0] - 125) < 4)
+    m.update_faces(~gap)
+    m.remove_unreferenced_vertices()
+    placed, info = foot_prep.prepare_impression(m, up="z", foot="right")
+    assert info["footprint_mm"]["length"] == pytest.approx(250, abs=3)
+    assert "pieces_note" not in info and "pieces_warning" not in info
+
+
+def test_two_blocks_close_together_still_give_the_print():
+    """Blocks 15 mm apart are outlined as one; the walls and the table between them still never
+    beat the print, which faces up out of the foam."""
+    import trimesh
+
+    from footscan.recon import foot_prep
+
+    right = synth.refined(synth.foam_print("right"), 3.0)
+    left = synth.refined(synth.foam_print("left"), 3.0)
+    left.apply_translation([0, 145, 0])  # blocks 130 wide: a 15 mm gap
+    placed, info = foot_prep.prepare_impression(trimesh.util.concatenate([right, left]), up="z", foot="left")
+    assert info["print_deepest_mm"] == pytest.approx(30.0, abs=0.3)
+    assert info["footprint_mm"]["length"] == pytest.approx(250, abs=3)
+    assert foot_prep._looks_like(placed) == "left"
