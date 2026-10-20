@@ -141,8 +141,15 @@ struct HomeView: View {
     /// Where you are on the way to an insole, in one compact card (with the
     /// not-a-medical-device line built in). It fades as the page scrolls up.
     private var hero: some View {
-        InsolePath(step: insoleStep, studioConnected: studio.link != nil) {
-            withAnimation(.spring(duration: 0.35, bounce: 0.35)) { subjectRaw = subjects.first(where: \.needs3DCapture)?.rawValue ?? subjectRaw }
+        InsolePath(step: insoleStep, studioConnected: studio.link != nil, autoSend: settings.autoSend) {
+            switch insoleStep {
+            case 0:  // pick the sole scan
+                withAnimation(.spring(duration: 0.35, bounce: 0.35)) { subjectRaw = subjects.first(where: \.needs3DCapture)?.rawValue ?? subjectRaw }
+            case 1:  // open the scan that's waiting to go, where Send is
+                if let waiting = soleScans.first(where: { $0.record?.studioCaptureID == nil }) { path.append(waiting) }
+            default:
+                break
+            }
         }
         .visualEffect { content, proxy in
             let up: CGFloat = min(1, max(0, -proxy.frame(in: .scrollView).minY / 160))
@@ -151,8 +158,10 @@ struct HomeView: View {
     }
 
     /// 0 scan the sole, 1 send it, 2 make the insole on the Mac (sign-off follows there).
+    private var soleScans: [Scan] { library.scans.filter { $0.record?.subject.needs3DCapture == true && $0.hasOBJ } }
+
     private var insoleStep: Int {
-        let soles = library.scans.filter { $0.record?.subject.needs3DCapture == true && $0.hasOBJ }
+        let soles = soleScans
         if soles.contains(where: { $0.record?.studioCaptureID != nil }) { return 2 }
         return soles.isEmpty ? 0 : 1
     }
@@ -493,7 +502,8 @@ struct ScanThumb: View {
 private struct InsolePath: View {
     let step: Int
     let studioConnected: Bool
-    var onScanSole: () -> Void
+    let autoSend: Bool
+    var onTap: () -> Void
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private let steps: [(symbol: String, label: String)] = [
@@ -510,14 +520,17 @@ private struct InsolePath: View {
         case 0: CaptureMethod.lidarAvailable
             ? "Sole up or a foam print: it's the shape the insole is made from."
             : "Sole and foam-print scans need an iPhone with LiDAR (a Pro model)."
-        case 1: studioConnected ? "It goes by itself when the phone is on the same Wi-Fi as the Mac."
-                                : "Connect to the studio on your Mac; then it goes by itself."
+        case 1:
+            if !studioConnected { autoSend ? "Connect to the studio on your Mac; then it goes by itself."
+                                           : "Connect to the studio on your Mac, then open the scan and tap Send." }
+            else if autoSend { "It goes by itself when the phone is on the same Wi-Fi as the Mac." }
+            else { "Sending automatically is off: tap here to open the scan, then Send." }
         default: "Research library, then Make insole. A podiatrist or athletic trainer signs the summary sheet before you play in it."
         }
     }
 
     var body: some View {
-        Button(action: { if step == 0 { onScanSole() } }) {
+        Button(action: onTap) {
             VStack(alignment: .leading, spacing: 14) {
                 HStack(alignment: .firstTextBaseline) {
                     Text("YOUR INSOLE").font(.caption.weight(.heavy)).tracking(1.2).foregroundStyle(Color.fsAccent)
