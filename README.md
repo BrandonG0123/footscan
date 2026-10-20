@@ -120,8 +120,11 @@ Windows 11, `footscan.brandongreene.dev` on the existing Cloudflare Tunnel),
 follow [docs/DEPLOY-TANK.md](docs/DEPLOY-TANK.md). With `--public` the app is
 hidden from search engines unless started with `--allow-indexing`.
 
-**Not built yet:** turning scans into a TPU print file. That needs the
-generator (Phase 4), and the Phase 0 repeatability gate has to pass first.
+**First-fit insole (Phase 4, part 1):** *Make insole* in the studio turns a
+foot scan into a 3MF for the slicer plus a clinician summary sheet (see
+[docs/insole.md](docs/insole.md)). It follows the scanned sole only: no
+posting or stiffness zones, which wait for the Phase 0 repeatability gate
+and the Phase 5 material tests.
 
 JavaScript tests (frame quality, coverage, and camera position from the mat):
 
