@@ -146,8 +146,14 @@ def silhouette(mesh):
     low = V[V[:, 2] < SILHOUETTE_HEIGHT_MM][:, :2]
     if len(low) < 50:
         raise InsoleError("almost nothing of the foot near the floor: is this a standing or seated scan on the mat?")
-    low = np.unique(low.round(2), axis=0)  # repeated points (dense or lidded scans) can trip GEOS up
-    poly = shapely.concave_hull(MultiPoint(low), ratio=0.15)
+    # one point per 0.5 mm square: dense scans repeat and line up points, which can trip GEOS's
+    # concave hull up (it has thrown "Tri::getAdjacent - invalid index" on them); the outline
+    # doesn't need finer than that
+    low = np.unique(np.round(low / 0.5) * 0.5, axis=0)
+    try:
+        poly = shapely.concave_hull(MultiPoint(low), ratio=0.15)
+    except shapely.errors.GEOSException:
+        poly = MultiPoint(low).buffer(3.0).buffer(-3.0)  # the same outline, the slow sure way
     poly = poly.buffer(4.0).buffer(-4.0)  # close small gaps between scan points
     if poly.geom_type != "Polygon":
         poly = max(poly.geoms, key=lambda g: g.area)

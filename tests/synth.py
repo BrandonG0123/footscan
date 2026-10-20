@@ -433,21 +433,136 @@ def shaped_foot(foot: str = "right", leg: bool = True):
     return trimesh.Trimesh(np.asarray(mm.vert_properties)[:, :3], np.asarray(mm.tri_verts), process=True)
 
 
-def foam_print(foot: str = "right", depth: float = 30.0):
-    """SYNTHETIC foam impression box: a 330 x 130 x 70 mm block with ``shaped_foot`` pressed
+def foam_print(foot: str = "right", depth: float = 30.0, shape: str = "shaped"):
+    """SYNTHETIC foam impression box: a 330 x 130 x 70 mm block with ``shaped_foot`` (or, with
+    ``shape="curved"``, ``curved_foot``) pressed
     ``depth`` mm straight down into it (the foam is crushed everywhere above the sole,
     and left alone under the arch), on a table. Closed, as Object Capture leaves a model."""
     import manifold3d as m3
     import trimesh
 
     M = m3.Manifold
-    foot_mm = shaped_foot(foot, leg=False)
+    foot_mm = shaped_foot(foot, leg=False) if shape == "shaped" else curved_foot(foot, leg=False)
     f = M(m3.Mesh(vert_properties=np.asarray(foot_mm.vertices, dtype=np.float32),
                   tri_verts=np.asarray(foot_mm.faces, dtype=np.uint32)))
     sole_z = 70.0 - depth
-    sweep = M.batch_boolean([f.translate((0.0, 0.0, sole_z + k)) for k in range(0, 100, 20)], m3.OpType.Add)
+    # Everything above the sole is crushed: the foot itself, plus its plan view from the arch's
+    # height (12 mm) upward, so foam stays only where the foot never reached (under the arch).
+    import shapely
+    from shapely.geometry import Point
+
+    plan = shapely.convex_hull(shapely.union_all([Point(32, 45).buffer(32, 64), Point(165, 45).buffer(50, 64),
+                                                  Point(222, 45).buffer(28, 64)]))
+    ring = np.asarray(shapely.geometry.polygon.orient(plan, 1.0).exterior.coords)[:-1]
+    above = M.extrude(m3.CrossSection([ring], m3.FillRule.Positive), 120.0).translate(
+        (0.0, 0.0, sole_z + (12.0 if shape == "shaped" else 40.0)))  # from inside the foot (above its arch) up
+    sweep = f.translate((0.0, 0.0, sole_z)) + above
     block = M.cube((330.0, 130.0, 70.0)).translate((-40.0, -20.0, 0.0))
     mm = (block - sweep).to_mesh()
     m = trimesh.Trimesh(np.asarray(mm.vert_properties)[:, :3], np.asarray(mm.tri_verts), process=True)
     table = trimesh.Trimesh([[-120, -100, 0], [370, -100, 0], [370, 210, 0], [-120, 210, 0]], [[0, 1, 2], [0, 2, 3]])
     return trimesh.util.concatenate([m, table])
+
+
+def bumps(mesh, amp: float, waves=(3.0, 8.0), n: int = 40, seed: int = 0):
+    """SYNTHETIC scan noise: smooth bumps along the surface normal, a sum of ``n`` random
+    waves with wavelengths in ``waves`` (mm), scaled to a standard deviation of ``amp`` mm."""
+    import trimesh
+
+    rng = np.random.default_rng(seed)
+    m = mesh.copy()
+    V, N = m.vertices, m.vertex_normals
+    d = np.zeros(len(V))
+    for _ in range(n):
+        k = rng.normal(size=3)
+        k /= np.linalg.norm(k)
+        d += np.sin(V @ k * 2 * np.pi / rng.uniform(*waves) + rng.uniform(0, 2 * np.pi))
+    d *= amp / d.std()
+    return trimesh.Trimesh(V + N * d[:, None], m.faces, process=False)
+
+
+def refined(mesh, edge: float = 2.0):
+    """The same shape split into triangles no longer than ``edge`` mm (so noise has points to move)."""
+    import trimesh
+
+    v, f = trimesh.remesh.subdivide_to_size(mesh.vertices, mesh.faces, max_edge=edge)
+    return trimesh.Trimesh(v, f, process=True)
+
+
+# The shape of curved_foot's sole, in foot coordinates (x forward from the heel, y toward the
+# foot's left), heights in mm above the floor plane it rests on. Public so tests can compare.
+CURVED_ARCH_MM = 14.0     # arch peak above the floor
+CURVED_EDGE_MM = 4.0      # how far the sole curls up over the last few mm to the edge
+
+
+def curved_plan():
+    import shapely
+    from shapely.geometry import Point
+
+    return shapely.convex_hull(shapely.union_all([Point(32, 45).buffer(32, 64), Point(165, 45).buffer(50, 64),
+                                                  Point(222, 45).buffer(28, 64)]))
+
+
+def curved_sole(x, y, foot: str = "right"):
+    """SYNTHETIC sole height (mm) at foot coordinates x, y: flat where the heel pad and the ball
+    of the foot touch the floor, a smooth arch rising toward the inner side through the midfoot
+    (peak ``CURVED_ARCH_MM`` at x = 110, 12 mm in from the inner edge), and a rounded edge all
+    round (rising ``CURVED_EDGE_MM`` over the last 6 mm), like a real sole. No sharp corners."""
+    import shapely
+
+    x, y = np.asarray(x, float), np.asarray(y, float)
+    plan = curved_plan()
+    inner = 1.0 if foot == "right" else -1.0  # inner side is +y (the foot's left) for a right foot
+    d_edge = np.asarray(shapely.distance(plan.exterior, shapely.points(np.c_[x.ravel(), y.ravel()]))).reshape(x.shape)
+    inside_side = inner * (y - 45.0)  # > 0 on the inner half
+    along = np.exp(-0.5 * ((x - 110.0) / 28.0) ** 2)
+    across = 1.0 / (1.0 + np.exp(-(inside_side - 15.0) / 6.0))
+    arch = CURVED_ARCH_MM * along * across
+    edge = CURVED_EDGE_MM * np.clip(1 - d_edge / 6.0, 0, 1) ** 2
+    return arch + edge
+
+
+def curved_foot(foot: str = "right", leg: bool = True, top: float = 45.0, cell: float = 2.0):
+    """SYNTHETIC foot with a realistic, smooth sole (``curved_sole``), closed, in foot coordinates
+    (z up, the floor the sole rests on at z = 0). Built by extruding the plan to ``top`` mm and
+    bending each point's height so the bottom follows the sole and the top stays flat:
+    z -> sole + z * (top - sole) / top. Optionally a 28 mm radius leg over the heel."""
+    import manifold3d as m3
+    import trimesh
+
+    plan = curved_plan()
+    import shapely
+
+    ring = np.asarray(shapely.geometry.polygon.orient(plan, 1.0).exterior.coords)[:-1]
+    solid = m3.Manifold.extrude(m3.CrossSection([ring], m3.FillRule.Positive), top).refine_to_length(cell)
+
+    def bend(v):
+        v = np.array(v, dtype=float, copy=True)
+        s = curved_sole(v[:, 0], v[:, 1], foot)
+        v[:, 2] = s + v[:, 2] * (top - s) / top
+        return v
+
+    solid = solid.warp_batch(bend)
+    if leg:
+        solid = (solid + m3.Manifold.cylinder(120.0, 28.0, 28.0, 64).translate((45.0, 45.0, top - 5.0))).refine_to_length(cell)
+    mm = solid.to_mesh()
+    return trimesh.Trimesh(np.asarray(mm.vert_properties)[:, :3], np.asarray(mm.tri_verts), process=True)
+
+
+def speckle(mesh, sigma: float, grain_mm: float = 2.0, seed: int = 0):
+    """SYNTHETIC scan noise with a set strength and grain: random per-point offsets along the
+    surface normal, blurred over the surface to about ``grain_mm`` across, then scaled to a
+    standard deviation of ``sigma`` mm. Unlike ``bumps`` (waves through space, which can lie
+    along the surface as long, shape-like undulations), every bump here is about the grain size."""
+    import trimesh
+    import trimesh.smoothing
+
+    rng = np.random.default_rng(seed)
+    m = mesh.copy()
+    d = rng.normal(size=len(m.vertices))
+    edge = float(np.median(m.edges_unique_length))
+    L = trimesh.smoothing.laplacian_calculation(m, equal_weight=True)
+    for _ in range(int(np.ceil((grain_mm / edge) ** 2))):
+        d = L.dot(d)
+    d *= sigma / d.std()
+    return trimesh.Trimesh(m.vertices + m.vertex_normals * d[:, None], m.faces, process=False)

@@ -240,7 +240,7 @@ def test_a_foam_print_is_found_flipped_rested_and_makes_the_right_insole(foot):
     assert r["sole"]["seen"] > 0.95 and r["sole"]["holes"] < 0.01
     assert r["max_fill_mm"] == pytest.approx(11.0, abs=0.1)
     assert (r["max_fill_at_mm"]["y"] > 0) == (foot == "right")
-    assert r["length_mm"] == pytest.approx(256.3, abs=1.0)  # 250 mm foot + margins
+    assert r["length_mm"] == pytest.approx(258.0, abs=1.0)  # 250 mm foot + 2 mm at the toe + the 6 mm heel-cup wall
     assert r["warnings"] == []
 
 
@@ -274,3 +274,59 @@ def test_a_densely_meshed_foam_print_on_a_tilted_table_reads_the_same(tilt):
     assert r["prep"]["foam_top_tilt_deg"] == pytest.approx(tilt, abs=0.1)
     assert r["prep"]["print_deepest_mm"] == pytest.approx(30.0, abs=0.2)
     assert r["max_fill_mm"] == pytest.approx(11.0, abs=0.1) and r["warnings"] == []
+
+
+def _sole_up_scan(foot, noise_mm=0.0, wavy=False):
+    import trimesh
+
+    m = synth.refined(synth.shaped_foot(foot))
+    if noise_mm:
+        m = synth.bumps(m, noise_mm, waves=(20.0, 40.0)) if wavy else synth.speckle(m, noise_mm)
+    m.apply_transform(trimesh.transformations.rotation_matrix(np.radians(25), [0, 1, 0], [0, 45, 0]))
+    m.apply_transform(np.diag([1.0, -1, -1, 1]))
+    return _as_object_capture(m)
+
+
+def test_a_clean_scan_is_left_exactly_as_it_is():
+    from footscan.recon import foot_prep
+
+    ins, _ = foot_prep.insole_from_object_capture(_sole_up_scan("right"), "right", kind="sole_up")
+    p = ins.report["prep"]
+    assert p["surface_noise_mm"] <= foot_prep.NOISY_SCAN_MM and p["denoised"].startswith("no")
+    assert ins.report["max_fill_mm"] == pytest.approx(11.0, abs=0.1)
+
+
+@pytest.mark.parametrize("kind", ["sole_up", "impression"])
+def test_scan_speckle_is_measured_smoothed_out_and_does_not_lift_the_arch(kind):
+    """0.3 mm of speckle (bumps ~2 mm across): read as roughly that, blurred away, the floor set from
+    the heel and the ball of the foot rather than the noise's lowest specks, so the 12 mm arch still
+    gives about 11 mm of fill, on the inner side, with no rough-scan warning."""
+    from footscan.recon import foot_prep
+
+    m = (_sole_up_scan("right", 0.3) if kind == "sole_up"
+         else _as_object_capture(synth.speckle(synth.refined(synth.foam_print("right"), 3.0), 0.3)))
+    ins, _ = foot_prep.insole_from_object_capture(m, "right", kind=kind)
+    r = ins.report
+    assert 0.15 < r["prep"]["surface_noise_mm"] < 0.5
+    assert r["prep"]["denoised"].startswith("blurred")
+    assert r["max_fill_mm"] == pytest.approx(11.0, abs=0.7)
+    assert r["max_fill_at_mm"]["y"] > 0
+    assert not any("rough" in w for w in r["warnings"])
+
+
+def test_a_rough_scan_says_so():
+    from footscan.recon import foot_prep
+
+    ins, _ = foot_prep.insole_from_object_capture(_sole_up_scan("left", 1.5), "left", kind="sole_up")
+    r = ins.report
+    assert r["prep"]["surface_noise_mm"] > foot_prep.ROUGH_SCAN_MM
+    assert any("surface is rough" in w for w in r["warnings"])
+    assert r["max_fill_at_mm"]["y"] < 0  # still the inner side
+
+
+def test_long_gentle_undulations_are_shape_not_noise():
+    """Waves 20-40 mm across are the size of the foot's own shapes: they mustn't be read as noise."""
+    from footscan.recon import foot_prep
+
+    ins, _ = foot_prep.insole_from_object_capture(_sole_up_scan("right", 0.7, wavy=True), "right", kind="sole_up")
+    assert ins.report["prep"]["surface_noise_mm"] <= foot_prep.NOISY_SCAN_MM

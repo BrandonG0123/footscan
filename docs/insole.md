@@ -76,6 +76,12 @@ narrower end. Both add warnings if less than 60% of the sole was scanned,
 if the arch comes out on the outer side ("is this really the right foot?")
 or, for a print, if the two ends are almost the same width.
 
+Before either is rested, scan noise is measured and, if there is any, blurred
+out (over about 4 mm), and on a noisy scan the floor is set from smooth fits
+under the heel and both sides of the ball of the foot rather than from the
+noise's lowest specks. How well all this reads a sole, clean and noisy, and
+how that compares with published foot scanners: [benchmark.md](benchmark.md).
+
 Checked on synthetic feet with a 12 mm arch (tests/test_insole.py): sole
 up, tipped 25 degrees, with a bed in the scan, and a print pressed 30 mm
 into a foam block on a table with the box 1.5 degrees off level, each in
