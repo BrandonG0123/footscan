@@ -120,6 +120,17 @@ export function cellFor({ azimuth, elevation }) {
   return `${BANDS[band].key}-${Math.floor(wrap360(azimuth) / (360 / AZ_SECTORS)) % AZ_SECTORS}`;
 }
 
+/**
+ * May the scan finish? Only once every angle has its photos, never on a
+ * photo count alone: twenty photos can all come from one side. Without
+ * motion sensors the angles can't be known, so the full frame target stands
+ * in for them.
+ */
+export function coveredEnough({ hasView, completeness, kept, targetFrames }) {
+  if (kept === 0) return false;
+  return hasView ? completeness >= 1 : kept >= targetFrames;
+}
+
 export class Coverage {
   constructor({ perSideCell = 2, topCell = 4 } = {}) {
     this.perSideCell = perSideCell;

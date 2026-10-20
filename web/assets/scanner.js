@@ -13,7 +13,7 @@
 //   3. Motion sensors alone, relative to where scanning started (the
 //      instructions say to start behind the heel). Guidance only.
 import {
-  Coverage, SharpnessJudge, cellFor, describeCell, exposureStats, judgeExposure,
+  Coverage, SharpnessJudge, cellFor, coveredEnough, describeCell, exposureStats, judgeExposure,
   angularSpeed, laplacianVariance, nextMissing, shouldCapture, steerTo, toGray, viewFromOrientation, wrap360,
 } from "./quality.js";
 import { Cues, ScreenAwake } from "./cues.js";
@@ -315,6 +315,7 @@ export class Scanner {
     const completeness = hasView ? this.coverage.completeness() : null;
     const next = hasView ? nextMissing(this.coverage, view) : null;
     const done = kept >= this.targetFrames && (!hasView || completeness >= 1);
+    const covered = coveredEnough({ hasView, completeness, kept, targetFrames: this.targetFrames });
     // Progress for a single bar: frames and coverage both have to be there.
     const progress = Math.min(kept / this.targetFrames, completeness ?? 1);
     const matMarkers = this.mat && now - this.mat.at < MAT_FRESH_MS ? this.mat.markers.length : 0;
@@ -323,7 +324,7 @@ export class Scanner {
     this.speak({ guidance, steer, done, sharp, exposure, matVisible, tooFast });
 
     this.onUpdate({
-      sharp, exposure, hasView, viewSource: source, cell, next, kept, completeness, done, progress, steer,
+      sharp, exposure, hasView, viewSource: source, cell, next, kept, completeness, done, covered, progress, steer,
       matVisible, matMarkers, paper: this.mat?.paper ?? null, guidance,
     });
   }

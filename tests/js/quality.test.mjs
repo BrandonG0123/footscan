@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
-  Coverage, SharpnessJudge, cellFor, exposureStats, judgeExposure,
+  Coverage, SharpnessJudge, cellFor, coveredEnough, exposureStats, judgeExposure,
   laplacianVariance, nextMissing, shouldCapture, viewFromOrientation,
 } from "../../web/assets/quality.js";
 
@@ -152,4 +152,22 @@ test("turning speed is measured over the last moments", async () => {
   const samples = [0, 100, 200, 300, 400, 500].map((t) => ({ t, view: { azimuth: t / 10, elevation: 0 } })); // 100 deg/s
   assert.ok(Math.abs(angularSpeed(samples, 500) - 100) < 1);
   assert.equal(angularSpeed([{ t: 0, view: { azimuth: 0, elevation: 0 } }], 0), 0);
+});
+
+test("finishing needs every angle, not a photo count", () => {
+  // plenty of photos, but not every angle: no
+  assert.equal(coveredEnough({ hasView: true, completeness: 0.6, kept: 90, targetFrames: 60 }), false);
+  // every angle covered, even with fewer photos than the target: yes
+  assert.equal(coveredEnough({ hasView: true, completeness: 1, kept: 40, targetFrames: 60 }), true);
+  // no motion sensors: the angles can't be known, so the full target is needed
+  assert.equal(coveredEnough({ hasView: false, completeness: null, kept: 59, targetFrames: 60 }), false);
+  assert.equal(coveredEnough({ hasView: false, completeness: null, kept: 60, targetFrames: 60 }), true);
+  assert.equal(coveredEnough({ hasView: true, completeness: 1, kept: 0, targetFrames: 60 }), false);
+});
+
+test("a lap from one side never completes the coverage", () => {
+  const cov = new Coverage();
+  for (let i = 0; i < 80; i++) cov.add(cellFor({ azimuth: 10 + (i % 20), elevation: 45 }));
+  assert.ok(cov.completeness() < 1);
+  assert.equal(coveredEnough({ hasView: true, completeness: cov.completeness(), kept: 80, targetFrames: 60 }), false);
 });

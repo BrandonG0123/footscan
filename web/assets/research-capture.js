@@ -136,7 +136,9 @@ async function startLive(simulated) {
       renderSteer(s, scanner);
       $("guidance").textContent = s.guidance.text;
       $("guidance").className = `guidance ${s.guidance.tone}`;
-      $("btn-finish").disabled = s.kept === 0;
+      // Finish only once every angle has photos (not on a photo count: they could all be from one side)
+      $("btn-finish").disabled = !s.covered;
+      $("btn-finish").textContent = s.covered ? "Finish & review" : "Cover every side first";
       $("btn-finish").className = s.done ? "btn accent" : "btn secondary";
     },
   });

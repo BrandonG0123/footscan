@@ -472,7 +472,9 @@ async function startScan(simulated) {
       $("progress-label").textContent = `${Math.round(100 * s.progress)}%`;
       $("progress-bar").style.width = `${100 * s.progress}%`;
       renderSteer(s, scanner);
-      $("btn-finish").disabled = s.kept < MIN_FRAMES;
+      // Finish only once every angle has photos (not on a photo count: they could all be from one side)
+      $("btn-finish").disabled = !s.covered || s.kept < MIN_FRAMES;
+      $("btn-finish").textContent = s.covered ? "Finish" : "Cover every side first";
       $("btn-finish").className = s.done ? "btn accent" : "btn secondary";
       // Done: the Finish button says so with a bounce, once.
       if (s.done && !flow.doneShown) { flow.doneShown = true; fx.bounce($("btn-finish"), { scale: 1.08 }); }

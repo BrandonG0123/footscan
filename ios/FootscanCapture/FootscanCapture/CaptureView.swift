@@ -20,6 +20,8 @@ struct CaptureView: View {
 
     @State private var session: ObjectCaptureSession?
     @State private var passes = 1
+    /// A lap has been completed: Object Capture's ring has photos from every side. Finish waits for this.
+    @State private var allSides = false
     @State private var startError: String?
     @State private var releaseScreen: (() -> Void)?
 
@@ -35,10 +37,10 @@ struct CaptureView: View {
                     ObjectCaptureView(session: session)
                         .clipShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
                         .overlay(alignment: .top) {
-                            Controls(session: session, subject: scan.record?.subject ?? .other, passes: $passes,
+                            Controls(session: session, subject: scan.record?.subject ?? .other, passes: $passes, allSides: $allSides,
                                      part: .top, onCancel: cancel)
                         }
-                    Controls(session: session, subject: scan.record?.subject ?? .other, passes: $passes,
+                    Controls(session: session, subject: scan.record?.subject ?? .other, passes: $passes, allSides: $allSides,
                              part: .panel, onCancel: cancel)
                 }
                 .task { await follow(session) }
@@ -110,6 +112,7 @@ private struct Controls: View {
     let session: ObjectCaptureSession
     let subject: Subject
     @Binding var passes: Int
+    @Binding var allSides: Bool
     /// The cancel button, photo count and hints (over the top edge of the camera), or the panel below it.
     enum Part { case top, panel }
     var part: Part
@@ -150,7 +153,14 @@ private struct Controls: View {
                             .font(.callout.monospacedDigit().weight(.bold))
                             .contentTransition(.numericText(value: Double(session.numberOfShotsTaken)))
                         Text("photos").font(.callout)
+                        Divider().frame(height: 14).overlay(Color.white.opacity(0.4))
+                        Image(systemName: allSides ? "checkmark.circle.fill" : "circle.dashed")
+                            .foregroundStyle(allSides ? Color.fsAccent : .white)
+                            .contentTransition(.symbolEffect(.replace))
+                        Text(allSides ? "All sides" : "Sides").font(.callout.weight(allSides ? .bold : .regular))
                     }
+                    .accessibilityElement(children: .combine)
+                    .accessibilityLabel("\(session.numberOfShotsTaken) photos. \(allSides ? "Every side has photos." : "Not every side has photos yet.")")
                     .foregroundStyle(.white)
                     .padding(.horizontal, 12).padding(.vertical, 8)
                     .background(.ultraThinMaterial, in: Capsule())
@@ -193,6 +203,8 @@ private struct Controls: View {
         // the haptics live here only: the top part is a second copy of this view
         .sensoryFeedback(.selection, trigger: session.numberOfShotsTaken)
         .sensoryFeedback(.success, trigger: session.userCompletedScanPass)
+        // once any lap has gone all the way round, Finish stays available (a further lap only adds photos)
+        .onChange(of: session.userCompletedScanPass, initial: true) { _, done in if done { allSides = true } }
         .sensoryFeedback(.impact(weight: .medium), trigger: stepIndex)
     }
 
@@ -213,12 +225,12 @@ private struct Controls: View {
             }
         case .capturing:
             switch (subject.scanKind, session.userCompletedScanPass) {
-            case ("sole_up", false): "Move slowly over the whole sole, heel to toes, then down each side. Keep the sole in the middle of the screen."
+            case ("sole_up", false): "Walk slowly all the way round the foot, looking down at the sole, until the ring is full. Finish unlocks then."
             case ("sole_up", true): "Lap done. One more, closer and looking straight down at the arch, makes it better. Then Finish."
-            case ("impression", false): "Walk slowly all the way round, looking down into the print. Keep it in the middle of the screen."
+            case ("impression", false): "Walk slowly all the way round, looking down into the print, until the ring is full. Finish unlocks then."
             case ("impression", true): "Lap done. One more, higher up and looking straight down into the print, makes it better. Then Finish."
             case (_, true): "Lap done. Best results: 2 or 3 laps, one higher up looking down, one low. Then Finish."
-            default: "Walk slowly all the way round. Keep it in the middle of the screen."
+            default: "Walk slowly all the way round until the ring is full. Finish unlocks then."
             }
         case .finishing: "Saving the last photos…"
         case .completed: "Done."
@@ -246,8 +258,10 @@ private struct Controls: View {
                     }
                     .buttonStyle(SecondaryButtonStyle())
                 }
-                big(session.numberOfShotsTaken < 20 ? "Keep going…" : "Finish") { session.finish() }
-                    .disabled(session.numberOfShotsTaken < 20)
+                // Not a photo count: twenty photos can all be from one side. Finish waits until
+                // Object Capture says a lap went all the way round.
+                big(allSides ? "Finish" : "Go all the way round") { session.finish() }
+                    .disabled(!allSides)
             }
         default:
             EmptyView()
