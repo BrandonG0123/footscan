@@ -100,6 +100,7 @@ class Insole:
     foot: str
     params: InsoleParams
     report: dict = field(default_factory=dict)
+    sole: object = None             # the scan in the insole's own frame (for the 3-D preview)
 
 
 # ---------------------------------------------------------------------------
@@ -281,7 +282,7 @@ def build(foot_mesh, foot: str, params: InsoleParams | None = None) -> Insole:
         warnings=warnings,
         frame="mm; x forward from the back of the heel, y toward the foot's left, z up; bottom at z = 0",
     )
-    return Insole(mesh=mesh, foot=foot, params=p, report=report)
+    return Insole(mesh=mesh, foot=foot, params=p, report=report, sole=m)
 
 
 def bed_fit(length: float, width: float, bed: float, clearance: float = 3.0) -> dict:
@@ -406,6 +407,35 @@ After printing: compare it with your shoe's own insole, trim the toe end if need
 """
 
 
+CAPTURE_KINDS = {
+    "sole_up": ("Sole up: lying face down, knee bent, the sole facing the ceiling",
+                "None (non-weight-bearing, relaxed). An unloaded arch stands higher than a standing one."),
+    "impression": ("Foam print: the foot pressed into a foam impression box while seated, the print scanned",
+                   "Partial (semi-weight-bearing, as pressed into the foam)."),
+    "foot": ("Whole foot, resting on the floor, scanned from the sides",
+             "Seated, resting on the floor. The sole itself is mostly hidden in this kind of scan."),
+}
+
+
+def capture_html(prep: dict | None) -> str:
+    """'How the foot was captured' for the summary sheet, from the preparation's decisions. Empty if unknown."""
+    from html import escape
+
+    if not prep or prep.get("kind") not in CAPTURE_KINDS:
+        return ""
+    what, load = CAPTURE_KINDS[prep["kind"]]
+    noise = prep.get("surface_noise_mm")
+    rows = [f"<tr><th>Scan</th><td colspan=\"3\">{escape(what)}</td></tr>",
+            f"<tr><th>Load on the foot</th><td colspan=\"3\">{escape(load)}</td></tr>"]
+    if noise is not None:
+        rows.append(f"<tr><th>Scan noise</th><td>{noise} mm ({escape(prep.get('denoised', ''))})</td>"
+                    f"<th>Floor</th><td>{escape(prep.get('floor_from') or prep.get('floor', ''))}</td></tr>")
+    if prep["kind"] == "impression" and "print_deepest_mm" in prep:
+        rows.append(f"<tr><th>Print depth, scan</th><td>{prep['print_deepest_mm']} mm</td>"
+                    "<th>Print depth, calipers</th><td></td></tr>")
+    return "<h2>How the foot was captured</h2>\n<table>\n" + "\n".join(rows) + "\n</table>"
+
+
 def summary_html(insole: Insole, scan_label: str, synthetic: bool = False) -> str:
     """The clinician summary sheet (docs/SAFETY.md, requirement 1), for this first-fit device."""
     from html import escape
@@ -416,6 +446,7 @@ def summary_html(insole: Insole, scan_label: str, synthetic: bool = False) -> st
     warn = "".join(f"<li>{escape(w)}</li>" for w in r["warnings"]) or "<li>None.</li>"
     synth = ('<p class="synthetic">SYNTHETIC TEST GEOMETRY. This sheet was made from a computer-generated '
              'shape, not a person\'s foot. It is an example of the sheet, not a device to wear.</p>') if synthetic else ""
+    capture = capture_html(r.get("prep"))
     return f"""<!doctype html><html lang="en"><head><meta charset="utf-8">
 <title>Footscan insole summary: {escape(scan_label)}</title>
 <style>
@@ -446,6 +477,7 @@ anything and is not equivalent to, or a substitute for, a prescribed orthotic. N
 <tr><th>Size</th><td colspan="3">{r['length_mm']} &times; {r['width_mm']} mm, {r['height_mm']} mm tall</td></tr>
 </table>
 
+{capture}
 <h2>Measurements from the scan</h2>
 <table>
 <tr><th>Footprint length</th><td>{scan.get('footprint_length_mm', '&mdash;')} mm</td><th>Footprint width</th><td>{scan.get('footprint_width_mm', '&mdash;')} mm</td></tr>
@@ -476,8 +508,57 @@ a skin mark is still there the next day, a foot feels numb, tingly or burning, o
 </body></html>"""
 
 
+# The 3-D preview: the insole coloured by how much it fills under the foot (light where it's
+# flat, deep teal where it rises to meet the arch), and the scanned sole in the same place.
+FILL_RAMP = ((0.0, (237, 230, 214)), (0.5, (95, 194, 182)), (1.0, (14, 79, 74)))
+FILL_RAMP_MM = 20.0   # the arch cap: the deep end of the colours
+SOLE_COLOUR = (222, 196, 170)
+
+
+def fill_colour(height_above_base_mm: np.ndarray) -> np.ndarray:
+    """Colours (uint8 RGB) for heights of the insole's top above its base, on FILL_RAMP."""
+    t = np.clip(np.asarray(height_above_base_mm, float) / FILL_RAMP_MM, 0, 1)
+    stops = np.array([s for s, _ in FILL_RAMP])
+    cols = np.array([c for _, c in FILL_RAMP], float)
+    return np.stack([np.interp(t, stops, cols[:, k]) for k in range(3)], axis=1).round().astype(np.uint8)
+
+
+def write_preview(insole: Insole, out_dir: Path) -> dict:
+    """preview-insole.bin and preview-sole.bin (the studio viewer's format), in the insole's frame.
+
+    The insole's colour at each point is the height of its top above the
+    base there (the base is ``base_mm`` under the heel, tapering to
+    ``toe_base_mm``; the bottom of the insole reads as no fill). The sole is
+    the scan's underside and lower sides (below 35 mm), as the generator
+    read it, so the two can be compared shape for shape.
+    """
+    import trimesh
+
+    from .recon import viewer_data
+
+    out = Path(out_dir)
+    m = insole.mesh.copy()
+    p = insole.params
+    z = m.vertices[:, 2]
+    x = m.vertices[:, 0]
+    x0, x1 = x.min(), x.max()
+    t = np.clip((x - (x0 + p.taper_from * (x1 - x0))) / ((1 - p.taper_from) * (x1 - x0)), 0, 1)
+    base = p.base_mm + (p.toe_base_mm - p.base_mm) * t
+    m.visual = trimesh.visual.ColorVisuals(m, vertex_colors=fill_colour(np.where(z > 0.01, z - base, 0.0)))
+    files = dict(insole=out / "preview-insole.bin", sole=out / "preview-sole.bin")
+    viewer_data.write(m, files["insole"])
+    if insole.sole is not None:
+        sole = insole.sole.copy()
+        keep = (sole.triangles_center[:, 2] < 35.0) & (sole.face_normals[:, 2] < 0.3)
+        sole.update_faces(keep)
+        sole.remove_unreferenced_vertices()
+        sole.visual = trimesh.visual.ColorVisuals(sole, vertex_colors=np.tile(SOLE_COLOUR, (len(sole.vertices), 1)))
+        viewer_data.write(sole, files["sole"])
+    return {k: str(v) for k, v in files.items() if v.exists()}
+
+
 def write_outputs(insole: Insole, out_dir: Path, name: str, scan_label: str, synthetic: bool = False) -> dict:
-    """insole.3mf, insole.stl, summary.html, print-notes.txt and insole.json in out_dir."""
+    """insole.3mf, insole.stl, summary.html, print-notes.txt, insole.json and the 3-D preview in out_dir."""
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
     tag = "SYNTHETIC TEST GEOMETRY, not a foot. " if synthetic else ""
@@ -490,4 +571,6 @@ def write_outputs(insole: Insole, out_dir: Path, name: str, scan_label: str, syn
     files["summary"].write_text(summary_html(insole, scan_label, synthetic))
     files["notes"].write_text(PRINT_NOTES)
     files["json"].write_text(json.dumps(dict(synthetic=synthetic, params=asdict(insole.params), **insole.report), indent=2))
-    return {k: str(v) for k, v in files.items()}
+    out_files = {k: str(v) for k, v in files.items()}
+    out_files.update({f"preview_{k}": v for k, v in write_preview(insole, out).items()})
+    return out_files

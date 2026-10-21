@@ -45,6 +45,13 @@ then in the studio's **Research library** press **Make insole** on that
 scan's card. It shows the size, the arch fill and any warnings, with
 buttons for the 3MF, the summary sheet, the print notes and an STL.
 
+**3D preview** (the card's *3D preview* button, `studio/insole.html`): the
+insole coloured by how much it fills under the foot (light where flat, deep
+teal at the 20 mm cap), with the scanned sole it was made from, which can be
+lifted off to compare the two shapes. The summary sheet says how the foot
+was captured (scan kind, load on the foot, scan noise, how the floor was
+set) and, for a foam print, the scanned depth with a box for the calipers.
+
 Behind the button (`src/footscan/recon/foot_prep.py`):
 
 1. **Level**: the app's Y-up model becomes Z-up. If the scan kept the floor,

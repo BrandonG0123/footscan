@@ -85,11 +85,16 @@ export class MeshViewer {
     new ResizeObserver(() => this.draw()).observe(canvas);
   }
 
-  load({ positions, colors, indices }) {
+  /** Show a mesh. ``keepView``: keep the camera where it is (reloading the same scene, changed). */
+  load({ positions, colors, indices }, { keepView = false } = {}) {
     const gl = this.gl;
     this.positions = positions;
     this.indices = indices;
     this.colors = colors;
+    // reloading: free the last model's buffers first
+    if (this.vao) gl.deleteVertexArray(this.vao);
+    for (const b of this.buffers || []) gl.deleteBuffer(b);
+    this.buffers = [];
     const normals = vertexNormals(positions, indices);
     const cols = new Float32Array(positions.length);
     if (colors) for (let i = 0; i < cols.length; i++) cols[i] = colors[i] / 255;
@@ -99,18 +104,22 @@ export class MeshViewer {
     gl.bindVertexArray(this.vao);
     for (const [name, data] of [["aPos", positions], ["aNormal", normals], ["aColor", cols]]) {
       const loc = gl.getAttribLocation(this.prog, name);
-      gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
+      const buf = gl.createBuffer();
+      this.buffers.push(buf);
+      gl.bindBuffer(gl.ARRAY_BUFFER, buf);
       gl.bufferData(gl.ARRAY_BUFFER, data instanceof Float32Array ? data : new Float32Array(data), gl.STATIC_DRAW);
       gl.enableVertexAttribArray(loc);
       gl.vertexAttribPointer(loc, 3, gl.FLOAT, false, 0, 0);
     }
     const ib = gl.createBuffer();
+    this.buffers.push(ib);
     gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, ib);
     gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, indices, gl.STATIC_DRAW);
     gl.bindVertexArray(null);
     this.count = indices.length;
     this.bounds = bounds(positions);
-    this.home();
+    if (keepView) this.draw();
+    else this.home();
   }
 
   /** Scene axes: {east, north, up}. Views ("medial", ...) are directions in it. */
@@ -123,7 +132,9 @@ export class MeshViewer {
     const b = this.bounds;
     if (!b) return;
     this.cam.target = b.center.slice();
-    this.cam.distance = b.size * 1.6;
+    // far enough that the model fits across a narrow (phone) canvas too, not just up and down
+    const aspect = this.canvas.clientWidth / Math.max(1, this.canvas.clientHeight) || 1;
+    this.cam.distance = (b.size * 1.6) / Math.min(1, aspect);
     this.draw();
   }
 

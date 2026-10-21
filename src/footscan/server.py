@@ -1018,7 +1018,8 @@ def import_mesh(src: Path, dst: Path) -> dict:
 UP_AXES = ("y", "z")
 INSOLE_FILES = {"insole.3mf": "model/3mf", "insole.stl": "model/stl",
                 "summary.html": "text/html; charset=utf-8", "print-notes.txt": "text/plain; charset=utf-8",
-                "insole.json": "application/json"}
+                "insole.json": "application/json",
+                "preview-insole.bin": "application/octet-stream", "preview-sole.bin": "application/octet-stream"}
 
 
 def insole_source(folder: Path, meta: dict) -> Path | None:

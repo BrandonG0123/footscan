@@ -2,8 +2,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  anglesFor, bounds, intersectMesh, lookAt, mat4Multiply, orbitEye, parseViewerBin, perspective, pixelRay,
-  projectToScreen, vertexNormals,
+  anglesFor, bounds, intersectMesh, lookAt, mat4Multiply, mergeMeshes, orbitEye, parseViewerBin, perspective,
+  pixelRay, projectToScreen, vertexNormals,
 } from "../../web/assets/viewer-math.js";
 
 const close = (a, b, eps = 1e-6) => assert.ok(Math.abs(a - b) < eps, `${a} != ${b}`);
@@ -127,4 +127,16 @@ test("snapping lands on the surface at the sticker's centre, between vertices", 
   close(s.point[0], 13, 0.05);
   close(s.point[1], 21, 0.05);
   close(s.point[2], 0, 1e-9);
+});
+
+test("two meshes merge into one, the second lifted, its triangles pointing at its own points", () => {
+  const tri = (z, c) => ({ positions: new Float32Array([0, 0, z, 1, 0, z, 0, 1, z]), colors: new Uint8Array([c, c, c, c, c, c, c, c, c]), indices: new Uint32Array([0, 1, 2]) });
+  const m = mergeMeshes(tri(0, 10), tri(5, 20), 7);
+  assert.equal(m.positions.length, 18);
+  assert.deepEqual([...m.positions.slice(9)], [0, 0, 12, 1, 0, 12, 0, 1, 12]);
+  assert.deepEqual([...m.indices], [0, 1, 2, 3, 4, 5]);
+  assert.deepEqual([...m.colors.slice(0, 3)], [10, 10, 10]);
+  assert.deepEqual([...m.colors.slice(9, 12)], [20, 20, 20]);
+  const plain = mergeMeshes(tri(0, 10), { ...tri(0, 0), colors: null }, 0);
+  assert.deepEqual([...plain.colors.slice(9, 12)], [200, 200, 200]);
 });

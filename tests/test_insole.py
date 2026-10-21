@@ -7,6 +7,8 @@ Insole coordinates: x forward from the back of the heel, y toward the foot's
 left, the foot centred on y = 0 (so a right foot's inner side is y 9..45).
 """
 
+from pathlib import Path
+
 import numpy as np
 import pytest
 
@@ -475,3 +477,24 @@ def test_a_clean_curved_surface_is_not_mistaken_for_a_noisy_one():
     out = foot_prep._denoise(dome, info)
     assert info["surface_noise_mm"] <= 0.02
     assert np.array_equal(out.vertices, dome.vertices)  # left exactly as it is
+
+
+def test_the_insole_comes_with_a_3d_preview_and_the_sheet_says_how_the_foot_was_captured(tmp_path):
+    """preview-insole.bin (coloured by fill) and preview-sole.bin next to the 3MF; the summary sheet
+    says what kind of scan it was, the load on the foot and, for a foam print, has a box for the
+    calipers' reading of the print's depth."""
+    from footscan.recon import foot_prep, viewer_data
+
+    ins, _ = foot_prep.insole_from_object_capture(_as_object_capture(synth.foam_print("right")), "right",
+                                                  kind="impression")
+    files = insole.write_outputs(ins, tmp_path, "insole", "test print", synthetic=True)
+    pv = viewer_data.read(files["preview_insole"])
+    sole = viewer_data.read(files["preview_sole"])
+    assert pv["colors"] is not None and len(pv["faces"]) == len(ins.mesh.faces)
+    assert len(sole["faces"]) > 1000
+    # deepest colour where the fill is highest (the arch), lightest where there's none
+    z = pv["vertices"][:, 2]
+    assert pv["colors"][np.argmax(z)].sum() < pv["colors"][np.argmin(z)].sum()
+    sheet = Path(files["summary"]).read_text()
+    assert "How the foot was captured" in sheet and "semi-weight-bearing" in sheet
+    assert "Print depth, calipers" in sheet and "NOT A MEDICAL DEVICE" in sheet

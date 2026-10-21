@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Insole preview — footscan</title>
+  <link rel="stylesheet" href="/assets/style.css">
+  <style>
+    .stage { position: relative; border-radius: 16px; overflow: hidden; background: var(--surface-2); }
+    .stage canvas { display: block; width: 100%; height: min(68vh, 560px, 85vw); touch-action: none; cursor: grab; }
+    .stage canvas:active { cursor: grabbing; }
+    .views { display: flex; gap: 6px; flex-wrap: wrap; margin: 12px 0 0; }
+    .views button { font-size: 0.85rem; padding: 6px 12px; }
+    .controls { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px 20px; margin: 14px 0 0; align-items: center; }
+    .controls label { display: flex; gap: 10px; align-items: center; font-size: 0.92rem; }
+    .controls input[type=range] { flex: 1; min-width: 0; }
+    .legend { margin: 14px 0 0; }
+    .legend .bar { height: 12px; border-radius: 6px; border: 1px solid var(--line); }
+    .legend .ticks { display: flex; justify-content: space-between; font: 0.78rem/1.4 var(--mono); color: var(--muted); margin-top: 4px; }
+    .big { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; margin: 14px 0 0; }
+    .big div { background: var(--surface-2); border-radius: 12px; padding: 12px 14px; }
+    .big dt { color: var(--muted); font-size: 0.78rem; }
+    .big dd { margin: 4px 0 0; font: 700 1.25rem/1.1 var(--mono); font-variant-numeric: tabular-nums; }
+    .hint-key { font-size: 0.82rem; color: var(--muted); margin: 8px 0 0; }
+  </style>
+</head>
+<body data-area="studio">
+<main class="wrap" style="max-width:980px">
+  <p class="eyebrow">First-fit insole · 3D preview</p>
+  <h1 style="font-size:clamp(1.7rem,4vw,2.4rem);margin:0 0 6px" id="title">Insole preview</h1>
+  <p class="muted" style="margin:0 0 18px" id="back"></p>
+  <div id="root" aria-live="polite"><p class="muted">Loading…</p></div>
+</main>
+<script type="module" src="/assets/layout.js"></script>
+<script type="module" src="/assets/insole-page.js"></script>
+</body>
+</html>

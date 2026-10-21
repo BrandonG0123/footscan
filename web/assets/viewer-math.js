@@ -233,3 +233,26 @@ export function snapToSticker(positions, colors, click, { radius = 6, minDiff = 
   if (!best) for (const i of marker) consider(vert(i));
   return { point: best, snapped: true, count: marker.length };
 }
+
+/**
+ * Two meshes as one ({positions, colors, indices} each, colours as uint8 RGB), the second moved
+ * up by ``lift`` (mm, along z): for showing a scanned sole lifted off the insole made from it.
+ * A mesh without colours gets light grey.
+ */
+export function mergeMeshes(a, b, lift = 0) {
+  const na = a.positions.length / 3, nb = b.positions.length / 3;
+  const positions = new Float32Array((na + nb) * 3);
+  positions.set(a.positions, 0);
+  for (let i = 0; i < nb; i++) {
+    positions[(na + i) * 3] = b.positions[i * 3];
+    positions[(na + i) * 3 + 1] = b.positions[i * 3 + 1];
+    positions[(na + i) * 3 + 2] = b.positions[i * 3 + 2] + lift;
+  }
+  const colors = new Uint8Array((na + nb) * 3).fill(200);
+  if (a.colors) colors.set(a.colors, 0);
+  if (b.colors) colors.set(b.colors, na * 3);
+  const indices = new Uint32Array(a.indices.length + b.indices.length);
+  indices.set(a.indices, 0);
+  for (let i = 0; i < b.indices.length; i++) indices[a.indices.length + i] = b.indices[i] + na;
+  return { positions, colors, indices };
+}
