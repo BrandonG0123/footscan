@@ -95,7 +95,7 @@ def _densify(placed, info):
     return placed
 
 
-NOISE_PROBE_MM = 4.0          # the noise is read as what a blur this wide takes away
+NOISE_PROBE_MM = 4.0          # the noise is read as what's left over from smooth patches this wide
 NOISY_SCAN_MM = 0.15          # noise above this is smoothed out; below it the scan is left exactly as it is
 DENOISE_SIGMA_MM = 4.0        # the blur for a noisy scan: far smaller than an arch (40 mm and more across)
 ROUGH_SCAN_MM = 0.5           # surface noise above this: see plausibility()
@@ -129,23 +129,50 @@ def _blur(mesh, sigma_mm: float):
     return m
 
 
-def _denoise(m, info):
-    """Smooth out scan speckle if the scan has any; records how rough it was.
+def _surface_noise(m, radius_mm: float = NOISE_PROBE_MM, samples: int = 3000, seed: int = 0) -> float:
+    """Scan noise (mm, a standard deviation), however curved the surface is.
 
-    Roughness: what a narrow blur (``NOISE_PROBE_MM``) takes away, measured
-    along the surface's normal, as a robust typical value (1.48 x the median
-    distance, which is the standard deviation for random noise). The median
-    ignores the few points on edges and tight curves, which the blur also
-    moves. It reads speckle up to a few mm across; longer undulations are
-    shape as far as any scan can tell.
+    Round a sample of points, the surface within ``radius_mm`` is fitted
+    with a smooth curved patch (a quadratic, in the patch's own frame, its
+    normal from the points' least spread). A clean surface, flat or curved,
+    fits almost exactly; what's left over is noise. Robust over the samples
+    (1.48 x the median leftover, which is the standard deviation for random
+    noise; edges and corners, which don't fit, are few). Measured this way,
+    a smoothly curved heel isn't mistaken for a noisy one, which a
+    smooth-and-compare measure does (smoothing pulls curves inward).
+    """
+    from scipy.spatial import cKDTree
+
+    V = np.asarray(m.vertices)
+    if len(V) < 50:
+        return 0.0
+    tree = cKDTree(V)
+    rng = np.random.default_rng(seed)
+    idx = rng.choice(len(V), size=min(samples, len(V)), replace=False)
+    res = []
+    for i, nb in zip(idx, tree.query_ball_point(V[idx], radius_mm)):
+        if len(nb) < 15:
+            continue
+        P = V[nb] - V[i]
+        w, E = np.linalg.eigh(P.T @ P)
+        u, v, h = P @ E[:, 2], P @ E[:, 1], P @ E[:, 0]  # in-plane, in-plane, along the normal
+        A = np.c_[np.ones(len(nb)), u, v, u * u, u * v, v * v]
+        coef, *_ = np.linalg.lstsq(A, h, rcond=None)
+        r = h - A @ coef
+        res.append(r * np.sqrt(len(nb) / (len(nb) - 6)))  # six numbers fitted: leftovers read a little small
+    if not res:
+        return 0.0
+    return float(1.4826 * np.median(np.abs(np.concatenate(res))))
+
+
+def _denoise(m, info):
+    """Smooth out scan speckle if the scan has any; records how rough it was (``_surface_noise``).
 
     A scan under ``NOISY_SCAN_MM`` is left exactly as it is. A noisier one
     is blurred over ``DENOISE_SIGMA_MM``: otherwise the insole would copy
     the noise's bumps into its surface.
     """
-    probe = _blur(m, NOISE_PROBE_MM)
-    d = np.einsum("ij,ij->i", m.vertices - probe.vertices, probe.vertex_normals)
-    noise = float(1.4826 * np.median(np.abs(d)))
+    noise = _surface_noise(m)
     info["surface_noise_mm"] = round(noise, 2)
     if noise <= NOISY_SCAN_MM:
         info["denoised"] = "no: the scan's surface is clean"

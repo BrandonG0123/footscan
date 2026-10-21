@@ -76,9 +76,11 @@ The benchmark found real problems before any real foot did:
   height read high (by about 1.5 x the noise) and the floor tilted by up
   to a degree. Now the floor is set from smooth fits under the heel and
   both sides of the ball of the foot.
-- The noise estimate read a fifth of the true noise; now it reads about
-  0.7 to 1.05 x for fine speckle and jitter, 0.6 to 0.7 x for coarse
-  speckle (bumps 4 mm across).
+- The noise estimate read a fifth of the true noise, and (Codex found)
+  counted a clean curved surface's smoothing shrinkage as noise. Now it's
+  what's left over from smooth curved patches fitted 4 mm round: 0.00 mm
+  on clean curved shapes, about 0.7 x the true noise for fine speckle,
+  0.5 x for coarse (bumps 4 mm across), 1.0 x for point jitter.
 
 ## Measuring it end to end (needs real objects)
 

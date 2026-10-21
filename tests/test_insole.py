@@ -463,3 +463,15 @@ def test_a_print_scanned_without_the_table_keeps_its_sole():
     placed, info = foot_prep.prepare_impression(m, up="z", foot="right")
     assert info["print_deepest_mm"] == pytest.approx(30.0, abs=0.3)
     assert info["footprint_mm"]["length"] == pytest.approx(250, abs=3)
+
+
+def test_a_clean_curved_surface_is_not_mistaken_for_a_noisy_one():
+    """Smoothing pulls a curved surface inward; that mustn't read as noise (it did, and a clean dome
+    was then blurred, lifting its floor edge by about 2 mm)."""
+    from footscan.recon import foot_prep
+
+    dome = synth.refined(synth.dome_foot(), 2.0)
+    info = {}
+    out = foot_prep._denoise(dome, info)
+    assert info["surface_noise_mm"] <= 0.02
+    assert np.array_equal(out.vertices, dome.vertices)  # left exactly as it is
