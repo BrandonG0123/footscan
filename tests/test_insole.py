@@ -450,3 +450,16 @@ def test_two_blocks_close_together_still_give_the_print():
     assert info["print_deepest_mm"] == pytest.approx(30.0, abs=0.3)
     assert info["footprint_mm"]["length"] == pytest.approx(250, abs=3)
     assert foot_prep._looks_like(placed) == "left"
+
+
+def test_a_print_scanned_without_the_table_keeps_its_sole():
+    """Object Capture often leaves the table out. A deep print's flat bottom must not be taken for
+    the table (which would cut the sole away)."""
+    from footscan.recon import foot_prep
+
+    m = synth.foam_print("right")
+    m.update_faces(m.triangles_center[:, 2] > 0.5)  # no table
+    m.remove_unreferenced_vertices()
+    placed, info = foot_prep.prepare_impression(m, up="z", foot="right")
+    assert info["print_deepest_mm"] == pytest.approx(30.0, abs=0.3)
+    assert info["footprint_mm"]["length"] == pytest.approx(250, abs=3)

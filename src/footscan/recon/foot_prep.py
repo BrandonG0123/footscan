@@ -614,11 +614,16 @@ def _foam_blocks(m):
     return shapely.union_all(blocks)
 
 
-def _table_depth(m) -> float | None:
+def _table_depth(m, blocks) -> float | None:
     """How far below the foam's top (the scan levelled, top at z = 0) the table round the box is:
-    the biggest level, upward-facing surface more than 20 mm down, or None. Nothing a print holds
-    is that deep or deeper."""
-    up = (m.face_normals[:, 2] > 0.95) & (m.triangles_center[:, 2] < -20.0)
+    the biggest level, upward-facing surface more than 20 mm down *outside the blocks' outlines*
+    (inside them, a deep print's flat bottom looks just like a table), or None if the scan has
+    no table. Nothing a print holds is that deep or deeper."""
+    import shapely
+
+    C = m.triangles_center
+    outside = ~shapely.contains_xy(blocks.buffer(PRINT_EDGE_MM), C[:, 0], C[:, 1])
+    up = (m.face_normals[:, 2] > 0.95) & (C[:, 2] < -20.0) & outside
     if not up.any():
         return None
     z, a = m.triangles_center[up, 2], m.area_faces[up]
@@ -694,7 +699,7 @@ def prepare_impression(mesh, up: str = "y", trim_mm: float | None = LEG_TRIM_MM,
     # block has its own outline, so the walls between two blocks are outside both. Anything left
     # that doesn't reach up to the foam's top (a table under the box) is dropped below.
     deepest = PRINT_MAX_DEPTH_MM
-    table = _table_depth(m)
+    table = _table_depth(m, outline)
     if table is not None:
         deepest = min(deepest, table - 5.0)  # the table showing between blocks or round the box isn't a print
     keep = ((ctr[:, 2] < -PRINT_BELOW_TOP_MM) & (ctr[:, 2] > -deepest) & inside
