@@ -523,14 +523,16 @@ def fill_colour(height_above_base_mm: np.ndarray) -> np.ndarray:
     return np.stack([np.interp(t, stops, cols[:, k]) for k in range(3)], axis=1).round().astype(np.uint8)
 
 
-def write_preview(insole: Insole, out_dir: Path) -> dict:
-    """preview-insole.bin and preview-sole.bin (the studio viewer's format), in the insole's frame.
+def write_preview(insole: Insole, out_dir: Path, name: str = "insole") -> dict:
+    """<name>-preview.bin and <name>-preview-sole.bin (the studio viewer's format), in the insole's frame.
 
     The insole's colour at each point is the height of its top above the
     base there (the base is ``base_mm`` under the heel, tapering to
     ``toe_base_mm``; the bottom of the insole reads as no fill). The sole is
     the scan's underside and lower sides (below 35 mm), as the generator
-    read it, so the two can be compared shape for shape.
+    read it, so the two can be compared shape for shape. It is raised by the
+    base under it, so it sits where the insole's top meets it: ``relief_mm``
+    above the top wherever the insole follows the sole.
     """
     import trimesh
 
@@ -542,16 +544,20 @@ def write_preview(insole: Insole, out_dir: Path) -> dict:
     z = m.vertices[:, 2]
     x = m.vertices[:, 0]
     x0, x1 = x.min(), x.max()
-    t = np.clip((x - (x0 + p.taper_from * (x1 - x0))) / ((1 - p.taper_from) * (x1 - x0)), 0, 1)
-    base = p.base_mm + (p.toe_base_mm - p.base_mm) * t
+    def base_at(xs):  # as build(): base_mm under the heel, tapering to toe_base_mm at the toes
+        t = np.clip((xs - (x0 + p.taper_from * (x1 - x0))) / ((1 - p.taper_from) * (x1 - x0)), 0, 1)
+        return p.base_mm + (p.toe_base_mm - p.base_mm) * t
+
+    base = base_at(x)
     m.visual = trimesh.visual.ColorVisuals(m, vertex_colors=fill_colour(np.where(z > 0.01, z - base, 0.0)))
-    files = dict(insole=out / "preview-insole.bin", sole=out / "preview-sole.bin")
+    files = dict(insole=out / f"{name}-preview.bin", sole=out / f"{name}-preview-sole.bin")
     viewer_data.write(m, files["insole"])
     if insole.sole is not None:
         sole = insole.sole.copy()
         keep = (sole.triangles_center[:, 2] < 35.0) & (sole.face_normals[:, 2] < 0.3)
         sole.update_faces(keep)
         sole.remove_unreferenced_vertices()
+        sole.vertices[:, 2] += base_at(sole.vertices[:, 0])
         sole.visual = trimesh.visual.ColorVisuals(sole, vertex_colors=np.tile(SOLE_COLOUR, (len(sole.vertices), 1)))
         viewer_data.write(sole, files["sole"])
     return {k: str(v) for k, v in files.items() if v.exists()}
@@ -572,5 +578,5 @@ def write_outputs(insole: Insole, out_dir: Path, name: str, scan_label: str, syn
     files["notes"].write_text(PRINT_NOTES)
     files["json"].write_text(json.dumps(dict(synthetic=synthetic, params=asdict(insole.params), **insole.report), indent=2))
     out_files = {k: str(v) for k, v in files.items()}
-    out_files.update({f"preview_{k}": v for k, v in write_preview(insole, out).items()})
+    out_files.update({f"preview_{k}": v for k, v in write_preview(insole, out, name).items()})
     return out_files

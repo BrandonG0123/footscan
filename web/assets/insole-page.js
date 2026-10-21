@@ -29,6 +29,14 @@ function show(keepView) {
   viewer.load(mesh, { keepView });
 }
 
+// the slider fires many times a frame; rebuild the scene at most once per frame (it's slow on a phone)
+let pending = false;
+function showSoon() {
+  if (pending) return;
+  pending = true;
+  requestAnimationFrame(() => { pending = false; show(true); });
+}
+
 function views() {
   // the insole's frame: x forward from the heel, y toward the foot's left, z up
   const inner = report.foot === "right" ? 1 : -1;
@@ -52,8 +60,8 @@ async function init() {
       if (!r.ok) throw new Error(r.status === 409 ? "this insole no longer matches its scan: make it again" : `no insole yet (${r.status})`);
       return r.json();
     });
-    insoleMesh = await bin("preview-insole.bin");
-    soleMesh = await bin("preview-sole.bin").catch(() => null);
+    insoleMesh = await bin("insole-preview.bin");
+    soleMesh = await bin("insole-preview-sole.bin").catch(() => null);
   } catch (err) {
     $("root").innerHTML = `<p class="hint" style="color:var(--warn)">Couldn't show it: ${esc(err.message)}.
       Make the insole from the <a href="/studio/captures.html#${esc(capture)}">research library</a> first.</p>`;
@@ -115,7 +123,7 @@ async function init() {
   $("lift").addEventListener("input", (e) => {
     state.lift = Number(e.target.value);
     $("lift-out").textContent = `${state.lift} mm`;
-    show(true);
+    showSoon();
   });
 }
 

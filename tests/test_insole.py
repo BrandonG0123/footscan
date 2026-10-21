@@ -495,6 +495,16 @@ def test_the_insole_comes_with_a_3d_preview_and_the_sheet_says_how_the_foot_was_
     # deepest colour where the fill is highest (the arch), lightest where there's none
     z = pv["vertices"][:, 2]
     assert pv["colors"][np.argmax(z)].sum() < pv["colors"][np.argmin(z)].sum()
+    # at no lift the sole sits the relief above the insole's top, where the insole follows it
+    from scipy.spatial import cKDTree
+
+    top = pv["vertices"][pv["vertices"][:, 2] > 3.5]
+    under = sole["vertices"][sole["vertices"][:, 2] < 25]
+    d, i = cKDTree(top[:, :2]).query(under[:, :2], distance_upper_bound=0.8)
+    ok = np.isfinite(d)
+    gap = under[ok, 2] - top[i[ok], 2]
+    assert np.median(gap) == pytest.approx(ins.params.relief_mm, abs=0.3)
+    assert Path(files["preview_insole"]).name == "insole-preview.bin"
     sheet = Path(files["summary"]).read_text()
     assert "How the foot was captured" in sheet and "semi-weight-bearing" in sheet
     assert "Print depth, calipers" in sheet and "NOT A MEDICAL DEVICE" in sheet

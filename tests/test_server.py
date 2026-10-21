@@ -731,7 +731,7 @@ def test_studio_makes_an_insole_from_a_foam_print_without_a_scale_reading(server
     r = json.loads(raw)
     assert r["max_fill_mm"] == pytest.approx(11.0, abs=0.1) and r["warnings"] == []
     assert b"foam print" in call(f"{op}/api/captures/{cid}/insole/summary.html")[1]
-    for name in ("preview-insole.bin", "preview-sole.bin"):  # the studio's 3-D preview
+    for name in ("insole-preview.bin", "insole-preview-sole.bin"):  # the studio's 3-D preview
         st, data, _ = call(f"{op}/api/captures/{cid}/insole/{name}")
         assert st == 200 and data[:4] == b"FSV1", name
     # a standing foot still needs the scale reading; kinds are checked

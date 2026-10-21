@@ -1019,7 +1019,7 @@ UP_AXES = ("y", "z")
 INSOLE_FILES = {"insole.3mf": "model/3mf", "insole.stl": "model/stl",
                 "summary.html": "text/html; charset=utf-8", "print-notes.txt": "text/plain; charset=utf-8",
                 "insole.json": "application/json",
-                "preview-insole.bin": "application/octet-stream", "preview-sole.bin": "application/octet-stream"}
+                "insole-preview.bin": "application/octet-stream", "insole-preview-sole.bin": "application/octet-stream"}
 
 
 def insole_source(folder: Path, meta: dict) -> Path | None:
@@ -1092,6 +1092,8 @@ def make_insole(folder: Path, meta: dict) -> dict:
         shutil.rmtree(old, ignore_errors=True)
     except OSError as e:  # e.g. the disk filled while writing: a failed build, handled like any other
         return dict(error=f"couldn't save the insole files ({e})")
+    except Exception as e:  # noqa: BLE001 - e.g. the 3-D preview couldn't be made: a failed build, not a crash
+        return dict(error=f"couldn't write the insole files ({type(e).__name__}: {e})")
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
     r = ins.report
