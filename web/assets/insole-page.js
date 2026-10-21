@@ -16,7 +16,11 @@ const state = { sole: true, lift: 15 };
 
 async function bin(name) {
   const r = await fetch(base + name);
-  if (!r.ok) throw new Error(r.status === 409 ? "this insole no longer matches its scan: make it again" : `${name}: ${r.status}`);
+  if (!r.ok) {
+    throw new Error(r.status === 409 ? "this insole no longer matches its scan: make it again"
+      : r.status === 404 ? "this insole was made before the 3D preview existed: press Make insole again"
+      : `${name}: ${r.status}`);
+  }
   return parseViewerBin(await r.arrayBuffer());
 }
 
