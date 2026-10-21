@@ -87,6 +87,8 @@ class InsoleParams:
     max_arch_fill_mm: float = 20.0
     posting_rearfoot_deg: float = 0.0   # first fit: no posting, always
     posting_forefoot_deg: float = 0.0
+    toes_flat_from: float | None = None  # if set, fill tapers to none under the toes, from this share of the length
+    target_length_mm: float | None = None  # if set, the outline reaches this length (a shoe's insole), see build()
     bed_mm: float = 256.0           # printer bed (Bambu X1/P1/A1); for the fit check only
 
 
@@ -169,6 +171,34 @@ def silhouette(mesh, notes: list | None = None):
     return poly
 
 
+def _to_length(outline, x_from: float, target: float):
+    """The outline made ``target`` mm long by stretching only its front, past ``x_from`` (beyond the
+    ball of the foot), forward. -> (outline, mm added).
+
+    For a shoe's insole: the part shaped to the foot (heel, arch, ball) stays
+    exactly where the foot is; only the flat front, under and past the toes,
+    reaches further, to the shoe's length. Never shorter than the foot: a
+    shoe shorter than this outline is refused.
+    """
+    import shapely
+
+    ox0, _, ox1, _ = outline.bounds
+    now = ox1 - ox0
+    if target < now - 0.5:
+        raise InsoleError(f"the shoe's insole ({target:.0f} mm) is shorter than this foot's outline ({now:.0f} mm)")
+    if target <= now:
+        return outline, 0.0
+    k = (target - (x_from - ox0)) / (ox1 - x_from)
+
+    def stretch(xy):
+        xy = np.array(xy, dtype=float, copy=True)
+        front = xy[:, 0] > x_from
+        xy[front, 0] = x_from + (xy[front, 0] - x_from) * k
+        return xy
+
+    return shapely.transform(outline, stretch), float(target - now)
+
+
 # ---------------------------------------------------------------------------
 # the solid
 # ---------------------------------------------------------------------------
@@ -195,6 +225,9 @@ def build(foot_mesh, foot: str, params: InsoleParams | None = None) -> Insole:
     outline = outline.buffer(3.0).buffer(-3.0).simplify(0.2)
     if outline.geom_type != "Polygon":
         outline = max(outline.geoms, key=lambda g: g.area)
+    extended = 0.0
+    if p.target_length_mm is not None:
+        outline, extended = _to_length(outline, x0 + 0.7 * length, p.target_length_mm)
 
     # grid over the outline
     ox0, oy0, ox1, oy1 = outline.bounds
@@ -216,6 +249,10 @@ def build(foot_mesh, foot: str, params: InsoleParams | None = None) -> Insole:
     cap = np.where(w_heel >= 1, p.heel_cup_depth_mm, p.max_arch_fill_mm)
     clipped = fill > cap + 1e-6
     fill = np.minimum(fill, cap)
+    if p.toes_flat_from is not None:
+        # toes: they lie flat when standing, whatever the scan caught them doing
+        w_toe = np.clip((X - (x0 + p.toes_flat_from * length)) / (0.08 * length), 0, 1)
+        fill = fill * (1 - w_toe)
 
     # 4. heel cup wall, outside the foot only
     outside = ~in_sil
@@ -265,6 +302,9 @@ def build(foot_mesh, foot: str, params: InsoleParams | None = None) -> Insole:
     if holes > 0.05:
         warnings.append(f"{holes:.0%} of the area under the foot is a hole in the scan (taken as flat).")
     warnings += outline_notes
+    if extended:
+        warnings.append(f"lengthened to {p.target_length_mm:.0f} mm for the shoe: the flat front was extended by "
+                        f"{extended:.0f} mm past the toes; the shape under the heel, arch and ball is unchanged")
     if clipped.any():
         warnings.append(f"the fill was clipped by the safety caps over {clipped[in_sil].mean():.1%} of the foot "
                         f"(arch {p.max_arch_fill_mm} mm, heel {p.heel_cup_depth_mm} mm).")
@@ -278,11 +318,40 @@ def build(foot_mesh, foot: str, params: InsoleParams | None = None) -> Insole:
                   seen_under_arch=round(arch_seen, 3)),
         max_fill_mm=round(float(fill[in_sil].max()), 2),
         max_fill_at_mm=dict(x=round(float(X[peak]), 1), y=round(float(Y[peak]), 1)),
-        bed_fit=bed_fit(ext[0], ext[1], p.bed_mm),
+        bed_fit=bed_fit_shape(np.asarray(mesh.vertices)[:, :2], p.bed_mm),
         warnings=warnings,
         frame="mm; x forward from the back of the heel, y toward the foot's left, z up; bottom at z = 0",
     )
     return Insole(mesh=mesh, foot=foot, params=p, report=report, sole=m)
+
+
+def bed_fit_shape(xy, bed: float, clearance: float = 3.0) -> dict:
+    """Does this footprint (points, mm) fit a square bed, and turned how? Tries every half degree.
+
+    The insole's own outline, not a rectangle round it: a foot's rounded heel
+    and toes leave the bed's corners free, so a longer insole fits along the
+    diagonal than a rectangle of the same length would. Straight whenever it
+    fits (easiest to check by eye), else the turn that leaves the most room.
+    """
+    from scipy.spatial import ConvexHull
+
+    P = np.asarray(xy, float)[:, :2]
+    P = P[ConvexHull(P).vertices]
+    usable = bed - 2 * clearance
+    best = None
+    for deg in np.arange(0.0, 180.0, 0.5):
+        a = np.radians(deg)
+        R = np.array([[np.cos(a), -np.sin(a)], [np.sin(a), np.cos(a)]])
+        span = np.ptp(P @ R.T, axis=0)
+        spare = usable - span.max()
+        if deg == 0.0 and spare >= 0:
+            return dict(fits=True, how="straight", angle_deg=0.0, spare_mm=round(float(spare), 1), bed_mm=bed)
+        if best is None or spare > best[1]:
+            best = (float(deg), float(spare))
+    deg, spare = best
+    if spare < 0:
+        return dict(fits=False, how="too long for this bed", angle_deg=deg, short_by_mm=round(-spare, 1), bed_mm=bed)
+    return dict(fits=True, how=f"turned {deg:g} degrees", angle_deg=deg, spare_mm=round(spare, 1), bed_mm=bed)
 
 
 def bed_fit(length: float, width: float, bed: float, clearance: float = 3.0) -> dict:
@@ -323,21 +392,21 @@ def write_3mf(mesh, path: Path, title: str, notes: str, bed_mm: float = 256.0) -
     """A plain 3MF (core spec): one object, millimetres, placed in the middle of the bed.
 
     Slicers (Bambu Studio, Orca, Prusa) open this as geometry; it carries no
-    printer or filament settings. If the insole is longer than the bed, it
-    is turned to lie along the bed's diagonal.
+    printer or filament settings. If it doesn't fit straight, it is turned
+    to whichever angle fits best (``bed_fit_shape``).
     """
     import zipfile
     from xml.sax.saxutils import escape
 
     V = np.asarray(mesh.vertices, dtype=float)
     F = np.asarray(mesh.faces, dtype=int)
-    centre = (V.min(0) + V.max(0)) / 2
-    ext = V.max(0) - V.min(0)
-    angle = 0.0 if bed_fit(ext[0], ext[1], bed_mm)["how"] == "straight" else 45.0
+    angle = bed_fit_shape(V[:, :2], bed_mm)["angle_deg"]  # the turn that fits the bed best (0 if it fits straight)
     c, s = np.cos(np.radians(angle)), np.sin(np.radians(angle))
-    # build transform (3MF: 3 x 4, row vectors): rotate about z, then move to the bed's centre, bottom on z = 0
-    tx = bed_mm / 2 - (c * centre[0] - s * centre[1])
-    ty = bed_mm / 2 - (s * centre[0] + c * centre[1])
+    # build transform (3MF: 3 x 4, row vectors): rotate about z, then move the turned footprint's
+    # middle to the bed's middle, bottom on z = 0
+    turned = V[:, :2] @ np.array([[c, s], [-s, c]])
+    mid = (turned.min(0) + turned.max(0)) / 2
+    tx, ty = bed_mm / 2 - mid[0], bed_mm / 2 - mid[1]
     tz = -V[:, 2].min()
     transform = f"{c:.6f} {s:.6f} 0 {-s:.6f} {c:.6f} 0 0 0 1 {tx:.4f} {ty:.4f} {tz:.4f}"
 
@@ -475,6 +544,7 @@ anything and is not equivalent to, or a substitute for, a prescribed orthotic. N
 <tr><th>Heel cup depth</th><td>{p.heel_cup_depth_mm} mm (wall outside the scanned heel)</td><th>Base thickness</th><td>{p.base_mm} mm, {p.toe_base_mm} mm at toes</td></tr>
 <tr><th>Stiffness</th><td colspan="3">Uniform (no lattice zones). Material and infill as printed: record below.</td></tr>
 <tr><th>Size</th><td colspan="3">{r['length_mm']} &times; {r['width_mm']} mm, {r['height_mm']} mm tall</td></tr>
+{f'<tr><th>Under the toes</th><td colspan="3">no fill from {p.toes_flat_from:.0%} of the length (the toes lie flat when standing)</td></tr>' if p.toes_flat_from is not None else ''}
 </table>
 
 {capture}

@@ -303,8 +303,13 @@ def _bowl_low(Q, keep_mm: float) -> np.ndarray | None:
     return np.array([c[0], c[1], coef[0]])  # coef[0]: the fitted height at the middle
 
 
-def _settle_floor(placed, info) -> np.ndarray:
-    """On a noisy scan, put the floor where the skin really is. -> 4 x 4 transform (identity if clean).
+UNLOADED_CONTACT_MM = 8.0  # an unloaded foot: look this far up for the heel and the ball of the foot
+UNLOADED_MAX_TURN_DEG = 10.0
+UNLOADED_MIN_TURN_DEG = 1.0  # a clean scan whose tripod is this close to its resting floor already stands level
+
+
+def _settle_floor(placed, info, unloaded: bool = False) -> np.ndarray:
+    """Put the floor where the foot would stand: through the heel and both sides of the ball. -> 4 x 4 transform.
 
     ``rest_on_hull`` lays the scan on its three lowest points. On a noisy
     scan those are specks of noise, a little below the skin and in random
@@ -319,13 +324,22 @@ def _settle_floor(placed, info) -> np.ndarray:
     averages the noise out instead of picking its lowest speck), and the
     floor goes through the three bowls' lowest points. If a part has too
     few points, only the floor's height is corrected, from the parts there
-    are. A clean scan is left exactly as it is.
+    are. A clean, loaded scan (a foam print) is left exactly as it is.
+
+    ``unloaded`` (a sole-up scan): always, clean or not. A relaxed foot with
+    no weight on it rolls onto its outer edge, so its lowest points are the
+    outer heel and the outer ball of the foot: resting it there tilts the
+    whole sole, the inner side reading several mm high, a wedge (posting)
+    built into the insole. Standing, the heel and both sides of the ball
+    (the 1st and 5th metatarsal heads) are on the ground; the floor goes
+    through those, looked for up to ``UNLOADED_CONTACT_MM`` above the first
+    guess.
     """
     noise = info.get("surface_noise_mm", 0.0)
-    if noise <= NOISY_SCAN_MM:
+    if noise <= NOISY_SCAN_MM and not unloaded:
         return np.eye(4)
     V, N = placed.vertices, placed.vertex_normals
-    band = 3.0 * noise + 0.5
+    band = max(3.0 * noise + 0.5, UNLOADED_CONTACT_MM) if unloaded else 3.0 * noise + 0.5
     contact = (N[:, 2] < -0.7) & (V[:, 2] < band)
     if contact.sum() < 60:
         return np.eye(4)
@@ -334,11 +348,14 @@ def _settle_floor(placed, info) -> np.ndarray:
     side = np.array([-axis[1], axis[0]])
     along = (P[:, :2] - P[:, :2].mean(0)) @ axis
     lo, L = along.min(), np.ptp(along)
-    ends = [P[along < lo + 0.35 * L], P[along > lo + 0.55 * L]]
-    # which end is the heel doesn't matter here: the narrower contact area is split no further,
-    # the wider one (the ball of the foot) into its two sides
-    widths = [np.ptp(E[:, :2] @ side) if len(E) else 0.0 for E in ends]
-    heel, ball = (ends[0], ends[1]) if widths[0] <= widths[1] else (ends[1], ends[0])
+    # Which end is the heel: the narrower one (a heel is about 2/3 as wide as the ball of the foot).
+    # Measured from the heel, the heel pad is the back 35% and the ball of the foot 55-80% of the way
+    # along: not the toes, which aren't part of what a foot stands on and, unloaded, hang at any angle.
+    width_lo = np.ptp(P[along < lo + 0.3 * L][:, :2] @ side) if (along < lo + 0.3 * L).any() else 0.0
+    width_hi = np.ptp(P[along > lo + 0.7 * L][:, :2] @ side) if (along > lo + 0.7 * L).any() else 0.0
+    from_heel = (along - lo) if width_lo <= width_hi else (lo + L - along)
+    heel = P[from_heel < 0.35 * L]
+    ball = P[(from_heel > 0.55 * L) & (from_heel < 0.8 * L)]
     keep = max(1.0, 2.0 * noise)
     lows = [_bowl_low(heel, keep)]
     if len(ball):
@@ -350,12 +367,17 @@ def _settle_floor(placed, info) -> np.ndarray:
         n = np.cross(lows[1] - lows[0], lows[2] - lows[0])
         n = n / np.linalg.norm(n) if np.linalg.norm(n) > 1e-9 else np.array([0.0, 0.0, 1.0])
         n = n if n[2] > 0 else -n
-        if n[2] > np.cos(np.radians(3.0)):  # a correction of the hull's floor, not a new one
+        turn = float(np.degrees(np.arccos(np.clip(n[2], -1, 1))))
+        if unloaded and noise <= NOISY_SCAN_MM and turn < UNLOADED_MIN_TURN_DEG:
+            return np.eye(4)  # a clean scan already standing level on heel and ball: leave it exactly as it is
+        if n[2] > np.cos(np.radians(UNLOADED_MAX_TURN_DEG if unloaded else 3.0)):  # a correction, not a new floor
             R = imported._level(n)
             T = np.eye(4)
             T[:3, :3] = R
             T[2, 3] = -float(np.mean((np.array(lows) @ R.T)[:, 2]))
-            info["floor_from"] = "tripod: smooth fits under the heel and both sides of the ball of the foot"
+            info["floor_from"] = ("standing tripod: the heel and both sides of the ball of the foot (an unloaded foot "
+                                  "rolls onto its outer edge)" if unloaded else
+                                  "tripod: smooth fits under the heel and both sides of the ball of the foot")
             info["floor_corrected_deg"] = round(float(np.degrees(np.arccos(np.clip(n[2], -1, 1)))), 2)
             info["floor_lifted_mm"] = round(-float(T[2, 3]), 2)
             return T
@@ -463,6 +485,7 @@ def prepare(mesh, up: str = "y", trim_mm: float | None = LEG_TRIM_MM):
 SOLE_UP_KEEP_MM = 300.0     # keep this much above the lowest point: the foot tipped as far as 50 degrees (toes
                             # lowest, heel ~190 mm up) plus enough shin to find the heel by; the bed is ~400 away
 SOLE_UP_MAX_TIP_DEG = 50.0
+SOLE_UP_TOES_FLAT_FROM = 0.78  # share of the length from the heel: past the ball of the foot, the toes
 BED_MIN_AREA_MM2 = 20000.0  # a flat, level surface this big, well above the sole, is what the person lies on
 BED_ABOVE_SOLE_MM = 100.0   # ...at least this far above the sole (the foot itself is never that flat and level)
 BED_CLEARANCE_MM = 15.0     # cut this far short of it
@@ -530,7 +553,7 @@ def prepare_sole_up(mesh, up: str = "y", trim_mm: float | None = LEG_TRIM_MM):
         info["pieces_warning"] = "the scan had more than one large piece; the biggest was used"
     m = _denoise(m, info)
     placed, tip, T = rest_on_hull(m)
-    T = _settle_floor(placed, info) @ T
+    T = _settle_floor(placed, info, unloaded=True) @ T
     placed = m.copy()
     placed.apply_transform(T)
     track[0] = T @ track[0]
@@ -845,6 +868,11 @@ def insole_from_object_capture(mesh, foot: str, up: str = "y", params=None, kind
     if kind not in PREPARE:
         raise FootPrepError(f"kind must be one of {sorted(PREPARE)}")
     placed, info = (PREPARE[kind](mesh, up, foot=foot) if kind == "impression" else PREPARE[kind](mesh, up))
+    if kind == "sole_up":
+        # relaxed in the air the toes hang up off the floor; standing they lie flat: no fill under them
+        from dataclasses import replace
+
+        params = replace(params or insole.InsoleParams(), toes_flat_from=SOLE_UP_TOES_FLAT_FROM)
     ins = insole.from_scan(placed, foot, params)
     ins.report["prep"] = info
     ins.report["warnings"] = plausibility(info, ins.report, foot) + ins.report["warnings"]

@@ -508,3 +508,82 @@ def test_the_insole_comes_with_a_3d_preview_and_the_sheet_says_how_the_foot_was_
     sheet = Path(files["summary"]).read_text()
     assert "How the foot was captured" in sheet and "semi-weight-bearing" in sheet
     assert "Print depth, calipers" in sheet and "NOT A MEDICAL DEVICE" in sheet
+
+
+def test_lengthening_for_a_shoe_keeps_the_foot_shaped_part_and_extends_only_the_front():
+    """A shoe's insole is longer than the foot: the heel, arch and ball stay where the foot is; only the
+    flat front reaches further. Never shorter than the foot."""
+    base = insole.from_scan(synth.block_foot(37.0, "right"), "right")
+    long = insole.from_scan(synth.block_foot(37.0, "right"), "right", insole.InsoleParams(target_length_mm=275.0))
+    assert long.report["length_mm"] == pytest.approx(275.0, abs=0.6)
+    assert long.report["max_fill_mm"] == base.report["max_fill_mm"]
+    for x, y in [(30, 0), (110, 25), (150, 0)]:  # heel, arch, ball: the same height
+        assert _top(long, x, y) == pytest.approx(_top(base, x, y), abs=0.05)
+    assert any("lengthened to 275 mm" in w for w in long.report["warnings"])
+    with pytest.raises(insole.InsoleError):
+        insole.from_scan(synth.block_foot(37.0, "right"), "right", insole.InsoleParams(target_length_mm=200.0))
+
+
+def test_the_bed_check_uses_the_insoles_own_outline():
+    """A foot-shaped outline narrow at both ends fits a square bed's diagonal far better than a rectangle
+    of the same length: an oval 270 x 106 mm fits a 256 mm bed turned about 45 degrees; a 270 x 250
+    slab doesn't fit at all."""
+    t = np.linspace(0, 2 * np.pi, 400, endpoint=False)
+    oval = np.c_[135 * np.cos(t), 53 * np.sin(t)]
+    fit = insole.bed_fit_shape(oval, 256.0)
+    assert fit["fits"] and 40 <= fit["angle_deg"] <= 50
+    assert insole.bed_fit_shape(np.c_[[0, 270, 270, 0], [0, 0, 250, 250]], 256.0)["fits"] is False
+    small = insole.bed_fit_shape(oval * 0.5, 256.0)
+    assert small["how"] == "straight" and small["angle_deg"] == 0.0
+
+
+def _ball_wedge(placed, foot="right"):
+    """Inner minus outer sole height (mm) across the ball of the foot, as the generator reads the sole."""
+    import shapely
+
+    from footscan.recon import plantar
+
+    fm = insole.output_frame(plantar.run(placed, foot)["foot_mesh"], foot)
+    sil = insole.silhouette(fm)
+    x0, y0, x1, y1 = sil.bounds
+    xs, ys = np.arange(x0, x1, 1.0), np.arange(y0, y1, 1.0)
+    X, Y = np.meshgrid(xs, ys)
+    inside = shapely.contains_xy(sil.buffer(-8), X, Y)
+    H, S = insole.sole_heights(fm, xs, ys, inside)
+    ball = inside & (X > x0 + 0.62 * (x1 - x0)) & (X < x0 + 0.72 * (x1 - x0)) & (S == 1)
+    mid = np.median(Y[ball])
+    return float(np.median(H[ball & (Y > mid)]) - np.median(H[ball & (Y <= mid)]))
+
+
+def test_an_unloaded_foot_with_its_forefoot_turned_in_gets_no_wedge(monkeypatch):
+    """Relaxed with no weight on it, the forefoot turns in (its inner side up), so the scan's lowest
+    points are the outer heel and the outer ball: resting it there builds a wedge (posting) into the
+    insole. The floor goes through the standing tripod (the heel and both sides of the ball): the
+    wedge goes; the toes, hanging up in the air, get no fill."""
+    import trimesh
+
+    from footscan.recon import foot_prep
+
+    m = synth.refined(synth.shaped_foot("right", leg=True))
+    # turn the forefoot in as one block (forefoot varus): the turn builds across the midfoot
+    # (x 110-140) and holds at 5 degrees under the ball and the toes, its inner side (+y) up
+    V = m.vertices.copy()
+    a = np.radians(5.0) * np.clip((V[:, 0] - 110.0) / 30.0, 0, 1)
+    dy, dz = V[:, 1] - 45.0, V[:, 2]
+    V[:, 1], V[:, 2] = 45.0 + dy * np.cos(a) - dz * np.sin(a), dy * np.sin(a) + dz * np.cos(a)
+    m = trimesh.Trimesh(V, m.faces, process=False)
+    m.apply_transform(trimesh.transformations.rotation_matrix(np.radians(25), [0, 1, 0], [0, 45, 0]))
+    m.apply_transform(np.diag([1.0, -1, -1, 1]))
+    scan = _as_object_capture(m)
+
+    ins, placed = foot_prep.insole_from_object_capture(scan, "right", kind="sole_up")
+    p = ins.report["prep"]
+    assert p["floor_from"].startswith("standing tripod") and p["floor_corrected_deg"] > 1.0
+    assert ins.params.toes_flat_from == foot_prep.SOLE_UP_TOES_FLAT_FROM
+    with_tripod = _ball_wedge(placed)
+
+    monkeypatch.setattr(foot_prep, "_settle_floor", lambda placed, info, unloaded=False: np.eye(4))
+    _, resting = foot_prep.insole_from_object_capture(scan, "right", kind="sole_up")
+    on_lowest_points = _ball_wedge(resting)
+    assert on_lowest_points > 0.6        # resting on its lowest points: a wedge across the ball
+    assert abs(with_tripod) < 0.3        # standing on heel and both sides of the ball: level

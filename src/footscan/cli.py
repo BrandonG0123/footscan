@@ -170,7 +170,9 @@ def cmd_insole(args) -> int:
 
     try:
         mesh, units, _ = to_millimetres(load_geometry(args.mesh))
-        ins = from_scan(mesh, args.foot)
+        from .insole import InsoleParams
+
+        ins = from_scan(mesh, args.foot, InsoleParams(target_length_mm=args.length) if args.length else None)
     except (InsoleError, ValueError) as err:
         print(f"{args.mesh}: {err}", file=sys.stderr)
         return 1
@@ -266,6 +268,8 @@ def main(argv=None) -> int:
     ins.add_argument("mesh", help="foot scan in the mat frame (z up, floor at z = 0): mm, cm or m")
     ins.add_argument("--foot", choices=["left", "right"], required=True)
     ins.add_argument("-o", "--output", required=True, help="folder for the files")
+    ins.add_argument("--length", type=float, help="the shoe's insole length, mm: the front is lengthened to it "
+                                                   "(the shape under the heel, arch and ball unchanged)")
     ins.set_defaults(func=cmd_insole)
 
     ex = sub.add_parser("export-measures", help="landmark picks of research captures -> repeatability CSV")

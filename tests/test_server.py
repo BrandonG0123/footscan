@@ -832,3 +832,19 @@ def test_a_failed_save_counts_as_a_failed_build(servers, monkeypatch):
     assert "No space left" in r["error"]
     assert call(f"{op}/api/captures/{cid}/insole/insole.3mf")[0] == 409
     assert not [p for p in (data / "captures" / cid).iterdir() if p.name.startswith("insole")]
+
+
+def test_make_insole_can_lengthen_to_a_shoe(servers):
+    """POST {length_mm}: the insole reaches the shoe's length; nonsense lengths are refused."""
+    op, _, _ = servers
+    cid = body(call(f"{op}/api/captures", "POST", {"condition": "swb", "foot": "right", "session": "LIDAR",
+                                                    "load_kg": 30, "method": "imported_mesh"}))["id"]
+    assert call(f"{op}/api/captures/{cid}/mesh?ext=obj&up=y", "PUT", _object_capture_foot("right"),
+                {"Content-Type": "application/octet-stream"})[0] == 200
+    st, raw, _ = call(f"{op}/api/captures/{cid}/insole", "POST", {"length_mm": 275})
+    assert st == 200, raw
+    r = json.loads(raw)
+    assert r["length_mm"] == pytest.approx(275, abs=0.6) and r["shoe_length_mm"] == 275
+    assert any("lengthened to 275 mm" in w for w in r["warnings"])
+    assert call(f"{op}/api/captures/{cid}/insole", "POST", {"length_mm": 9})[0] == 400
+    assert call(f"{op}/api/captures/{cid}/insole", "POST", {"length_mm": "nine"})[0] == 400

@@ -593,12 +593,18 @@ def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check
                     "Content-Disposition": f'attachment; filename="{d.name}-{name}"'} if not name.endswith(".html") else None)
             if method == "POST" and not rest:
                 # One build per capture at a time (two studio tabs): the second waits for the first.
+                raw = self.read_body(MAX_JSON_BYTES) if int(self.headers.get("Content-Length") or 0) else b""
+                try:
+                    opts = json.loads(raw) if raw.strip() else {}
+                except json.JSONDecodeError:
+                    raise BadRequest("expected a JSON object") from None
+                length = parse_shoe_length(opts.get("length_mm") if isinstance(opts, dict) else None)
                 with insole_locks.setdefault(d.name, threading.Lock()):
                     meta = read_json(d / "capture.json")
                     foot = meta.get("foot")
                     if foot not in FEET:
                         raise BadRequest("an insole needs a foot capture (left or right)")
-                    result = make_insole(d, meta)
+                    result = make_insole(d, meta, length_mm=length)
                     if "error" in result:  # a failed attempt leaves nothing printable behind
                         shutil.rmtree(d / "insole", ignore_errors=True)
                     meta = read_json(d / "capture.json")  # re-read: don't undo other changes made meanwhile
@@ -1052,9 +1058,27 @@ def insole_downloadable(folder: Path, meta: dict) -> bool:
     return bool(ins) and "error" not in ins and current is not None and ins.get("source") == current
 
 
-def make_insole(folder: Path, meta: dict) -> dict:
+def parse_shoe_length(value) -> float | None:
+    """The shoe's insole length for Make insole (mm), or None for the foot's own length."""
+    if value in (None, ""):
+        return None
+    try:
+        length = float(value)
+    except (TypeError, ValueError):
+        raise BadRequest("length_mm must be a number (mm)") from None
+    if not SHOE_LENGTH_MM[0] <= length <= SHOE_LENGTH_MM[1]:
+        raise BadRequest(f"length_mm must be between {SHOE_LENGTH_MM[0]:.0f} and {SHOE_LENGTH_MM[1]:.0f} mm")
+    return length
+
+
+SHOE_LENGTH_MM = (150.0, 360.0)
+
+
+def make_insole(folder: Path, meta: dict, length_mm: float | None = None) -> dict:
     """First-fit insole for a foot capture: an imported model (iPhone app) or a footscan reconstruction.
 
+    ``length_mm``: a shoe's insole length: the outline is lengthened to it at the front only (the
+    shape under the heel, arch and ball unchanged); never shorter than the foot.
     Files go to <capture>/insole/. Returns a short report (or {"error": ...}).
     """
     import shutil
@@ -1065,14 +1089,16 @@ def make_insole(folder: Path, meta: dict) -> dict:
 
     foot = meta["foot"]
     stamp = source_stamp(insole_source(folder, meta))
+    params = insole_mod.InsoleParams(target_length_mm=length_mm) if length_mm is not None else None
     try:
         if meta.get("method") == "imported_mesh" and (folder / "mesh.ply").is_file():
             up = (meta.get("mesh") or {}).get("up", "y")
             kind = meta.get("scan_kind") or "foot"
-            ins, _ = foot_prep.insole_from_object_capture(load_geometry(folder / "mesh.ply"), foot, up=up, kind=kind)
+            ins, _ = foot_prep.insole_from_object_capture(load_geometry(folder / "mesh.ply"), foot, up=up, kind=kind,
+                                                          params=params)
             source = f"{KIND_LABELS[kind]}, imported model ({(meta.get('notes') or 'scanning app')[:80]})"
         elif (folder / "recon" / "mesh.ply").is_file():
-            ins = insole_mod.from_scan(load_geometry(folder / "recon" / "mesh.ply"), foot)
+            ins = insole_mod.from_scan(load_geometry(folder / "recon" / "mesh.ply"), foot, params)
             source = "footscan photo reconstruction"
         else:
             return dict(error="this capture has no 3D model yet: build it (3D model) or import one first")
@@ -1099,7 +1125,7 @@ def make_insole(folder: Path, meta: dict) -> dict:
     r = ins.report
     return dict(made=now_iso(), foot=foot, length_mm=r["length_mm"], width_mm=r["width_mm"], height_mm=r["height_mm"],
                 max_fill_mm=r["max_fill_mm"], sole=r["sole"], bed=r["bed_fit"], warnings=r["warnings"],
-                files=sorted(INSOLE_FILES), source=stamp)
+                files=sorted(INSOLE_FILES), source=stamp, shoe_length_mm=length_mm)
 
 
 def score_imported(folder: Path, up: str) -> dict:
