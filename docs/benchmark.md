@@ -98,6 +98,19 @@ Codex reviews of those fixes found more, each now fixed and tested:
 - If the exact outline can't be made, the fallback is the filled convex
   outline (it was able to collapse to a fragment), and the sheet says so.
 
+## The part not measured yet: the capture
+
+The processing is not the weak link; the capture may be. The closest
+published check of Apple's Object Capture itself (Photocatch, on a Mac,
+from a DSLR camera on a turntable, 11 stone hand axes, against calipers;
+PLOS ONE 2024, [link](https://journals.plos.org/plosone/article?id=10.1371%2Fjournal.pone.0314560))
+found the size depends on what sets the scale: 1.9 mm out in length when
+scaled from a 2.8 mm stamp on the object, 0.23 mm (length) and 0.47 mm
+(width) when scaled from the object's whole length. No surface deviation
+was reported, and it wasn't a phone. With the app, the scale comes from the
+iPhone's LiDAR; how right that is for a foot-sized object is exactly what
+the calibration object measures.
+
 ## Measuring it end to end (needs real objects)
 
 To compare with the table at the top on equal terms:
