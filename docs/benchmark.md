@@ -82,6 +82,22 @@ The benchmark found real problems before any real foot did:
   on clean curved shapes, about 0.7 x the true noise for fine speckle,
   0.5 x for coarse (bumps 4 mm across), 1.0 x for point jitter.
 
+Codex reviews of those fixes found more, each now fixed and tested:
+
+- A bed 200-300 mm under a sole-up scan (a short leg, a knee bent past a
+  right angle) survived the taller cut and, being bigger, was taken for
+  the foot. The bed is now found (the nearest big level surface well above
+  the turned-over sole) and cut short of.
+- Two foam blocks scanned together: one outline round both let their
+  walls and bottoms outrank the prints. Now each block is outlined on its
+  own (patches of foam top within 20 mm count as one block, so a gap in
+  the scan doesn't cut a print in half), the table is looked for only
+  outside the blocks (a deep print's flat bottom looked like a table when
+  the scan left the table out), and candidates are ranked by
+  upward-facing area, which a print's bottom has and walls don't.
+- If the exact outline can't be made, the fallback is the filled convex
+  outline (it was able to collapse to a fragment), and the sheet says so.
+
 ## Measuring it end to end (needs real objects)
 
 To compare with the table at the top on equal terms:
