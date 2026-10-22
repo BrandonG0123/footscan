@@ -297,14 +297,15 @@ def build(foot_mesh, foot: str, params: InsoleParams | None = None) -> Insole:
         w_toe = np.clip((X - (x0 + p.toes_flat_from * length)) / (0.08 * length), 0, 1)
         fill = fill * (1 - w_toe)
 
-    # 4. heel cup wall, outside the heel at the cup's height only, and never closer than the relief to
-    # any sole the scan saw (higher up, the heel's flank can bulge out over the wall)
+    # 4. heel cup wall, outside the heel at the cup's height only, and nowhere under the foot higher than
+    # the fill itself: never closer than the relief to any sole the scan saw (higher up, the heel's flank
+    # can bulge out over the wall), and flat where it saw none (unseen sole is never guessed upward)
     outside = ~in_cup
     d_out = ndimage.distance_transform_edt(outside) * GRID_MM
     ramp = np.clip(d_out / p.heel_wall_ramp_mm, 0, 1)
     ramp = ramp * ramp * (3 - 2 * ramp)  # smoothstep: a rounded rim, no sharp corner
     wall = np.where(outside, p.heel_cup_depth_mm * ramp * w_heel, 0.0)
-    wall = np.where(in_sil & (S == 1), np.minimum(wall, raw), wall)
+    wall = np.where(in_sil, np.minimum(wall, raw), wall)
 
     # 5. base, tapering toward the toes, and thinning toward the edge beyond the heel (a bevel):
     # a shoe's footbed curves up into its sides, and a square-edged insole would dig into the curve

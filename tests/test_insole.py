@@ -91,6 +91,36 @@ def test_the_heel_is_held_where_it_stands_not_where_it_bulges_higher_up():
     assert _top(ins, 32.0, lo + 2.0) <= p.base_mm + 16.0 - p.relief_mm + 0.3
 
 
+def test_a_heel_cup_outline_inside_the_foot_raises_nothing_under_the_foot(monkeypatch):
+    """Codex's case: a scan missing the heel's lower sides can give a cup-height outline well inside the foot.
+    Wherever the scan saw no sole the insole stays flat, so no wall may rise there, under the foot: here a
+    foot whose sole the scan never saw (a box with no bottom), with the cup outline forced 15 mm inside."""
+    import shapely
+    import trimesh
+
+    real = insole.silhouette
+
+    def shrunk(mesh, notes=None, height=insole.SILHOUETTE_HEIGHT_MM):
+        sil = real(mesh, notes, height)
+        return sil.buffer(-15.0) if height < insole.SILHOUETTE_HEIGHT_MM else sil
+
+    monkeypatch.setattr(insole, "silhouette", shrunk)
+    box = trimesh.creation.box([240.0, 90.0, 25.0])
+    box.apply_translation([120.0, 45.0, 12.5])
+    box = box.subdivide_to_size(3.0)
+    box.update_faces(box.triangles_center[:, 2] > 0.1)  # no bottom: the scan saw no sole
+    box.remove_unreferenced_vertices()
+    ins = insole.from_scan(box, "right")
+    p = ins.params
+    inside = real(ins.sole).buffer(-1.5)
+    pts = [(x, y) for x in np.arange(5.0, 75.0, 5.0) for y in np.arange(-60.0, 61.0, 2.5)
+           if inside.contains(shapely.Point(x, y))]
+    pts = [(x, y, t) for x, y in pts if (t := _top(ins, x, y)) is not None]  # (the heel's outline shrinks too)
+    assert len(pts) > 200
+    tops = np.array([t for _, _, t in pts])
+    assert np.abs(tops - p.base_mm).max() < 0.4, pts[int(np.argmax(np.abs(tops - p.base_mm)))]
+
+
 def test_left_is_the_mirror_of_right(right):
     left = insole.from_scan(synth.block_foot(37.0, "left"), "left")
     assert left.mesh.volume == pytest.approx(right.mesh.volume, rel=0.01)
