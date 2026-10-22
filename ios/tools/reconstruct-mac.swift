@@ -1,7 +1,11 @@
 // Rebuild a phone scan's 3D model on the Mac, in more detail than the phone can.
 //
 //   swiftc -O ios/tools/reconstruct-mac.swift -o /tmp/reconstruct-mac
-//   /tmp/reconstruct-mac <Images folder> <out.usdz> [reduced|medium|full|raw]
+//   /tmp/reconstruct-mac <Images folder> <out.usdz> [reduced|medium|full|raw] [Checkpoint folder]
+//
+// With the scan's Checkpoint folder (the phone's own session data, next to
+// Images), the Mac starts from what the phone worked out. Pass a copy: the
+// Mac writes into it.
 //
 // The phone builds the "reduced" level of detail; an Apple-silicon Mac can
 // build medium, full or raw from the same photos (they carry the LiDAR depth
@@ -17,7 +21,7 @@ func fail(_ message: String) -> Never {
 }
 
 let args = CommandLine.arguments
-guard args.count >= 3 else { fail("usage: reconstruct-mac <Images folder> <out.usdz> [reduced|medium|full|raw]") }
+guard args.count >= 3 else { fail("usage: reconstruct-mac <Images folder> <out.usdz> [reduced|medium|full|raw] [Checkpoint folder]") }
 let images = URL(fileURLWithPath: args[1], isDirectory: true)
 let out = URL(fileURLWithPath: args[2])
 let details: [String: PhotogrammetrySession.Request.Detail] = ["reduced": .reduced, "medium": .medium, "full": .full, "raw": .raw]
@@ -28,7 +32,12 @@ guard PhotogrammetrySession.isSupported else { fail("This Mac can't run Photogra
 let started = Date()
 let session: PhotogrammetrySession
 do {
-    session = try PhotogrammetrySession(input: images, configuration: PhotogrammetrySession.Configuration())
+    var configuration = PhotogrammetrySession.Configuration()
+    if args.count > 4 { configuration.checkpointDirectory = URL(fileURLWithPath: args[4], isDirectory: true) }
+    // FOOTSCAN_NO_MASK=1: keep everything the photos show (object masking can cut away a foot's heel where it
+    // meets the leg and the bed)
+    if ProcessInfo.processInfo.environment["FOOTSCAN_NO_MASK"] == "1" { configuration.isObjectMaskingEnabled = false }
+    session = try PhotogrammetrySession(input: images, configuration: configuration)
     try session.process(requests: [.modelFile(url: out, detail: detail)])
 } catch {
     fail("couldn't start: \(error.localizedDescription)")

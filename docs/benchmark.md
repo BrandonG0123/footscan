@@ -163,6 +163,32 @@ was reported, and it wasn't a phone. With the app, the scale comes from the
 iPhone's LiDAR; how right that is for a foot-sized object is exactly what
 the calibration object measures.
 
+### Rebuilding the phone's scan on the Mac: tried, worse
+
+The phone builds Object Capture's "reduced" detail. The same scan's 46
+photos (and, separately, its Checkpoint folder: the phone's own session
+data) were copied off the phone and rebuilt on the Mac with
+`ios/tools/reconstruct-mac.swift` (22 Oct 2026, right sole-up scan of
+21 Oct, in a sock). Width of the foot below 30 mm, at 10 / 20 / 40 / 60 /
+80% of its length from the heel, after the same preparation as Make insole:
+
+| model | vertices | widths, mm | length, mm |
+|---|---|---|---|
+| phone (reduced, on the phone) | 4,626 | 75 / 86 / 90 / 88 / 80 | 244.3 |
+| Mac, full | 12,233 | 9 / 45 / 77 / 80 / 70 | 243.3 |
+| Mac, raw | 11,785 | 19 / 42 / 58 / 75 / 67 | 242.7 |
+| Mac, reduced, with the phone's checkpoint | 11,551 | 22 / 49 / 52 / 59 / 51 | 246.9 |
+| Mac, full, with the phone's checkpoint | 11,482 | 9 / 44 / 56 / 74 / 72 | 232.1 |
+| Mac, full, object masking off | 11,270 | 18 / 28 / 34 / 43 / 52 | 215.2 |
+
+Every Mac rebuild lost most of the heel (9-22 mm wide at 10% of the length,
+against 75 mm on the phone), and the preparation then rested the
+incomplete foot 5-26 degrees off. The phone's own model is the most
+complete of the six. So more detail from the Mac isn't available from these
+photos; the phone's model stays the one insoles are made from. Whether the
+phone's model is the right *size* is a separate question: measure the foot
+(see below).
+
 ## Measuring it end to end (needs real objects)
 
 To compare with the table at the top on equal terms:
