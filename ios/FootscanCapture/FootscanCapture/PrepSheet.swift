@@ -19,10 +19,10 @@ extension Subject {
     var checklist: [(String, String, String)] {
         switch self {
         case .rightSole, .leftSole: [
-            ("bed.double.fill", "Lie face down, knee bent", "On a bed or sofa. Bend this knee so the sole faces the ceiling, and let the foot hang relaxed: don't point or pull back the toes."),
-            ("shoeprints.fill", "Bare foot, or a thin snug sock", "Nothing loose or thick. A sock with a pattern can help the scan; it adds its thickness to the shape."),
-            ("person.2.fill", "Someone else holds the phone", "They scan from above: slowly over the whole sole, then down both sides. The sole is what matters."),
-            ("figure.yoga", "Keep the foot still", "Rest your chin on your hands and breathe slowly. If the foot sways, the scan blurs."),
+            ("bed.double.fill", "Lie face down", "On a bed or sofa, chin on your hands."),
+            ("arrow.up", "Bend this knee, sole up", "Lower leg straight up, sole to the ceiling. Let the foot go floppy: don't point it or pull the toes back."),
+            ("shoeprints.fill", "Bare foot or a thin sock", "Nothing loose or thick."),
+            ("person.2.fill", "A helper scans", "They circle the foot slowly, phone pointing down at the sole, until the ring is full. You keep still."),
         ]
         case .rightPrint, .leftPrint: [
             ("shippingbox.fill", "A foam impression box", "Sold for orthotic casting. One block per foot; a clinician or athletic trainer may have them."),
@@ -74,6 +74,10 @@ struct PrepSheet: View {
                         }
                     }
                     .padding(.bottom, 4)
+                    if subject.scanKind == "sole_up" {
+                        SoleScanAnimation(left: subject.isLeft)
+                            .padding(.bottom, 6)
+                    }
                     ForEach(Array(subject.checklist.enumerated()), id: \.offset) { i, item in
                         row(i, item)
                             .modifier(StaggeredAppear(index: i))

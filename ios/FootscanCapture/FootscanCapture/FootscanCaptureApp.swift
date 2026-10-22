@@ -16,11 +16,25 @@ struct FootscanCaptureApp: App {
 
     var body: some Scene {
         WindowGroup {
-            RootView()
-                .environment(studio)
-                .environment(settings)
-                .environment(library)
-                .tint(.fsBrand)
+            #if DEBUG
+            // Development only: `-previewPrep right-sole` (a launch argument) opens that kind's get-ready
+            // sheet straight away, so it can be checked on a simulator, which can't otherwise reach it.
+            if let raw = UserDefaults.standard.string(forKey: "previewPrep"), let subject = Subject(rawValue: raw) {
+                PrepSheet(subject: subject, mustTick: true) {}
+            } else {
+                root
+            }
+            #else
+            root
+            #endif
         }
+    }
+
+    private var root: some View {
+        RootView()
+            .environment(studio)
+            .environment(settings)
+            .environment(library)
+            .tint(.fsBrand)
     }
 }
