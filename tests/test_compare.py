@@ -21,6 +21,16 @@ def _sole_up(foot="right", tip=25.0, yaw=63.0, noise=0.0, seed=0, arch_scale=1.0
         m = trimesh.Trimesh(V, m.faces, process=False)
     if noise:
         m = synth.speckle(m, noise, seed=seed)
+    return _as_scan(m, tip, yaw)
+
+
+def _as_scan(m, tip=25.0, yaw=63.0):
+    """A foot (foot coordinates, mm) placed as a sole-up scan as the app hands it over."""
+    import trimesh
+
+    from footscan.recon import imported
+
+    m = m.copy()
     m.apply_transform(trimesh.transformations.rotation_matrix(np.radians(tip), [0, 1, 0], [0, 45, 0]))
     m.apply_transform(np.diag([1.0, -1, -1, 1]))
     T = trimesh.transformations.rotation_matrix(np.radians(yaw), [0, 0, 1])
@@ -55,3 +65,20 @@ def test_a_different_arch_is_seen_as_a_different_arch():
     r = compare.compare_scans(_sole_up(), _sole_up(arch_scale=1.3, yaw=120), "right")
     assert r["arch_difference_mm"] == pytest.approx(0.3 * synth.CURVED_ARCH_MM, abs=1.0)
     assert r["bias_mm"] > 0.3
+
+
+def test_points_near_either_scans_edge_are_left_out():
+    """b missed the toes: its edge falls inside a's sole. Only points more than EDGE_MM inside both
+    count, so the toes' end doesn't read as a difference, and the count says less was compared."""
+    from footscan.recon import compare
+
+    full = synth.curved_foot("right")
+    short = full.slice_plane([225.0, 0, 0], [-1.0, 0, 0], cap=True)  # the toes' last 25 mm missed
+    assert short.bounds[1][0] < 226
+    a, b = _as_scan(full), _as_scan(short, yaw=140)
+    r = compare.compare_scans(a, b, "right")
+    whole = compare.compare_scans(a, _as_scan(full, yaw=140), "right")
+    assert r["p95_mm"] < 0.15 and abs(r["bias_mm"]) < 0.05 and r["outline"]["mean_gap_mm"] < 0.5
+    # left out: a's sole past b's end and a band EDGE_MM deep before it (1 mm grid; the tapering toes,
+    # already short of a's own edge band, make it about 900 points; without b's band, about 700)
+    assert whole["points"] - r["points"] > 820

@@ -234,10 +234,12 @@ final class SoleScanScene: NSObject, SCNSceneRendererDelegate {
         knee.addChildNode(node(limb(0.40, 0.05), white, at: SCNVector3(0.21, 0, 0), along: .x))
         let foot = node(box(0.06, 0.24, 0.095), white, at: SCNVector3(0.43, -0.08, 0))
         knee.addChildNode(foot)
-        solePlate.geometry = box(0.006, 0.22, 0.085)
-        solePlate.geometry?.firstMaterial = red
-        solePlate.position = SCNVector3(0.462, -0.08, 0)
-        knee.addChildNode(solePlate)
+        if pose == .kneeBent {  // legs flat, the sole stays on the foot past the bed (above)
+            solePlate.geometry = box(0.006, 0.22, 0.085)
+            solePlate.geometry?.firstMaterial = red
+            solePlate.position = SCNVector3(0.462, -0.08, 0)
+            knee.addChildNode(solePlate)
+        }
 
         // the phone: red, always looking down at the sole
         phone.geometry = box(0.075, 0.15, 0.01)

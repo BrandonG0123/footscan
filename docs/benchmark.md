@@ -99,6 +99,13 @@ The test, when there's time for four scans:
 
 Until those numbers exist, both poses stay in the app, knee bent first.
 
+One limit the comparison found: a scan that misses the last 25 mm of the
+toes compares with the whole foot to 0.02 mm (p95), but one that misses
+60 mm (the toes and part of the ball) doesn't: the floor is set under the
+heel and the ball, found as a share of the foot's length, and the shorter
+foot puts the "ball" back toward the arch (1.2 mm p95, arch 1.3 mm lower).
+Scan the toes.
+
 ## What got fixed along the way
 
 The benchmark found real problems before any real foot did:

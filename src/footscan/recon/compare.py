@@ -18,7 +18,8 @@ are. Then, at every point of the sole both scans saw (more than
 - typical / p95: the median and 95th percentile of the height difference, mm
 - bias: the mean difference (b minus a), mm
 - arch: the difference between the two arch tops, after the insole's own smoothing, mm
-- outline: length and width of each, and the mean gap between the outlines once lined up, mm
+- outline: length and width of each, and the mean gap between the outlines once lined up
+  (over the closest 70% of the outline: the part both scans have), mm
 """
 
 from __future__ import annotations
@@ -27,6 +28,7 @@ import numpy as np
 
 GRID_MM = 1.0
 EDGE_MM = 6.0
+FIT_KEEP = 0.7  # share of the outline the fit uses each round (the closest)
 
 
 def sole_map(placed, foot: str):
@@ -46,8 +48,12 @@ def sole_map(placed, foot: str):
     return sil, xs, ys, H, inside & (S == 1)
 
 
-def _fit_outlines(a, b, iterations: int = 40):
-    """2-D rigid fit (turn + slide) taking outline b onto outline a. -> (2x2 rotation, shift)."""
+def _fit_outlines(a, b, iterations: int = 40, keep: float = FIT_KEEP):
+    """2-D rigid fit (turn + slide) taking outline b onto outline a. -> (2x2 rotation, shift, gap).
+
+    Trimmed: each round fits only the closest ``keep`` share of b's outline points, so a stretch
+    one scan has and the other doesn't (toes missed, a heel cut short) can't drag the fit off.
+    Both scans come prepared heel at the origin, toes along +x, so the fit starts close."""
     from scipy.spatial import cKDTree
 
     A = np.asarray(a.exterior.segmentize(1.0).coords)[:-1]
@@ -56,8 +62,9 @@ def _fit_outlines(a, b, iterations: int = 40):
     R, t = np.eye(2), np.zeros(2)
     for _ in range(iterations):
         moved = B @ R.T + t
-        _, i = tree.query(moved)
-        P, Q = moved, A[i]
+        dist, i = tree.query(moved)
+        near = dist <= np.quantile(dist, keep)
+        P, Q = moved[near], A[i[near]]
         cp, cq = P.mean(0), Q.mean(0)
         U, _, Vt = np.linalg.svd((P - cp).T @ (Q - cq))
         dR = (U @ Vt).T
@@ -65,7 +72,8 @@ def _fit_outlines(a, b, iterations: int = 40):
             Vt[-1] *= -1
             dR = (U @ Vt).T
         R, t = dR @ R, dR @ t + (cq - dR @ cp)
-    gap = float(np.mean(tree.query(B @ R.T + t)[0]))
+    dist = tree.query(B @ R.T + t)[0]
+    gap = float(np.mean(dist[dist <= np.quantile(dist, keep)]))
     return R, t, gap
 
 
@@ -88,7 +96,9 @@ def compare_prepared(placed_a, placed_b, foot: str) -> dict:
     hb = RegularGridInterpolator((yb, xb), np.where(seen_b, Hb, np.nan), bounds_error=False, fill_value=np.nan)
     Hb_on_a = hb(np.c_[Pb[:, 1], Pb[:, 0]]).reshape(Xa.shape)
 
-    interior = seen_a & shapely.contains_xy(sil_a.buffer(-EDGE_MM), Xa, Ya) & np.isfinite(Hb_on_a)
+    # more than EDGE_MM inside both soles (b's edge tested where each point of a falls in b)
+    in_b = shapely.contains_xy(sil_b.buffer(-EDGE_MM), Pb[:, 0], Pb[:, 1]).reshape(Xa.shape)
+    interior = seen_a & shapely.contains_xy(sil_a.buffer(-EDGE_MM), Xa, Ya) & in_b & np.isfinite(Hb_on_a)
     if interior.sum() < 200:
         raise ValueError("the two scans hardly overlap: are they the same foot, in the same kind of scan?")
     d = Hb_on_a[interior] - Ha[interior]
