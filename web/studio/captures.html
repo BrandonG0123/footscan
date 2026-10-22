@@ -51,7 +51,8 @@
 <script type="module">
   const $ = (id) => document.getElementById(id);
   const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
-  const KIND_BADGE = { sole_up: `<span class="badge">sole up</span>`, impression: `<span class="badge">foam print</span>` };
+  const KIND_BADGE = { sole_up: `<span class="badge">sole up</span>`, sole_hanging: `<span class="badge">legs flat</span>`,
+    impression: `<span class="badge">foam print</span>` };
   let all = [];
 
   async function load() {
@@ -124,9 +125,43 @@
                  value="${c.insole?.shoe_length_mm ?? ""}" style="width:9.5em"></span>
                <button class="btn secondary" type="button" data-insole="${esc(c.capture_id)}">${c.insole && !c.insole.error ? "Remake insole" : "Make insole"}</button>` : ""}</p>
         <div class="insole-out" id="insole-${esc(c.capture_id)}">${c.insole ? insoleHtml(c.capture_id, c.insole) : ""}</div>
+        ${compareHtml(c)}
       </div></article>`;
     }).join("");
   }
+
+  // Repeatability: compare this scan with another of the same foot (recon/compare.py)
+  function compareHtml(c) {
+    if (!c.foot || !(c.mesh || c.status === "complete")) return "";
+    const others = all.filter((o) => o.capture_id !== c.capture_id && o.foot === c.foot && (o.mesh || o.status === "complete"));
+    if (!others.length) return "";
+    return `<p class="btn-row" style="margin:8px 0 0">
+      <select data-compare-with="${esc(c.capture_id)}" aria-label="Another scan of the same foot to compare with">
+        ${others.map((o) => `<option value="${esc(o.capture_id)}">${esc(o.capture_id)}${o.scan_kind ? ` · ${esc(o.scan_kind)}` : ""}</option>`).join("")}
+      </select>
+      <button class="btn secondary" type="button" data-compare="${esc(c.capture_id)}">Compare scans</button></p>
+      <p class="hint" id="compare-${esc(c.capture_id)}" style="margin:6px 0 0"></p>`;
+  }
+
+  document.addEventListener("click", async (e) => {
+    const btn = e.target.closest("[data-compare]");
+    if (!btn) return;
+    const a = btn.dataset.compare;
+    const b = document.querySelector(`[data-compare-with="${CSS.escape(a)}"]`)?.value;
+    const out = document.getElementById(`compare-${a}`);
+    btn.disabled = true;
+    out.textContent = "Comparing the two scans…";
+    try {
+      const r = await fetch("/api/compare", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ a, b }) });
+      const res = await r.json();
+      if (!r.ok || res.error) throw new Error(res.error || r.status);
+      out.textContent = `${res.verdict} (95% within ${res.p95_mm} mm; average difference ${res.bias_mm} mm; ${res.points} points)`;
+    } catch (err) {
+      out.textContent = `Couldn't compare: ${err.message}`;
+    } finally {
+      btn.disabled = false;
+    }
+  });
 
   // First-fit insole: not a medical device; no posting; walking-only until a clinician signs the sheet.
   function insoleHtml(id, r) {

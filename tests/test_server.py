@@ -848,3 +848,21 @@ def test_make_insole_can_lengthen_to_a_shoe(servers):
     assert any("lengthened to 275 mm" in w for w in r["warnings"])
     assert call(f"{op}/api/captures/{cid}/insole", "POST", {"length_mm": 9})[0] == 400
     assert call(f"{op}/api/captures/{cid}/insole", "POST", {"length_mm": "nine"})[0] == 400
+
+
+def test_the_studio_compares_two_scans_of_the_same_foot(servers):
+    """POST /api/compare {a, b}: two imports of the same synthetic foot agree closely; studio only."""
+    op, phone, _ = servers
+    ids = []
+    for _ in range(2):
+        cid = body(call(f"{op}/api/captures", "POST", {"condition": "swb", "foot": "left", "session": "LIDAR",
+                                                        "load_kg": 30, "method": "imported_mesh"}))["id"]
+        assert call(f"{op}/api/captures/{cid}/mesh?ext=obj&up=y", "PUT", _object_capture_foot("left"),
+                    {"Content-Type": "application/octet-stream"})[0] == 200
+        ids.append(cid)
+    assert call(f"{phone}/api/compare", "POST", {"a": ids[0], "b": ids[1]})[0] == 403
+    st, raw, _ = call(f"{op}/api/compare", "POST", {"a": ids[0], "b": ids[1]})
+    assert st == 200, raw
+    r = json.loads(raw)
+    assert r["typical_mm"] < 0.1 and "agree within" in r["verdict"]
+    assert call(f"{op}/api/compare", "POST", {"a": ids[0], "b": ids[0]})[0] == 400

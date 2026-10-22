@@ -164,6 +164,18 @@ def cmd_accuracy_mesh(args) -> int:
     return 0
 
 
+def cmd_compare(args) -> int:
+    import json
+
+    from .recon import compare
+    from .recon.imported import load_geometry
+
+    r = compare.compare_scans(load_geometry(args.a), load_geometry(args.b), args.foot, args.kind, args.kind_b)
+    print(compare.verdict(r))
+    print(json.dumps(r, indent=2))
+    return 0
+
+
 def cmd_insole(args) -> int:
     from .insole import InsoleError, from_scan, write_outputs
     from .recon.imported import load_geometry, to_millimetres
@@ -271,6 +283,15 @@ def main(argv=None) -> int:
     ins.add_argument("--length", type=float, help="the shoe's insole length, mm: the front is lengthened to it "
                                                    "(the shape under the heel, arch and ball unchanged)")
     ins.set_defaults(func=cmd_insole)
+
+    cp = sub.add_parser("compare", help="how much two scans of the same foot agree (repeatability)")
+    cp.add_argument("a", help="first scan (as the iPhone app hands it over: OBJ/PLY, metres, Y up)")
+    cp.add_argument("b", help="second scan")
+    cp.add_argument("--foot", choices=["left", "right"], required=True)
+    cp.add_argument("--kind", default="sole_up", choices=["foot", "sole_up", "sole_hanging", "impression"],
+                    help="what kind of scan a is (and b, unless --kind-b)")
+    cp.add_argument("--kind-b", choices=["foot", "sole_up", "sole_hanging", "impression"])
+    cp.set_defaults(func=cmd_compare)
 
     ex = sub.add_parser("export-measures", help="landmark picks of research captures -> repeatability CSV")
     ex.add_argument("--data", default="data", help="data folder (default: data/)")

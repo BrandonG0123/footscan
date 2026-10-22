@@ -40,11 +40,15 @@ From heights to a solid
    30 mm), plus a margin (2 mm), plus a wider margin round the heel for the
    cup wall (6 mm). Corners are rounded.
 4. **Heel cup wall**: outside the silhouette, around the back third of the
-   foot, the top rises to the cup depth over 4 mm. The wall is entirely
-   outside the scanned foot, so it holds the heel without pressing into it;
-   inside, the scanned heel's own rounded underside forms the cup.
+   foot, the top rises to the cup depth over 2.5 mm (the outline allows
+   3 mm there: a shoe's heel counter is firm, so the wall stays slim). The
+   wall is entirely outside the scanned foot, so it holds the heel without
+   pressing into it; inside, the scanned heel's own rounded underside forms
+   the cup.
 5. **Base**: a flat bottom (it prints flat on the bed), 3 mm thick under
-   the foot, tapering to 2 mm at the toes.
+   the foot, tapering to 2 mm at the toes; beyond the heel it thins to
+   1.2 mm over the last 4 mm to the edge (a bevel), so it follows the
+   curve where a shoe's footbed meets its sides instead of digging in.
 6. **Solid**: the outline is extruded 1 mm, refined to 1.5 mm triangles,
    and every vertex's height is scaled by the top-surface height at its
    (x, y): z -> z * top(x, y). The bottom stays at 0, the top lands on the
@@ -81,8 +85,10 @@ class InsoleParams:
     taper_from: float = 0.6         # fraction of length where the taper starts
     margin_mm: float = 2.0          # outline beyond the foot's silhouette
     heel_cup_depth_mm: float = 12.0
-    heel_wall_margin_mm: float = 6.0
-    heel_wall_ramp_mm: float = 4.0
+    heel_wall_margin_mm: float = 3.0    # outline beyond the heel, for the cup wall: kept small, a shoe's heel counter is firm
+    heel_wall_ramp_mm: float = 2.5      # the wall reaches the cup depth this far out from the heel
+    edge_mm: float = 1.2                # beyond the heel, the base thins to this at the outline's edge...
+    edge_bevel_mm: float = 4.0          # ...over this width, so it follows a shoe's curved toe box
     heel_zone: float = 0.30         # back fraction of the foot that gets the cup wall
     max_arch_fill_mm: float = 20.0
     posting_rearfoot_deg: float = 0.0   # first fit: no posting, always
@@ -261,9 +267,14 @@ def build(foot_mesh, foot: str, params: InsoleParams | None = None) -> Insole:
     ramp = ramp * ramp * (3 - 2 * ramp)  # smoothstep: a rounded rim, no sharp corner
     wall = np.where(outside, p.heel_cup_depth_mm * ramp * w_heel, 0.0)
 
-    # 5. base, tapering toward the toes
+    # 5. base, tapering toward the toes, and thinning toward the edge beyond the heel (a bevel):
+    # a shoe's footbed curves up into its sides, and a square-edged insole would dig into the curve
     t = np.clip((X - (x0 + p.taper_from * length)) / ((1 - p.taper_from) * length), 0, 1)
     base = p.base_mm + (p.toe_base_mm - p.base_mm) * t
+    d_in = ndimage.distance_transform_edt(shapely.contains_xy(outline, X, Y)) * GRID_MM
+    b = np.clip(d_in / p.edge_bevel_mm, 0, 1)
+    bevel = p.edge_mm + (base - p.edge_mm) * b * b * (3 - 2 * b)
+    base = np.where(w_heel > 0, base, np.minimum(base, bevel))  # the heel keeps its full base under the cup wall
     top = base + np.maximum(fill, wall)
 
     # 6. the solid: extrude the outline 1 mm, refine, lift every vertex to the surface
@@ -479,6 +490,8 @@ After printing: compare it with your shoe's own insole, trim the toe end if need
 CAPTURE_KINDS = {
     "sole_up": ("Sole up: lying face down, knee bent, the sole facing the ceiling",
                 "None (non-weight-bearing, relaxed). An unloaded arch stands higher than a standing one."),
+    "sole_hanging": ("Legs flat: lying face down, legs straight, the feet just past the end of the bed, the sole facing back",
+                     "None (non-weight-bearing, relaxed). An unloaded arch stands higher than a standing one."),
     "impression": ("Foam print: the foot pressed into a foam impression box while seated, the print scanned",
                    "Partial (semi-weight-bearing, as pressed into the foam)."),
     "foot": ("Whole foot, resting on the floor, scanned from the sides",

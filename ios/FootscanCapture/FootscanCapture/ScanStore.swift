@@ -21,6 +21,8 @@ enum Subject: String, CaseIterable, Identifiable, Codable {
     // foot leaves in a foam box.
     case rightSole = "right-sole"
     case leftSole = "left-sole"
+    case rightSoleFlat = "right-sole-legs-flat"
+    case leftSoleFlat = "left-sole-legs-flat"
     case rightPrint = "right-foam-print"
     case leftPrint = "left-foam-print"
     case calibration = "calibration-object"
@@ -33,8 +35,8 @@ enum Subject: String, CaseIterable, Identifiable, Codable {
     /// "right" or "left" for anything of a foot; nil otherwise.
     var side: String? {
         switch self {
-        case .rightSole, .rightPrint, .rightFoot: "right"
-        case .leftSole, .leftPrint, .leftFoot: "left"
+        case .rightSole, .rightSoleFlat, .rightPrint, .rightFoot: "right"
+        case .leftSole, .leftSoleFlat, .leftPrint, .leftFoot: "left"
         case .calibration, .other: nil
         }
     }
@@ -49,6 +51,7 @@ enum Subject: String, CaseIterable, Identifiable, Codable {
     var scanKind: String? {
         switch self {
         case .rightSole, .leftSole: "sole_up"
+        case .rightSoleFlat, .leftSoleFlat: "sole_hanging"
         case .rightPrint, .leftPrint: "impression"
         case .rightFoot, .leftFoot: "foot"
         case .calibration, .other: nil
@@ -58,7 +61,7 @@ enum Subject: String, CaseIterable, Identifiable, Codable {
     /// Sole and foam-print scans use Apple's 3D capture (the printed mat can't go under a raised sole or a foam box).
     var needs3DCapture: Bool {
         switch self {
-        case .rightSole, .leftSole, .rightPrint, .leftPrint: true
+        case .rightSole, .leftSole, .rightSoleFlat, .leftSoleFlat, .rightPrint, .leftPrint: true
         default: false
         }
     }
@@ -68,6 +71,8 @@ enum Subject: String, CaseIterable, Identifiable, Codable {
         switch self {
         case .rightSole: "Right sole"
         case .leftSole: "Left sole"
+        case .rightSoleFlat: "Legs flat, right"
+        case .leftSoleFlat: "Legs flat, left"
         case .rightPrint: "Right foam print"
         case .leftPrint: "Left foam print"
         case .calibration: "Calibration"
@@ -81,6 +86,8 @@ enum Subject: String, CaseIterable, Identifiable, Codable {
         switch self {
         case .rightSole: "Right sole"
         case .leftSole: "Left sole"
+        case .rightSoleFlat: "Right sole, legs flat"
+        case .leftSoleFlat: "Left sole, legs flat"
         case .rightPrint: "Right foam print"
         case .leftPrint: "Left foam print"
         case .calibration: "Calibration object"
@@ -94,6 +101,7 @@ enum Subject: String, CaseIterable, Identifiable, Codable {
     var purpose: String {
         switch self {
         case .rightSole, .leftSole: "Sole up, today"
+        case .rightSoleFlat, .leftSoleFlat: "Steadier? Compare"
         case .rightPrint, .leftPrint: "Most accurate"
         case .calibration: "Check accuracy"
         case .rightFoot, .leftFoot: "Size, not sole"
@@ -105,6 +113,8 @@ enum Subject: String, CaseIterable, Identifiable, Codable {
         switch self {
         case .rightSole, .leftSole:
             "Lie face down on a bed, bend this knee so the sole faces the ceiling, and let the foot relax. Someone else scans the sole from above and round both sides."
+        case .rightSoleFlat, .leftSoleFlat:
+            "Lie face down on a bed with your legs straight and your feet just past the end, hanging relaxed. Someone else sweeps the phone round behind the foot."
         case .rightPrint, .leftPrint:
             "Press this foot straight down into a foam impression box while seated, lift it straight out, and scan the print from all round, with the box on a table."
         case .calibration:

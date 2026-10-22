@@ -118,6 +118,9 @@ private struct Controls: View {
     var part: Part
     var onCancel: () -> Void
 
+    static let legsFlatPhotos = 40
+    private var enoughPhotos: Bool { subject.scanKind == "sole_hanging" && session.numberOfShotsTaken >= Self.legsFlatPhotos }
+
     /// Where you are: 0 point at it, 1 fit the box, 2 walk round.
     private var stepIndex: Int {
         switch session.state {
@@ -214,17 +217,22 @@ private struct Controls: View {
         case .ready:
             switch subject.scanKind {
             case "sole_up": "Point the phone down at the sole, from about arm's length."
+            case "sole_hanging": "Stand behind the feet and point the phone at the sole."
             case "impression": "Point the phone at the foam box, from about arm's length."
             default: "Point the phone at it, from about arm's length."
             }
         case .detecting:
             switch subject.scanKind {
-            case "sole_up": "Drag the box's edges so it holds the foot and a hand's width of the leg, then Start."
+            case "sole_up", "sole_hanging": "Drag the box's edges so it holds the foot and a hand's width of the leg, then Start."
             case "impression": "Drag the box's edges so it holds the whole foam box, then Start."
             default: "A box appears round it. Drag the box's edges so it holds just the object, then Start."
             }
         case .capturing:
             switch (subject.scanKind, session.userCompletedScanPass) {
+            case ("sole_hanging", _):
+                enoughPhotos
+                    ? "Enough photos. Another sweep a little higher or lower makes it better; or Finish."
+                    : "Sweep slowly from the inner side, round behind the foot, to the outer side. Then again higher and lower."
             case ("sole_up", false): "Walk slowly all the way round the foot, looking down at the sole, until the ring is full. Finish unlocks then."
             case ("sole_up", true): "Lap done. One more, closer and looking straight down at the arch, makes it better. Then Finish."
             case ("impression", false): "Walk slowly all the way round, looking down into the print, until the ring is full. Finish unlocks then."
@@ -260,8 +268,12 @@ private struct Controls: View {
                 }
                 // Not a photo count: twenty photos can all be from one side. Finish waits until
                 // Object Capture says a lap went all the way round.
-                big(allSides ? "Finish" : "Go all the way round") { session.finish() }
-                    .disabled(!allSides)
+                // Legs flat: the bed is in the way, so Apple's ring can't fill all the way round; enough
+                // photos from behind (the side the sole faces) is what counts there.
+                let ready = allSides || enoughPhotos
+                big(ready ? "Finish" : subject.scanKind == "sole_hanging"
+                    ? "Keep sweeping (\(session.numberOfShotsTaken)/\(Self.legsFlatPhotos))" : "Go all the way round") { session.finish() }
+                    .disabled(!ready)
             }
         default:
             EmptyView()

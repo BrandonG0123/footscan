@@ -91,8 +91,9 @@ NON_FOOT_CONDITIONS = {"object", "calibration"}
 METHODS = {"bare_skin", "speckle_sock", "marker_dots", "foam_impression", "imported_mesh"}
 # What a foot capture shows: the foot resting on the floor (sole hidden), the sole facing the camera
 # (lying face down, knee bent), or the print a foot left in a foam box. Decides how Make insole reads it.
-SCAN_KINDS = ("foot", "sole_up", "impression")
+SCAN_KINDS = ("foot", "sole_up", "sole_hanging", "impression")
 KIND_LABELS = {"foot": "foot resting on the floor", "sole_up": "sole-up scan (unloaded)",
+               "sole_hanging": "legs-flat sole scan, feet past the end of the bed (unloaded)",
                "impression": "foam print (semi-weight-bearing)"}
 FEET = ("left", "right")
 REQUIRED_ACKS = ("not_medical_device", "clinician_review", "break_in", "photo_consent")
@@ -543,6 +544,12 @@ def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check
             if parts[:1] == ["captures"]:
                 self.require_local()
                 return self.api_captures(method, parts[1:])
+            if parts == ["compare"] and method == "POST":
+                self.require_local()
+                if self.cross_site():
+                    raise Forbidden("cross-site request")
+                body = self.json_body()
+                return self.send_json(compare_captures(captures_dir, str(body.get("a", "")), str(body.get("b", ""))))
             if parts == ["measurements.csv"] and method == "GET":
                 self.require_local()
                 return self.measurements_csv()
@@ -1126,6 +1133,50 @@ def make_insole(folder: Path, meta: dict, length_mm: float | None = None) -> dic
     return dict(made=now_iso(), foot=foot, length_mm=r["length_mm"], width_mm=r["width_mm"], height_mm=r["height_mm"],
                 max_fill_mm=r["max_fill_mm"], sole=r["sole"], bed=r["bed_fit"], warnings=r["warnings"],
                 files=sorted(INSOLE_FILES), source=stamp, shoe_length_mm=length_mm)
+
+
+def prepared_scan(folder: Path, meta: dict):
+    """A capture's 3D model prepared as Make insole prepares it (mat frame), or None if it has none."""
+    from .recon import foot_prep
+    from .recon.imported import load_geometry
+
+    if meta.get("method") == "imported_mesh" and (folder / "mesh.ply").is_file():
+        kind = meta.get("scan_kind") or "foot"
+        up = (meta.get("mesh") or {}).get("up", "y")
+        mesh = load_geometry(folder / "mesh.ply")
+        prep = foot_prep.PREPARE[kind]
+        return (prep(mesh, up, foot=meta["foot"]) if kind == "impression" else prep(mesh, up))[0]
+    if (folder / "recon" / "mesh.ply").is_file():
+        return load_geometry(folder / "recon" / "mesh.ply")  # a photo reconstruction is already on the mat
+    return None
+
+
+def compare_captures(captures_dir: Path, a: str, b: str) -> dict:
+    """How much two scans of the same foot agree (recon/compare.py). Returns the comparison or {"error": ...}."""
+    from .recon import compare
+
+    if not (ID_RE.match(a) and ID_RE.match(b)) or a == b:
+        raise BadRequest("choose two different captures")
+    metas = []
+    for cid in (a, b):
+        f = captures_dir / cid / "capture.json"
+        if not f.is_file():
+            raise FileNotFoundError
+        metas.append(read_json(f))
+    feet = {m.get("foot") for m in metas}
+    if len(feet) != 1 or not feet <= set(FEET):
+        raise BadRequest("both captures must be of the same foot")
+    try:
+        placed = [prepared_scan(captures_dir / cid, m) for cid, m in zip((a, b), metas)]
+        if any(x is None for x in placed):
+            return dict(error="both captures need a 3D model first")
+        out = compare.compare_prepared(placed[0], placed[1], metas[0]["foot"])
+    except (ValueError, KeyError) as e:
+        return dict(error=str(e))
+    except Exception as e:  # noqa: BLE001 - an unreadable model is reported, never a crash
+        return dict(error=f"couldn't compare these scans ({type(e).__name__}: {e})")
+    out.update(a=a, b=b, kinds=[m.get("scan_kind") or "foot" for m in metas], verdict=compare.verdict(out))
+    return out
 
 
 def score_imported(folder: Path, up: str) -> dict:

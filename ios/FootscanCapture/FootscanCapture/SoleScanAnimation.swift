@@ -15,34 +15,37 @@ import SceneKit
 import SceneKit.ModelIO
 import SwiftUI
 
+enum SolePose: Sendable { case kneeBent, legsFlat }
+
 struct SoleScanAnimation: View {
     /// Mirror the scene for a left foot (the bent leg is the one being scanned).
     var left = false
+    var pose: SolePose = .kneeBent
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var clock = SoleScanClock()
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            SoleScanSceneView(clock: clock, left: left, still: reduceMotion)
+            SoleScanSceneView(clock: clock, left: left, pose: pose, still: reduceMotion)
                 .frame(height: 220)
                 .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
                 .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).stroke(Color.black.opacity(0.06), lineWidth: 1))
                 .accessibilityHidden(true)
             if reduceMotion {
                 VStack(alignment: .leading, spacing: 4) {
-                    ForEach(Array(SoleScanClock.captions.enumerated()), id: \.offset) { i, c in
+                    ForEach(Array(SoleScanClock.captions(pose).enumerated()), id: \.offset) { i, c in
                         Text("\(i + 1). \(c.text)").font(.subheadline.weight(.semibold)).foregroundStyle(Color.fsInk)
                     }
                 }
             } else {
                 TimelineView(.animation(minimumInterval: 0.2)) { context in
-                    let step = clock.step(at: context.date)
+                    let step = clock.step(at: context.date, pose: pose)
                     HStack(alignment: .firstTextBaseline, spacing: 8) {
                         Text("\(step + 1)").font(.subheadline.weight(.heavy).monospacedDigit())
                             .foregroundStyle(.white)
                             .frame(width: 24, height: 24)
                             .background(Color(red: 0.89, green: 0.12, blue: 0.10), in: Circle())
-                        Text(SoleScanClock.captions[step].text)
+                        Text(SoleScanClock.captions(pose)[step].text)
                             .font(.subheadline.weight(.semibold)).foregroundStyle(Color.fsInk)
                             .contentTransition(.opacity)
                             .id(step)
@@ -51,7 +54,7 @@ struct SoleScanAnimation: View {
                     .animation(.easeInOut(duration: 0.25), value: step)
                 }
                 .accessibilityElement(children: .combine)
-                .accessibilityLabel(SoleScanClock.captions.map(\.text).joined(separator: ". "))
+                .accessibilityLabel(SoleScanClock.captions(pose).map(\.text).joined(separator: ". "))
             }
         }
     }
@@ -60,31 +63,43 @@ struct SoleScanAnimation: View {
 /// The shared clock: the scene (on SceneKit's render thread) and the captions both read it. A plain value.
 struct SoleScanClock: Sendable {
     static let period: Double = 10
-    static let captions: [(start: Double, text: String)] = [
-        (0.0, "Lie face down on a bed or sofa"),
-        (1.2, "Bend this knee: sole up to the ceiling"),
-        (3.0, "Let the foot relax and keep it still"),
-        (3.6, "Your helper circles slowly, phone pointing down at the sole"),
-        (8.6, "Ring full all the way round: tap Finish"),
-    ]
+    static func captions(_ pose: SolePose) -> [(start: Double, text: String)] {
+        switch pose {
+        case .kneeBent: [
+            (0.0, "Lie face down on a bed or sofa"),
+            (1.2, "Bend this knee: sole up to the ceiling"),
+            (3.0, "Let the foot relax and keep it still"),
+            (3.6, "Your helper circles slowly, phone pointing down at the sole"),
+            (8.6, "Ring full all the way round: tap Finish"),
+        ]
+        case .legsFlat: [
+            (0.0, "Lie face down, legs straight"),
+            (1.2, "Feet just past the end of the bed, hanging relaxed"),
+            (3.0, "Keep still: the bed holds your legs"),
+            (3.6, "Your helper sweeps from the inner side, round behind, to the outer side"),
+            (8.6, "Again a little higher and lower, then Finish"),
+        ]
+        }
+    }
     var start = Date()
 
     func t(at date: Date) -> Double {
         date.timeIntervalSince(start).truncatingRemainder(dividingBy: Self.period)
     }
 
-    func step(at date: Date) -> Int {
+    func step(at date: Date, pose: SolePose) -> Int {
         let t = t(at: date)
-        return Self.captions.lastIndex { $0.start <= t } ?? 0
+        return Self.captions(pose).lastIndex { $0.start <= t } ?? 0
     }
 }
 
 private struct SoleScanSceneView: UIViewRepresentable {
     let clock: SoleScanClock
     let left: Bool
+    let pose: SolePose
     let still: Bool
 
-    func makeCoordinator() -> SoleScanScene { SoleScanScene(clock: clock, left: left, still: still) }
+    func makeCoordinator() -> SoleScanScene { SoleScanScene(clock: clock, left: left, pose: pose, still: still) }
 
     func makeUIView(context: Context) -> SCNView {
         let view = SCNView()
@@ -118,16 +133,19 @@ final class SoleScanScene: NSObject, SCNSceneRendererDelegate {
     let camera = SCNNode()
     private let clock: SoleScanClock
     private let still: Bool
+    private let pose: SolePose
+    private let flatFoot = SCNNode()     // legs flat: the scanned foot, hanging past the bed, sole facing back
     private let knee = SCNNode()        // the bending knee: its lower leg turns about z
     private let solePlate = SCNNode()
     private let phone = SCNNode()
     private let helper = SCNNode()       // the person scanning: red, faceted, see-through (the game's figures)
     private var ring: [SCNNode] = []
-    private let footCentre = SCNVector3(0.62, 0.77, 0.09)
+    private var footCentre: SCNVector3 { pose == .kneeBent ? SCNVector3(0.62, 0.77, 0.09) : SCNVector3(0.93, 0.22, 0.09) }
 
-    init(clock: SoleScanClock, left: Bool, still: Bool) {
+    init(clock: SoleScanClock, left: Bool, pose: SolePose = .kneeBent, still: Bool) {
         self.clock = clock
         self.still = still
+        self.pose = pose
         super.init()
         build(left: left)
     }
@@ -139,8 +157,8 @@ final class SoleScanScene: NSObject, SCNSceneRendererDelegate {
     }
 
     nonisolated func apply(t: Double) {
-        // knee: bends 1.2-3.0 s, lowers again 9.2-10 s
-        let bend = ease((t - 1.2) / 1.8) * (1 - ease((t - 9.2) / 0.8))
+        // knee: bends 1.2-3.0 s, lowers again 9.2-10 s (legs flat: stays straight)
+        let bend = pose == .kneeBent ? ease((t - 1.2) / 1.8) * (1 - ease((t - 9.2) / 0.8)) : 0
         knee.eulerAngles.z = Float(bend * .pi / 2)
         // sole: lights up 3.0-3.6 s, stays lit while it's scanned, fades with the lowering
         let glow = ease((t - 3.0) / 0.6) * (1 - ease((t - 9.2) / 0.5))
@@ -149,15 +167,23 @@ final class SoleScanScene: NSObject, SCNSceneRendererDelegate {
         let lap = (t - 3.6) / 5.0
         let shown = lap > -0.08 && t < 9.0
         phone.opacity = shown ? CGFloat(min(1, (lap + 0.08) / 0.08, (9.0 - t) / 0.3)) : 0
-        let a = -.pi / 2 + 2 * .pi * min(1, max(0, lap))
-        phone.position = SCNVector3(footCentre.x + 0.30 * Float(cos(a)), footCentre.y + 0.24, footCentre.z + 0.30 * Float(sin(a)))
+        let c = footCentre
+        let a: Double
+        if pose == .kneeBent {  // all the way round, from above
+            a = -.pi / 2 + 2 * .pi * min(1, max(0, lap))
+            phone.position = SCNVector3(c.x + 0.30 * Float(cos(a)), c.y + 0.24, c.z + 0.30 * Float(sin(a)))
+            helper.position = SCNVector3(c.x + 0.55 * Float(cos(a)), c.y + 0.02, c.z + 0.55 * Float(sin(a)))
+        } else {  // half way round behind the feet (the bed is in the way), the sole facing back (+x)
+            a = .pi / 2 - .pi * min(1, max(0, lap))
+            phone.position = SCNVector3(c.x + 0.30 * Float(cos(a)), c.y + 0.06, c.z + 0.30 * Float(sin(a)))
+            helper.position = SCNVector3(c.x + 0.55 * Float(cos(a)), c.y - 0.12, c.z + 0.55 * Float(sin(a)))
+        }
         // the helper stands further out at the same angle, leaning in, facing the foot
         helper.opacity = phone.opacity
-        helper.position = SCNVector3(footCentre.x + 0.55 * Float(cos(a)), footCentre.y + 0.02, footCentre.z + 0.55 * Float(sin(a)))
         helper.eulerAngles.y = .pi / 2 - Float(a)  // its front (local -z) toward the foot
         // ring: each segment appears as the phone passes it; all go at the end
         for (i, seg) in ring.enumerated() {
-            let at = Double(i) / Double(ring.count)
+            let at = (Double(i) + 0.5) / Double(ring.count)
             seg.opacity = (lap >= at && t < 9.4) ? 1 : 0
         }
     }
@@ -180,7 +206,7 @@ final class SoleScanScene: NSObject, SCNSceneRendererDelegate {
         let red = material(Self.red, glow: true)
 
         // the bed
-        root.addChildNode(node(box(2.1, 0.24, 1.0), grey, at: SCNVector3(-0.15, 0.12, 0)))
+        root.addChildNode(node(box(2.1, 0.24, 1.0), grey, at: SCNVector3(pose == .kneeBent ? -0.15 : -0.24, 0.12, 0)))
         // the figure, face down
         root.addChildNode(node(prism(0.56, 0.18, 0.36), white, at: SCNVector3(-0.36, 0.33, 0)))        // torso
         root.addChildNode(node(ball(0.11), white, at: SCNVector3(-0.78, 0.36, 0)))                     // head
@@ -192,8 +218,17 @@ final class SoleScanScene: NSObject, SCNSceneRendererDelegate {
         root.addChildNode(node(box(0.06, 0.22, 0.09), white, at: SCNVector3(0.93, 0.21, -0.09)))        // foot, toes down
         // the leg being scanned: thigh, then the knee that bends
         root.addChildNode(node(limb(0.44, 0.065), white, at: SCNVector3(0.27, 0.32, 0.09), along: .x))
+        if pose == .legsFlat {
+            // legs flat: the same straight leg as the other, its foot hanging past the bed, sole facing back
+            root.addChildNode(node(limb(0.42, 0.05), white, at: SCNVector3(0.70, 0.30, 0.09), along: .x))
+            root.addChildNode(node(box(0.06, 0.22, 0.095), white, at: SCNVector3(0.93, 0.21, 0.09)))
+            solePlate.geometry = box(0.006, 0.20, 0.085)
+            solePlate.geometry?.firstMaterial = red
+            solePlate.position = SCNVector3(0.964, 0.21, 0.09)
+            root.addChildNode(solePlate)
+        }
         knee.position = SCNVector3(0.49, 0.31, 0.09)
-        root.addChildNode(knee)
+        if pose == .kneeBent { root.addChildNode(knee) }
         // in the knee's own frame the lower leg points +x; bent 90 degrees about z it points up.
         // The foot hangs off its end toward -y (its toes), its sole facing +x: bent, the sole faces up.
         knee.addChildNode(node(limb(0.40, 0.05), white, at: SCNVector3(0.21, 0, 0), along: .x))
@@ -231,12 +266,14 @@ final class SoleScanScene: NSObject, SCNSceneRendererDelegate {
         helper.scale = SCNVector3(0.8, 0.8, 0.8)
         root.addChildNode(helper)
 
-        // the capture ring round the foot
-        let n = 28
+        // the capture ring round the foot (legs flat: the half behind the feet)
+        let n = pose == .kneeBent ? 28 : 14
         for i in 0..<n {
-            let a = -.pi / 2 + 2 * .pi * (Double(i) + 0.5) / Double(n)
+            let f = (Double(i) + 0.5) / Double(n)
+            let a = pose == .kneeBent ? -.pi / 2 + 2 * .pi * f : .pi / 2 - .pi * f
             let seg = node(box(0.05, 0.012, 0.022), red,
-                           at: SCNVector3(footCentre.x + 0.22 * Float(cos(a)), footCentre.y - 0.02, footCentre.z + 0.22 * Float(sin(a))))
+                           at: SCNVector3(footCentre.x + 0.22 * Float(cos(a)), footCentre.y - (pose == .kneeBent ? 0.02 : 0.16),
+                                          footCentre.z + 0.22 * Float(sin(a))))
             seg.eulerAngles.y = Float(-a) + .pi / 2
             seg.opacity = 0
             root.addChildNode(seg)
@@ -263,9 +300,10 @@ final class SoleScanScene: NSObject, SCNSceneRendererDelegate {
         // camera: a three-quarter view from the side of the scanned leg, above
         camera.camera = SCNCamera()
         camera.camera?.fieldOfView = 38
-        camera.position = SCNVector3(1.05, 1.75, left ? -1.85 : 1.85)
+        camera.position = pose == .kneeBent ? SCNVector3(1.05, 1.75, left ? -1.85 : 1.85)
+                                            : SCNVector3(2.0, 1.15, left ? -1.55 : 1.55)
         let aim = SCNNode()
-        aim.position = SCNVector3(0.2, 0.55, 0)
+        aim.position = pose == .kneeBent ? SCNVector3(0.2, 0.55, 0) : SCNVector3(0.45, 0.25, 0)
         scene.rootNode.addChildNode(aim)
         camera.constraints = [SCNLookAtConstraint(target: aim)]
         scene.rootNode.addChildNode(camera)

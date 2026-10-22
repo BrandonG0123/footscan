@@ -47,8 +47,14 @@ def test_the_heel_cup_wall_is_outside_the_foot(right):
     p = right.params
     # under the heel (it rests flat): base only
     assert _top(right, 30.0, -30.0) == pytest.approx(p.base_mm, abs=0.4)
-    # just outside the heel (its edge is at |y| = 42.4 here): the wall rises to the cup depth
-    assert _top(right, 30.0, -45.5) == pytest.approx(p.base_mm + p.heel_cup_depth_mm, abs=0.5)
+    # at the outline's edge beside the heel the wall has risen to (nearly) the cup depth
+    V = right.mesh.vertices
+    at = V[np.abs(V[:, 0] - 50.0) < 1.0]  # where the block foot's heel is its full 90 mm wide
+    lo, hi = at[:, 1].min(), at[:, 1].max()
+    assert _top(right, 50.0, lo + 0.6) > p.base_mm + 0.85 * p.heel_cup_depth_mm
+    # and the outline is only the 3 mm wall margin wider than the 90 mm block heel each side: slim
+    # enough for a shoe's firm heel counter
+    assert hi - lo == pytest.approx(90.0 + 2 * p.heel_wall_margin_mm, abs=1.0)
     # no wall beside the forefoot: base (tapering) only
     assert _top(right, 200.0, -44.0) < p.base_mm + 0.5
 
@@ -242,7 +248,7 @@ def test_a_foam_print_is_found_flipped_rested_and_makes_the_right_insole(foot):
     assert r["sole"]["seen"] > 0.95 and r["sole"]["holes"] < 0.01
     assert r["max_fill_mm"] == pytest.approx(11.0, abs=0.1)
     assert (r["max_fill_at_mm"]["y"] > 0) == (foot == "right")
-    assert r["length_mm"] == pytest.approx(258.0, abs=1.0)  # 250 mm foot + 2 mm at the toe + the 6 mm heel-cup wall
+    assert r["length_mm"] == pytest.approx(255.0, abs=1.0)  # 250 mm foot + 2 mm at the toe + the 3 mm heel-cup wall
     assert r["warnings"] == []
 
 
@@ -485,8 +491,8 @@ def test_the_insole_comes_with_a_3d_preview_and_the_sheet_says_how_the_foot_was_
     calipers' reading of the print's depth."""
     from footscan.recon import foot_prep, viewer_data
 
-    ins, _ = foot_prep.insole_from_object_capture(_as_object_capture(synth.foam_print("right")), "right",
-                                                  kind="impression")
+    ins, _ = foot_prep.insole_from_object_capture(_as_object_capture(synth.foam_print("right", shape="curved")),
+                                                  "right", kind="impression")
     files = insole.write_outputs(ins, tmp_path, "insole", "test print", synthetic=True)
     pv = viewer_data.read(files["preview_insole"])
     sole = viewer_data.read(files["preview_sole"])
@@ -495,15 +501,35 @@ def test_the_insole_comes_with_a_3d_preview_and_the_sheet_says_how_the_foot_was_
     # deepest colour where the fill is highest (the arch), lightest where there's none
     z = pv["vertices"][:, 2]
     assert pv["colors"][np.argmax(z)].sum() < pv["colors"][np.argmin(z)].sum()
-    # at no lift the sole sits the relief above the insole's top, where the insole follows it
-    from scipy.spatial import cKDTree
+    # at no lift the sole sits the relief above the insole's top: straight down from the sole's underside to
+    # the insole's top, at points well inside the foot (away from walls and edges)
+    import trimesh
 
-    top = pv["vertices"][pv["vertices"][:, 2] > 3.5]
-    under = sole["vertices"][sole["vertices"][:, 2] < 25]
-    d, i = cKDTree(top[:, :2]).query(under[:, :2], distance_upper_bound=0.8)
-    ok = np.isfinite(d)
-    gap = under[ok, 2] - top[i[ok], 2]
-    assert np.median(gap) == pytest.approx(ins.params.relief_mm, abs=0.3)
+    top_mesh = trimesh.Trimesh(pv["vertices"], pv["faces"], process=False)
+    sole_mesh = trimesh.Trimesh(sole["vertices"], sole["faces"], process=False)
+    import shapely
+
+    # the whole sole from the end of the heel cup to the toes, 8 mm in from the sole's own outline (the
+    # arch, where the insole rises, is out on the inner side)
+    X, Y = np.meshgrid(np.arange(40.0, 200.0, 6.0), np.arange(-60.0, 61.0, 6.0))
+    sole_outline = shapely.MultiPoint(sole["vertices"][:, :2]).convex_hull.buffer(-8.0)
+    P = np.c_[X.ravel(), Y.ravel()][shapely.contains_xy(sole_outline, X.ravel(), Y.ravel())]
+    down, i_d, _ = top_mesh.ray.intersects_location(np.c_[P, np.full(len(P), 100.0)], np.tile([0, 0, -1.0], (len(P), 1)),
+                                                    multiple_hits=False)
+    up, i_u, _ = sole_mesh.ray.intersects_location(np.c_[P, np.full(len(P), -50.0)], np.tile([0, 0, 1.0], (len(P), 1)),
+                                                   multiple_hits=False)
+    top_z = dict(zip(i_d.tolist(), down[:, 2]))
+    pairs = [(top_z[k], z - top_z[k]) for k, z in zip(i_u.tolist(), up[:, 2]) if k in top_z]
+    assert len(pairs) > 50
+    gaps = np.array([g for _, g in pairs])
+    # (a smooth, foot-like sole: a sharp step, which no foot has, the smoothing rounds off on purpose)
+    # never more than the relief above it, never into it
+    assert gaps.max() < ins.params.relief_mm + 0.4
+    assert gaps.min() > -0.3
+    # ...and exactly the relief wherever the insole rises to meet the sole (where it rests on the floor,
+    # the insole can't go below its base, so there the sole sits right on it)
+    rising = np.array([g for top, g in pairs if top > ins.params.base_mm + 2.0])
+    assert len(rising) > 5 and np.median(rising) == pytest.approx(ins.params.relief_mm, abs=0.3)
     assert Path(files["preview_insole"]).name == "insole-preview.bin"
     sheet = Path(files["summary"]).read_text()
     assert "How the foot was captured" in sheet and "semi-weight-bearing" in sheet
@@ -587,3 +613,61 @@ def test_an_unloaded_foot_with_its_forefoot_turned_in_gets_no_wedge(monkeypatch)
     on_lowest_points = _ball_wedge(resting)
     assert on_lowest_points > 0.6        # resting on its lowest points: a wedge across the ball
     assert abs(with_tripod) < 0.3        # standing on heel and both sides of the ball: level
+
+
+def test_the_forefoot_edge_is_bevelled_for_a_shoes_toe_box(right):
+    """Beyond the heel the base thins to edge_mm at the outline over edge_bevel_mm: a square 2-3 mm edge
+    would dig into the curve where a shoe's footbed meets its sides. Inside that band, the full base."""
+    import shapely
+
+    p = right.params
+    V = right.mesh.vertices
+    edge_y = V[np.abs(V[:, 0] - 170.0) < 1.0][:, 1].min()  # the outer edge of the outline at x = 170
+    assert _top(right, 170.0, edge_y + 0.4) < p.edge_mm + 0.6
+    assert _top(right, 170.0, edge_y + p.edge_bevel_mm + 1.5) == pytest.approx(p.base_mm, abs=0.35)
+
+
+def _legs_flat_scan(foot="right", bed=True, yaw=63.0):
+    """SYNTHETIC legs-flat scan: the curved foot, face down, legs straight along the bed (toward -x), the
+    foot just past the bed's end, sole facing back (+x); the bed under the shin; as the app hands it over."""
+    import trimesh
+
+    m = synth.curved_foot(foot)
+    W = np.eye(4)
+    W[:3, :3] = np.c_[[0, 0, -1.0], [0, -1.0, 0], [-1.0, 0, 0]]  # standing -> lying: up -> -x, front -> down
+    m.apply_transform(W)
+    parts = [m]
+    if bed:
+        V = m.vertices
+        shin = V[V[:, 0] < -80]  # the leg, well up from the sole
+        top = shin[:, 2].min()
+        edge = V[:, 0][V[:, 0] < -60].max() - 20  # the bed ends a little short of the ankle
+        b = trimesh.creation.box(extents=[700, 600, 40])
+        b.apply_translation([edge - 350, shin[:, 1].mean(), top - 20 - 0.5])
+        parts.append(b)
+    return _as_object_capture(trimesh.util.concatenate(parts), yaw_deg=yaw)
+
+
+@pytest.mark.parametrize("foot,bed", [("right", True), ("left", True), ("right", False)])
+def test_a_legs_flat_scan_is_stood_up_from_the_leg_and_reads_the_arch(foot, bed):
+    """Face down, legs straight, the foot past the end of the bed (sole facing back, not up): the bed is
+    taken away, the leg's direction stands the foot up, and the sole reads as it does from a sole-up scan
+    of the same foot, the arch on the inner side, the heel found under the leg."""
+    from footscan.recon import foot_prep
+
+    ins, placed = foot_prep.insole_from_object_capture(_legs_flat_scan(foot, bed), foot, kind="sole_hanging")
+    r = ins.report
+    p = r["prep"]
+    assert p.get("bed_found", False) == bed
+    assert p["heel_from"] == "the leg stands over it"
+    # the same foot as a sole-up scan reads the same sole
+    import trimesh
+
+    up = synth.curved_foot(foot)
+    up.apply_transform(trimesh.transformations.rotation_matrix(np.radians(25), [0, 1, 0], [0, 45, 0]))
+    up.apply_transform(np.diag([1.0, -1, -1, 1]))
+    ref, _ = foot_prep.insole_from_object_capture(_as_object_capture(up), foot, kind="sole_up")
+    assert r["max_fill_mm"] == pytest.approx(ref.report["max_fill_mm"], abs=0.3)
+    assert (r["max_fill_at_mm"]["y"] > 0) == (foot == "right")
+    assert placed.vertices[:, 2].max() <= foot_prep.LEG_TRIM_MM + 1.5  # cut by triangle centres: corners poke a little above
+    assert not [w for w in r["warnings"] if "ARCH IS ON THE OUTSIDE" in w or "DOESN'T LOOK" in w]

@@ -33,17 +33,19 @@ handed over the way the iPhone app hands over a scan (metres, Y up, turned,
 maybe tilted), damaged the way phone scans are, then run through the same
 preparation as Make insole. Heights are measured above each floor (the one
 the processing found, and the true one), at every point of the sole more
-than 8 mm in from its edge, both feet, sole-up scans and foam prints.
+than 8 mm in from its edge, both feet: sole-up scans with the knee bent,
+sole-up scans lying with the legs flat (feet past the end of the bed), and
+foam prints.
 
 | | clean scans (any tip, roll, phone level off, holes, stray bits, shallow or deep print, tilted box) | noisy scans (speckle 0.3-1.0 mm, coarse speckle, jitter) |
 |---|---|---|
-| cases | 26 | 22 |
-| average height error (bias) | 0.01 mm or less | 0.18 mm or less |
-| RMS height error | 0.01 mm or less | 0.44 mm or less |
-| 95% of points within | 0.03 mm | 0.93 mm |
-| arch top | within 0.05 mm | within 0.66 mm |
-| floor tilt | 0.03 degrees or less | 0.94 degrees or less |
-| outline length | +0.4 to +0.5 mm | +0.4 to +1.9 mm |
+| cases | 32 | 26 |
+| average height error (bias) | 0.01 mm or less | 0.12 mm or less |
+| RMS height error | 0.01 mm or less | 0.46 mm or less |
+| 95% of points within | 0.03 mm | 0.97 mm |
+| arch top | within 0.05 mm | within 0.98 mm |
+| floor tilt | 0.03 degrees or less | 0.91 degrees or less |
+| outline length | +0.4 to +0.5 mm | +0.3 to +1.8 mm |
 | arch on the inner side | every case | every case |
 
 Scans rougher than 0.5 mm (as the processing reads them) get a warning to
@@ -57,6 +59,45 @@ the light, how still the foot is), and it can only be measured on real
 objects. The published figures above are end to end; these are the
 processing alone. They are not comparable until the end-to-end
 measurement below is done.
+
+## Knee bent or legs flat?
+
+Lying face down, a foot held up with the knee bent has to be held still by
+the leg's own muscles; with the legs flat on the bed and the feet just past
+its end, the bed holds the leg and the foot can relax. That should move
+less, so it may well scan better. The cost: the helper can't go all the
+way round (the bed is in the way), so the scan is a half circle under and
+behind the foot, and the processing has to find the foot's direction from
+the leg lying along the bed instead of the leg pointing up.
+
+What the synthetic benchmark says, on the same damage, in mm (p95 of the
+height error, right / left foot):
+
+| | knee bent | legs flat |
+|---|---|---|
+| clean, phone level off 4 degrees, no bed in the scan | 0.00 / 0.00 | 0.00 / 0.00 |
+| speckle 0.6 | 0.45 / 0.68 | 0.45 / 0.68 |
+| jitter 0.5 | 0.36 / 0.24 | 0.32 / 0.24 |
+
+So the processing reads either pose equally well. This can't say which pose
+gives the better *scan*: a computer-made foot doesn't twitch. That is
+measured with two real scans of the same foot in the same pose, compared
+with `footscan compare` (or Compare scans in the research library): each
+scan is prepared exactly as Make insole prepares it, the two sole height
+maps are lined up flat (turn and slide only; heights and tilts are left
+as they are), and it reports how far apart they are at every point of the
+sole seen in both: typical and 95% difference, bias, arch top, outline.
+That is the same "repeat scans within ... mm" that foot-scanner makers
+publish (Volumental: 1.1 mm).
+
+The test, when there's time for four scans:
+
+1. Right foot, knee bent, twice (two separate scans, getting up between).
+2. Right foot, legs flat, twice.
+3. Compare each pair. The pose whose two scans agree more closely is the
+   one the foot holds still in; it becomes the first choice in the app.
+
+Until those numbers exist, both poses stay in the app, knee bent first.
 
 ## What got fixed along the way
 
@@ -95,6 +136,10 @@ Codex reviews of those fixes found more, each now fixed and tested:
   outside the blocks (a deep print's flat bottom looked like a table when
   the scan left the table out), and candidates are ranked by
   upward-facing area, which a print's bottom has and walls don't.
+- Legs flat, jittery scan: specks of foot happened to be level enough to
+  count as bed, and the "bed" outline then reached under the foot and cut
+  part of it away (length out by 160 mm). The bed is now only the largest
+  single connected level patch.
 - If the exact outline can't be made, the fallback is the filled convex
   outline (it was able to collapse to a fragment), and the sheet says so.
 

@@ -122,6 +122,25 @@ def sole_up_case(foot, rng, tip=25.0, roll=0.0, yaw=63.0, gravity_tilt=0.0, bed=
     return m, np.linalg.inv(S @ P), lambda x, y: synth.curved_sole(x, y, foot), 0.0
 
 
+def legs_flat_case(foot, rng, yaw=63.0, gravity_tilt=0.0, bed=True, **dmg):
+    """Face down, legs straight, the foot just past the end of the bed: the sole faces back."""
+    import trimesh
+
+    m = damage(synth.curved_foot(foot), rng, **dmg)
+    W = np.eye(4)
+    W[:3, :3] = np.c_[[0, 0, -1.0], [0, -1.0, 0], [-1.0, 0, 0]]  # standing -> lying: up -> -x, front -> down
+    m.apply_transform(W)
+    if bed:
+        V = m.vertices
+        shin = V[V[:, 0] < -80]
+        b = trimesh.creation.box(extents=[700, 600, 40])
+        b.apply_translation([V[:, 0][V[:, 0] < -60].max() - 20 - 350, shin[:, 1].mean(), shin[:, 2].min() - 20.5])
+        m = trimesh.util.concatenate([m, b])
+    S = to_object_capture(yaw, gravity_tilt)
+    m.apply_transform(S)
+    return m, np.linalg.inv(S @ W), lambda x, y: synth.curved_sole(x, y, foot), 0.0
+
+
 def print_case(foot, rng, depth=30.0, yaw=63.0, gravity_tilt=0.0, **dmg):
     """The foot pressed ``depth`` mm into a foam block on a table, scanned from all round."""
     m = damage(synth.refined(synth.foam_print(foot, depth=depth, shape="curved"), 3.0), rng, **dmg)
@@ -147,6 +166,11 @@ CASES = [
     ("holes x6", "sole_up", sole_up_case, dict(holes=6)),
     ("stray bits", "sole_up", sole_up_case, dict(junk=6)),
     ("speckle 0.6 + holes", "sole_up", sole_up_case, dict(noise=0.6, holes=6)),
+    ("clean", "sole_hanging", legs_flat_case, {}),
+    ("no bed in the scan", "sole_hanging", legs_flat_case, dict(bed=False)),
+    ("phone level off 4", "sole_hanging", legs_flat_case, dict(gravity_tilt=4.0)),
+    ("speckle 0.6", "sole_hanging", legs_flat_case, dict(noise=0.6)),
+    ("jitter 0.5", "sole_hanging", legs_flat_case, dict(jitter=0.5)),
     ("clean", "impression", print_case, {}),
     ("shallow 18", "impression", print_case, dict(depth=18.0)),
     ("deep 45", "impression", print_case, dict(depth=45.0)),

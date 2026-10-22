@@ -547,7 +547,18 @@ def prepare_sole_up(mesh, up: str = "y", trim_mm: float | None = LEG_TRIM_MM):
         info["bed_found_mm"] = round(bed, 1)
     m.update_faces(m.triangles_center[:, 2] < keep)
     m.remove_unreferenced_vertices()
-    m = _densify(m, info)  # after the cut: the bed and the rest of the leg needn't be split up
+    return _finish_unloaded(m, info, track, trim_mm)
+
+
+def _finish_unloaded(m, info, track, trim_mm):
+    """An unloaded foot already turned sole-down, leg up: the rest of a sole scan's preparation.
+
+    Split into 2 mm triangles (after any cuts: what's cut needn't be), keep
+    the biggest piece, take out scan speckle, rest it on its lowest points,
+    then stand it on the tripod (heel and both sides of the ball), turn the
+    toes to +y, centre it and trim the leg.
+    """
+    m = _densify(m, info)
     m, other = _largest_piece(m)
     if other > 0.2:
         info["pieces_warning"] = "the scan had more than one large piece; the biggest was used"
@@ -559,6 +570,111 @@ def prepare_sole_up(mesh, up: str = "y", trim_mm: float | None = LEG_TRIM_MM):
     track[0] = T @ track[0]
     info["tipped_to_rest_deg"] = round(tip, 1)
     return _orient_and_trim(placed, info, trim_mm, track=track), info
+
+
+# Legs flat: lying face down, legs straight, the feet just past the end of the bed, soles facing back.
+def _bed_under(m):
+    """The bed the legs lie on, in a Z-up scan: (height of its top, outline of its top) or None.
+
+    The biggest flat, level, upward-facing surface (at least ``BED_MIN_AREA_MM2``)."""
+    import shapely
+    from shapely.geometry import MultiPoint
+
+    level = m.face_normals[:, 2] > 0.95
+    if not level.any():
+        return None
+    z, a = m.triangles_center[level, 2], m.area_faces[level]
+    edges = np.arange(z.min() - 2.5, z.max() + 7.5, 5.0)
+    hist, edges = np.histogram(z, bins=edges, weights=a)
+    hist = hist + np.r_[hist[1:], 0]
+    i = int(np.argmax(hist))
+    if hist[i] < BED_MIN_AREA_MM2:
+        return None
+    on = level & (np.abs(m.triangles_center[:, 2] - (edges[i] + 5.0)) < 6.0)
+    zb = float(np.average(m.triangles_center[on, 2], weights=m.area_faces[on]))
+    on = level & (np.abs(m.triangles_center[:, 2] - zb) < 2.5)
+    # The bed top is one connected flat surface: take only the biggest connected patch, or flat
+    # specks of the foot at the same height (a rough scan has some) would stretch its outline over
+    # the foot, and the foot hanging below that height would be cut away as "under the bed".
+    top = m.copy()
+    top.update_faces(on)
+    top.remove_unreferenced_vertices()
+    pieces = _pieces(top)
+    if not pieces or pieces[0][1] < BED_MIN_AREA_MM2:
+        return None
+    mask = pieces[0][0]
+    # from the triangles' corners: a coarse model's bed top may be two big triangles
+    outline = shapely.convex_hull(MultiPoint(top.vertices[np.unique(top.faces[mask])][:, :2]))
+    return zb, outline
+
+
+def prepare_sole_hanging(mesh, up: str = "y", trim_mm: float | None = LEG_TRIM_MM):
+    """Legs-flat sole scan (face down, legs straight, the feet just past the end of the bed) -> (mat frame, decisions).
+
+    Here the sole faces back, not up, so which way is "up" for the foot comes
+    from the lower leg lying along the bed, not from gravity alone:
+    1. The bed: the biggest level surface. It and anything under it is
+       removed, but only within its outline (toes hanging past the edge can
+       dip below the mattress top, and are kept).
+    2. The leg's direction: along the biggest piece's length, level. The knee
+       is toward the bed; without a bed in the scan, away from the foot,
+       which hangs lower than the shin.
+    3. Turned so that direction points up and the front of the shin (facing
+       the bed, so down) faces forward: the foot as if standing, unloaded.
+    4. As a sole-up scan from there: rested, stood on the tripod, toes to
+       +y, the leg trimmed.
+    """
+    import shapely
+
+    mm, units, factor = imported.to_millimetres(mesh)
+    track = [np.diag([factor, factor, factor, 1.0])]
+    m = mm.copy()
+    _move(m, _up_turn(up), track)
+    info = dict(kind="sole_hanging", units_detected=units, up_axis=up,
+                floor="legs-flat scan: turned so the leg stands up, then stood on the heel and the ball of the foot")
+    bed = _bed_under(m)
+    bed_centre = None
+    if bed is not None:
+        zb, outline = bed
+        C = m.triangles_center
+        under = (C[:, 2] < zb + 2.0) & shapely.contains_xy(outline.buffer(3.0), C[:, 0], C[:, 1])
+        m.update_faces(~under)
+        m.remove_unreferenced_vertices()
+        bed_centre = np.array(outline.centroid.coords[0])
+        info["bed_found"] = True
+    m, _ = _largest_piece(m)
+    if len(m.faces) < 100:
+        raise FootPrepError("almost nothing left once the bed is taken away: is the foot in the scan?")
+
+    # 2. the leg's direction (level): the piece's long axis seen from above
+    V = np.asarray(m.vertices)
+    xy = V[:, :2] - V[:, :2].mean(0)
+    axis = np.linalg.eigh(np.cov(xy.T))[1][:, 1]
+    along = xy @ axis
+    if bed_centre is not None:
+        knee_way = float((bed_centre - V[:, :2].mean(0)) @ axis)
+        info["leg_from"] = "toward the bed"
+    else:
+        lo, hi = along < np.percentile(along, 15), along > np.percentile(along, 85)
+        knee_way = 1.0 if V[lo, 2].min() < V[hi, 2].min() else -1.0  # the foot hangs lower: knee the other way
+        info["leg_from"] = "no bed in the scan: away from the foot, which hangs lower than the shin"
+    leg = axis * (1.0 if knee_way >= 0 else -1.0)
+
+    # 3. standing frame: leg -> +z, the front of the shin (down, onto the bed) -> +x
+    c3 = np.array([leg[0], leg[1], 0.0])
+    c1 = np.array([0.0, 0.0, -1.0])
+    c2 = np.cross(c3, c1)
+    W = np.c_[c1, c2, c3]  # standing -> world
+    T = np.eye(4)
+    T[:3, :3] = W.T
+    _move(m, T, track)
+    _move(m, _shift(0, 0, -m.vertices[:, 2].min()), track)
+    m.update_faces(m.triangles_center[:, 2] < SOLE_UP_KEEP_MM)
+    m.remove_unreferenced_vertices()
+    return _finish_unloaded(m, info, track, trim_mm)
+
+
+
 
 
 # A foam print: the dent a foot leaves in a foam impression box, scanned from above.
@@ -813,7 +929,8 @@ def prepare_impression(mesh, up: str = "y", trim_mm: float | None = LEG_TRIM_MM,
     return placed, info
 
 
-PREPARE = {"foot": prepare, "sole_up": prepare_sole_up, "impression": prepare_impression}
+PREPARE = {"foot": prepare, "sole_up": prepare_sole_up, "sole_hanging": prepare_sole_hanging,
+           "impression": prepare_impression}
 
 
 def _lid(mesh, trim_mm: float):
@@ -868,7 +985,7 @@ def insole_from_object_capture(mesh, foot: str, up: str = "y", params=None, kind
     if kind not in PREPARE:
         raise FootPrepError(f"kind must be one of {sorted(PREPARE)}")
     placed, info = (PREPARE[kind](mesh, up, foot=foot) if kind == "impression" else PREPARE[kind](mesh, up))
-    if kind == "sole_up":
+    if kind in ("sole_up", "sole_hanging"):
         # relaxed in the air the toes hang up off the floor; standing they lie flat: no fill under them
         from dataclasses import replace
 
@@ -905,7 +1022,7 @@ def plausibility(info: dict, report: dict, foot: str | None = None) -> list[str]
     if kind != "foot" and report["sole"]["seen"] < 0.6:
         out.append(f"ONLY {report['sole']['seen']:.0%} OF THE SOLE WAS SCANNED: this kind of scan should show "
                    "nearly all of it. Scan again, covering the whole sole.")
-    if kind == "sole_up" and info.get("tipped_to_rest_deg", 0) > SOLE_UP_MAX_TIP_DEG:
+    if kind in ("sole_up", "sole_hanging") and info.get("tipped_to_rest_deg", 0) > SOLE_UP_MAX_TIP_DEG:
         out.append(f"the scan had to be tipped {info['tipped_to_rest_deg']:.0f} degrees to rest the sole flat: "
                    "was the sole really facing the ceiling? Check the insole's shape before printing.")
     if kind != "foot" and foot and report["max_fill_mm"] >= 3:

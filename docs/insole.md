@@ -20,6 +20,11 @@ reconstructions are; mm, cm or m are detected. It writes:
 | `print-notes.txt` | Starting points for TPU. Untested on this design (that's Phase 5). |
 | `right-insole.json` | Everything above as data. |
 
+`--length 270` lengthens the insole to a shoe's insole length (mm): only the
+flat front reaches further, the shape under the heel, arch and ball stays
+where the foot is, and it's never made shorter than the foot. In the studio
+it's the *Shoe insole length* box on the scan's card.
+
 ## From the iPhone app
 
 The insole is the shape of the bottom of the foot, so the app's first
@@ -30,6 +35,11 @@ scans are the two that show it:
   sides. Nothing presses on the foot, so the arch is as high as it is
   unloaded (the generator's 20 mm arch cap still applies). Available today,
   no equipment.
+- **Right / Left sole, legs flat**: the same, but lying with both legs flat
+  on the bed and the feet just past its end. The bed holds the leg, so the
+  foot may hold stiller; the helper sweeps a half circle under and behind
+  the foot (the bed blocks the rest), and it needs 40 photos. Which pose
+  scans better is measured, not assumed: see *Comparing two scans* below.
 - **Right / Left foam print**: press the foot into a foam impression box
   while seated, lift it out, scan the print from all round with the box on
   a table. Partly loaded, the way many orthotic labs take a foot's shape,
@@ -101,6 +111,22 @@ Checked on the phone's real shoe scan: both warnings fire (its floor
 contact is 165 x 48 mm, and its whole underside is closed), as they should
 for something that isn't a foot.
 
+## Comparing two scans
+
+```bash
+.venv/bin/footscan compare scan-1.obj scan-2.obj --foot right --kind sole_up --kind-b sole_hanging
+```
+
+(or *Compare scans* in the research library). Each scan is prepared exactly
+as Make insole prepares it; the two soles' height maps are lined up flat on
+the table (turn and slide only, heights and tilts left as they are) and
+compared at every point both scans saw, more than 6 mm in from the edge:
+typical and 95% height difference, bias, arch top and outline gap, in mm.
+Two scans of the same foot in the same pose that agree closely mean the
+foot held still; it's how to choose between the knee-bent and legs-flat
+poses, and the same repeat-scan measure foot-scanner makers publish
+([benchmark.md](benchmark.md)).
+
 ## How the shape is made
 
 The bottom of the foot is the input that matters: the insole's top surface
@@ -113,10 +139,21 @@ arch, the scan actually saw. If it saw almost none of the arch, it warns:
 scan again with a low lap aimed under the inner arch.
 
 Then: light smoothing that may only lower the surface; safety caps (20 mm
-arch fill, 12 mm heel); the outline (the foot's silhouette + 2 mm, + 6 mm
-round the heel); a heel cup wall *outside* the scanned heel, so it holds
-without pressing in; a flat 3 mm base tapering to 2 mm at the toes. Full
-detail in `src/footscan/insole.py`.
+arch fill, 12 mm heel); the outline (the foot's silhouette + 2 mm, + 3 mm
+round the heel, kept small because a shoe's heel counter is firm); a heel
+cup wall *outside* the scanned heel, rising over 2.5 mm, so it holds without
+pressing in; a flat 3 mm base tapering to 2 mm at the toes. For a sole-up or
+legs-flat scan, no fill under the toes from 78% of the length on (a relaxed
+unloaded foot curls its toes; standing, they lie flat).
+
+To slide into a shoe: beyond the heel, the base thins toward the outline's
+edge to 1.2 mm over the last 4 mm (a smooth S-curve, the distance from the
+edge measured at every grid point), so the edge tucks under a shoe's
+curving sides instead of riding up them. The heel keeps its full base.
+
+On the bed: the outline is turned in 0.5 degree steps to find the angle
+where it fits the 256 mm bed with the most room to spare, and the 3MF is
+placed at that angle. Full detail in `src/footscan/insole.py`.
 
 ## What's been checked
 
@@ -127,6 +164,9 @@ detail in `src/footscan/insole.py`.
   scan can't see gives a flat insole and a warning; posting is refused; the
   3MF is millimetres, one closed object, on the bed. Validated with the
   official 3MF library (lib3mf) in strict mode: no warnings, manifold.
-- **Not yet made from a real foot.** That needs your first foot scan.
+- **From a real foot: one so far** (a right sole-up scan, 21 Oct 2026). Made,
+  opened in Bambu Studio, not yet printed or worn. Its accuracy against the
+  real foot hasn't been measured (see benchmark.md, *Measuring it end to
+  end*).
 - Bambu Studio's command-line mode crashed on every file tried, including a
   plain cube, so the open-in-Bambu check is by hand: open the 3MF.

@@ -95,13 +95,16 @@ struct ScanList {
     }
 
     @Test func soleScansComeFirstAndTellTheStudioHowToReadThem() {
-        #expect(Array(Subject.allCases.prefix(4)) == [.rightSole, .leftSole, .rightPrint, .leftPrint])
-        #expect(Subject.allCases.filter(\.needs3DCapture) == [.rightSole, .leftSole, .rightPrint, .leftPrint])
+        let soles: [Subject] = [.rightSole, .leftSole, .rightSoleFlat, .leftSoleFlat, .rightPrint, .leftPrint]
+        #expect(Array(Subject.allCases.prefix(6)) == soles)
+        #expect(Subject.allCases.filter(\.needs3DCapture) == soles)
         #expect(Subject.rightSole.scanKind == "sole_up" && Subject.leftPrint.scanKind == "impression")
+        #expect(Subject.rightSoleFlat.scanKind == "sole_hanging" && Subject.leftSoleFlat.scanKind == "sole_hanging")
+        #expect(Subject.leftSoleFlat.studioCondition == ("nwb_relaxed", "left"))
         #expect(Subject.rightFoot.scanKind == "foot" && Subject.other.scanKind == nil && Subject.calibration.scanKind == nil)
         #expect(Subject.rightSole.studioCondition == ("nwb_relaxed", "right"))
         #expect(Subject.leftPrint.studioCondition == ("swb", "left"))
-        #expect(Subject.allCases.filter(\.isLeft) == [.leftSole, .leftPrint, .leftFoot])
+        #expect(Subject.allCases.filter(\.isLeft) == [.leftSole, .leftSoleFlat, .leftPrint, .leftFoot])
     }
 
     @Test func scansSavedBeforeTheNewKindsStillRead() throws {

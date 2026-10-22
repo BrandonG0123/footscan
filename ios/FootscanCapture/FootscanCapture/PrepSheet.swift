@@ -8,6 +8,7 @@ extension Subject {
     var symbol: String {
         switch self {
         case .rightSole, .leftSole: "shoeprints.fill"
+        case .rightSoleFlat, .leftSoleFlat: "bed.double.fill"
         case .rightPrint, .leftPrint: "shippingbox.fill"
         case .calibration: "cube.fill"
         case .rightFoot, .leftFoot: "figure.seated.side.right"
@@ -23,6 +24,12 @@ extension Subject {
             ("arrow.up", "Bend this knee, sole up", "Lower leg straight up, sole to the ceiling. Let the foot go floppy: don't point it or pull the toes back."),
             ("shoeprints.fill", "Bare foot or a thin sock", "Nothing loose or thick."),
             ("person.2.fill", "A helper scans", "They circle the foot slowly, phone pointing down at the sole, until the ring is full. You keep still."),
+        ]
+        case .rightSoleFlat, .leftSoleFlat: [
+            ("bed.double.fill", "Lie face down, legs straight", "Feet just past the end of the bed: ankles at the edge, feet hanging relaxed."),
+            ("shoeprints.fill", "Bare foot or a thin sock", "Nothing loose or thick."),
+            ("person.2.fill", "A helper scans from behind", "Slowly from the inner side, round behind the foot, to the outer side. Then again a little higher, and lower."),
+            ("leaf.fill", "Stay relaxed", "Your legs rest on the bed, so the foot can stay still. Breathe slowly."),
         ]
         case .rightPrint, .leftPrint: [
             ("shippingbox.fill", "A foam impression box", "Sold for orthotic casting. One block per foot; a clinician or athletic trainer may have them."),
@@ -74,8 +81,8 @@ struct PrepSheet: View {
                         }
                     }
                     .padding(.bottom, 4)
-                    if subject.scanKind == "sole_up" {
-                        SoleScanAnimation(left: subject.isLeft)
+                    if subject.scanKind == "sole_up" || subject.scanKind == "sole_hanging" {
+                        SoleScanAnimation(left: subject.isLeft, pose: subject.scanKind == "sole_up" ? .kneeBent : .legsFlat)
                             .padding(.bottom, 6)
                     }
                     ForEach(Array(subject.checklist.enumerated()), id: \.offset) { i, item in
