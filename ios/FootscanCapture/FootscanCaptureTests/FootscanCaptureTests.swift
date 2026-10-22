@@ -97,7 +97,10 @@ struct ScanList {
     @Test func soleScansComeFirstAndTellTheStudioHowToReadThem() {
         let soles: [Subject] = [.rightSole, .leftSole, .rightSoleFlat, .leftSoleFlat, .rightPrint, .leftPrint]
         #expect(Array(Subject.allCases.prefix(6)) == soles)
-        #expect(Subject.allCases.filter(\.needs3DCapture) == soles)
+        #expect(Subject.allCases.filter(\.needs3DCapture) == soles + [.shoeInsole])
+        // the shoe's own insole: Apple's 3D capture, not a foot, its own studio condition (Make insole fits to it)
+        #expect(!Subject.shoeInsole.isFoot && Subject.shoeInsole.scanKind == nil)
+        #expect(Subject.shoeInsole.studioCondition == ("shoe_insole", nil))
         #expect(Subject.rightSole.scanKind == "sole_up" && Subject.leftPrint.scanKind == "impression")
         #expect(Subject.rightSoleFlat.scanKind == "sole_hanging" && Subject.leftSoleFlat.scanKind == "sole_hanging")
         #expect(Subject.leftSoleFlat.studioCondition == ("nwb_relaxed", "left"))

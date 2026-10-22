@@ -50,6 +50,7 @@
             <option value="fwb">Foot, standing (full weight-bearing)</option>
             <option value="nwb_relaxed">Foot, unloaded and relaxed</option>
             <option value="nwb">Foot, subtalar neutral (helper)</option>
+            <option value="shoe_insole">A shoe's own insole, lying flat (to fit the printed insole to that shoe)</option>
             <option value="object">An object (test)</option>
             <option value="calibration">The calibration object (accuracy test)</option>
           </select>
@@ -151,12 +152,13 @@
   let file = null;
 
   // "condition:kind" for the scans that show the sole (sole up, foam print); plain condition otherwise
+  const NOT_A_FOOT = new Set(["object", "calibration", "shoe_insole"]);
   const choice = () => { const [cond, kind] = $("condition").value.split(":"); return { cond, kind: kind || "foot" }; };
 
   function sync() {
     const { cond: c, kind } = choice();
-    $("foot-field").hidden = c === "object" || c === "calibration";
-    $("up-field").hidden = c !== "calibration";
+    $("foot-field").hidden = NOT_A_FOOT.has(c);
+    $("up-field").hidden = c !== "calibration" && c !== "shoe_insole";
     $("load-field").hidden = (c !== "swb" && c !== "fwb") || kind === "impression";
   }
   $("condition").addEventListener("change", sync);
@@ -259,9 +261,9 @@
       const r = await fetch("/api/captures", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          condition: cond, foot: cond === "object" || cond === "calibration" ? null : $("foot").value, session: $("session").value.trim(),
+          condition: cond, foot: NOT_A_FOOT.has(cond) ? null : $("foot").value, session: $("session").value.trim(),
           load_kg: kind === "impression" ? null : $("load").value || null, method: "imported_mesh", notes: $("notes").value,
-          ...(cond === "object" || cond === "calibration" ? {} : { scan_kind: kind }),
+          ...(NOT_A_FOOT.has(cond) ? {} : { scan_kind: kind }),
         }),
       });
       const created = await r.json();

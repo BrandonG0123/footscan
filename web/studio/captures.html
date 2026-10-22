@@ -34,6 +34,7 @@
         <option value="swb">swb</option><option value="fwb">fwb</option>
         <option value="object">object</option>
         <option value="calibration">calibration</option>
+        <option value="shoe_insole">shoe's insole</option>
       </select>
       <select id="f-foot" aria-label="Filter by foot"><option value="">Both feet</option><option value="right">Right</option><option value="left">Left</option></select>
       <a class="btn" href="/studio/capture.html">New capture</a>
@@ -97,7 +98,7 @@
       const cov = s.coverage_completeness == null ? "—" : `${Math.round(100 * s.coverage_completeness)}%`;
       return `<article class="card cap" id="${esc(c.capture_id)}">${thumb}<div>
         <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:4px">
-          <span class="badge brand">${esc(c.condition)}</span>${KIND_BADGE[c.scan_kind] ?? ""}${c.foot ? `<span class="badge">${esc(c.foot)} foot</span>` : c.condition === "calibration" ? `<span class="badge">accuracy study</span>` : `<span class="badge warn">not measurable</span>`}${status}</div>
+          <span class="badge brand">${esc(c.condition)}</span>${KIND_BADGE[c.scan_kind] ?? ""}${c.foot ? `<span class="badge">${esc(c.foot)} foot</span>` : c.condition === "calibration" ? `<span class="badge">accuracy study</span>` : c.condition === "shoe_insole" ? `<span class="badge">for Make insole: fit to this shoe</span>` : `<span class="badge warn">not measurable</span>`}${status}</div>
         <h3 class="mono">${esc(c.capture_id)}</h3>
         <dl>
           <div><dt>Session</dt><dd>${esc(c.session)}</dd></div>
@@ -120,15 +121,33 @@
           ${c.foot && (c.frame_files?.length || c.mesh)
             ? `<a class="btn secondary" href="/studio/landmarks.html?capture=${encodeURIComponent(c.capture_id)}">Landmarks</a>` : ""}
           ${c.foot && (c.frame_files?.length || c.mesh)
-            ? `<span class="shoe-len"><input type="number" inputmode="decimal" min="150" max="360" step="1"
+            ? `${shoePicker(c)}<span class="shoe-len"><input type="number" inputmode="decimal" min="150" max="360" step="1"
                  placeholder="shoe insole, mm" aria-label="Shoe insole length in mm (optional)" data-length-for="${esc(c.capture_id)}"
-                 value="${c.insole?.shoe_length_mm ?? ""}" style="width:9.5em"></span>
+                 value="${c.insole?.shoe_length_mm ?? ""}" style="width:9.5em" ${c.insole?.shoe ? "disabled" : ""}></span>
                <button class="btn secondary" type="button" data-insole="${esc(c.capture_id)}">${c.insole && !c.insole.error ? "Remake insole" : "Make insole"}</button>` : ""}</p>
         <div class="insole-out" id="insole-${esc(c.capture_id)}">${c.insole ? insoleHtml(c.capture_id, c.insole) : ""}</div>
         ${compareHtml(c)}
       </div></article>`;
     }).join("");
   }
+
+  // Fit to a shoe: the outline of a scanned shoe's insole (recon/shoe.py). Either a shoe or a length, not both.
+  function shoePicker(c) {
+    const shoes = all.filter((s) => s.condition === "shoe_insole" && s.mesh);
+    if (!shoes.length) return "";
+    const chosen = c.insole?.shoe?.capture;
+    return `<select data-shoe-for="${esc(c.capture_id)}" aria-label="Fit the insole to a shoe's insole (optional)">
+      <option value="">Outline: the foot's own</option>
+      ${shoes.map((s) => `<option value="${esc(s.capture_id)}" ${s.capture_id === chosen ? "selected" : ""}>Fit to the shoe's insole
+        scanned ${esc(s.created?.slice(0, 16).replace("T", " "))}</option>`).join("")}</select>`;
+  }
+
+  document.addEventListener("change", (e) => {
+    const sel = e.target.closest("[data-shoe-for]");
+    if (!sel) return;
+    const len = document.querySelector(`[data-length-for="${CSS.escape(sel.dataset.shoeFor)}"]`);
+    if (len) { len.disabled = !!sel.value; if (sel.value) len.value = ""; }
+  });
 
   // Repeatability: compare this scan with another of the same foot (recon/compare.py)
   function compareHtml(c) {
@@ -174,6 +193,9 @@
       <strong>First-fit insole</strong> <span class="badge">${esc(r.foot)} foot</span> <span class="badge">no posting</span>
       <p class="hint" style="margin:6px 0">${r.length_mm} × ${r.width_mm} mm, ${r.height_mm} mm tall · highest arch fill ${r.max_fill_mm} mm ·
         sole seen ${Math.round(100 * r.sole.seen)}% (arch ${Math.round(100 * r.sole.seen_under_arch)}%) · bed: ${esc(r.bed.how)}</p>
+      ${r.shoe?.fit ? `<p class="hint" style="margin:0 0 6px">Outline: the shoe's own insole (${esc(r.shoe.fit.shoe_length_mm)} mm),
+        ${esc(r.shoe.fit.room_past_toes_mm)} mm past the toes${r.shoe.fit.overhang.max_mm > 1
+          ? `; the foot is over its edge by up to ${esc(r.shoe.fit.overhang.max_mm)} mm at the ${esc(r.shoe.fit.overhang.where)}` : "; the foot is inside it all round"}.</p>` : ""}
       ${warn ? `<ul class="checklist" style="margin:6px 0;color:var(--warn)">${warn}</ul>` : ""}
       <p class="btn-row" style="margin:8px 0 0">
         <a class="btn" href="${base}insole.3mf">3MF for Bambu Studio</a>
@@ -196,9 +218,11 @@
     try {
       // optional: the shoe's insole length; the front is lengthened to it, the foot-shaped part unchanged
       const len = document.querySelector(`[data-length-for="${CSS.escape(id)}"]`)?.value.trim();
+      // or a scanned shoe's insole: its outline, fitted round the foot
+      const shoe = document.querySelector(`[data-shoe-for="${CSS.escape(id)}"]`)?.value;
       const r = await fetch(`/api/captures/${encodeURIComponent(id)}/insole`, {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(len ? { length_mm: Number(len) } : {}),
+        body: JSON.stringify(shoe ? { shoe } : len ? { length_mm: Number(len) } : {}),
       });
       const out = await r.json();
       if (!r.ok) throw new Error(out.error || r.status);

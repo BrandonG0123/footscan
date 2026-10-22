@@ -85,9 +85,10 @@ DATA_DIR = ROOT / "data"
 # to millimetres, so it never counts as foot measurement data.
 # "calibration" is the printed calibration object on the mat (Phase 2
 # accuracy study): scaled, but not a foot either.
-CONDITIONS = {"nwb", "nwb_relaxed", "swb", "fwb", "object", "calibration"}
+# "shoe_insole" is a shoe's own insole lying flat: Make insole can take its outline (recon/shoe.py).
+CONDITIONS = {"nwb", "nwb_relaxed", "swb", "fwb", "object", "calibration", "shoe_insole"}
 UNSCALED_CONDITIONS = {"object"}
-NON_FOOT_CONDITIONS = {"object", "calibration"}
+NON_FOOT_CONDITIONS = {"object", "calibration", "shoe_insole"}
 METHODS = {"bare_skin", "speckle_sock", "marker_dots", "foam_impression", "imported_mesh"}
 # What a foot capture shows: the foot resting on the floor (sole hidden), the sole facing the camera
 # (lying face down, knee bent), or the print a foot left in a foam box. Decides how Make insole reads it.
@@ -605,13 +606,18 @@ def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check
                     opts = json.loads(raw) if raw.strip() else {}
                 except json.JSONDecodeError:
                     raise BadRequest("expected a JSON object") from None
-                length = parse_shoe_length(opts.get("length_mm") if isinstance(opts, dict) else None)
+                opts = opts if isinstance(opts, dict) else {}
+                length = parse_shoe_length(opts.get("length_mm"))
+                shoe_id = opts.get("shoe") or None
+                if shoe_id is not None and length is not None:
+                    raise BadRequest("give the shoe's insole or a length, not both")
                 with insole_locks.setdefault(d.name, threading.Lock()):
                     meta = read_json(d / "capture.json")
                     foot = meta.get("foot")
                     if foot not in FEET:
                         raise BadRequest("an insole needs a foot capture (left or right)")
-                    result = make_insole(d, meta, length_mm=length)
+                    shoe = shoe_capture(captures_dir, shoe_id) if shoe_id is not None else None
+                    result = make_insole(d, meta, length_mm=length, shoe=shoe)
                     if "error" in result:  # a failed attempt leaves nothing printable behind
                         shutil.rmtree(d / "insole", ignore_errors=True)
                     meta = read_json(d / "capture.json")  # re-read: don't undo other changes made meanwhile
@@ -1052,17 +1058,30 @@ def source_stamp(path: Path | None) -> str | None:
     return f"{path.name}:{st.st_size}:{st.st_mtime_ns}"
 
 
+def _shoe_changed(folder: Path, ins: dict) -> bool:
+    """Was the shoe's-insole capture an insole was fitted to replaced, rebuilt or deleted since?"""
+    shoe = ins.get("shoe")
+    if not shoe:
+        return False
+    sf = folder.parent / shoe["capture"]
+    if not (sf / "capture.json").is_file():
+        return True
+    return source_stamp(insole_source(sf, read_json(sf / "capture.json"))) != shoe.get("source")
+
+
 def insole_is_stale(folder: Path, meta: dict) -> bool:
-    """Was this capture's model replaced or rebuilt after its insole was made?"""
+    """Was this capture's model (or the shoe's it was fitted to) replaced or rebuilt after its insole was made?"""
     ins = meta.get("insole") or {}
-    return bool(ins) and "error" not in ins and ins.get("source") != source_stamp(insole_source(folder, meta))
+    return bool(ins) and "error" not in ins and (ins.get("source") != source_stamp(insole_source(folder, meta))
+                                                 or _shoe_changed(folder, ins))
 
 
 def insole_downloadable(folder: Path, meta: dict) -> bool:
     """Only an insole from a successful build whose source model is still the current one."""
     ins = meta.get("insole") or {}
     current = source_stamp(insole_source(folder, meta))
-    return bool(ins) and "error" not in ins and current is not None and ins.get("source") == current
+    return (bool(ins) and "error" not in ins and current is not None and ins.get("source") == current
+            and not _shoe_changed(folder, ins))
 
 
 def parse_shoe_length(value) -> float | None:
@@ -1081,11 +1100,33 @@ def parse_shoe_length(value) -> float | None:
 SHOE_LENGTH_MM = (150.0, 360.0)
 
 
-def make_insole(folder: Path, meta: dict, length_mm: float | None = None) -> dict:
+def shoe_capture(captures_dir: Path, cid) -> Path:
+    """The folder of a shoe's-insole capture (condition shoe_insole, with a 3D model), for Make insole."""
+    if not isinstance(cid, str) or not ID_RE.match(cid):
+        raise BadRequest("shoe: a capture id")
+    folder = captures_dir / cid
+    if not (folder / "capture.json").is_file():
+        raise BadRequest("shoe: no such capture")
+    meta = read_json(folder / "capture.json")
+    if meta.get("condition") != "shoe_insole":
+        raise BadRequest("shoe: that capture isn't a shoe's insole")
+    if insole_source(folder, meta) is None:
+        raise BadRequest("shoe: that capture has no 3D model yet")
+    return folder
+
+
+def shoe_stamp(folder: Path) -> dict:
+    meta = read_json(folder / "capture.json")
+    return dict(capture=folder.name, source=source_stamp(insole_source(folder, meta)))
+
+
+def make_insole(folder: Path, meta: dict, length_mm: float | None = None, shoe: Path | None = None) -> dict:
     """First-fit insole for a foot capture: an imported model (iPhone app) or a footscan reconstruction.
 
     ``length_mm``: a shoe's insole length: the outline is lengthened to it at the front only (the
     shape under the heel, arch and ball unchanged); never shorter than the foot.
+    ``shoe``: a shoe's-insole capture's folder: the insole takes that insole's outline, fitted round the
+    foot (recon/shoe.py). Not with ``length_mm``.
     Files go to <capture>/insole/. Returns a short report (or {"error": ...}).
     """
     import shutil
@@ -1097,7 +1138,17 @@ def make_insole(folder: Path, meta: dict, length_mm: float | None = None) -> dic
     foot = meta["foot"]
     stamp = source_stamp(insole_source(folder, meta))
     params = insole_mod.InsoleParams(target_length_mm=length_mm) if length_mm is not None else None
+    shoe_info = None
     try:
+        if shoe is not None:
+            from .recon import shoe as shoe_mod
+
+            smeta = read_json(shoe / "capture.json")
+            shoe_info = shoe_stamp(shoe)
+            outline, read = shoe_mod.outline_from_scan(load_geometry(insole_source(shoe, smeta)),
+                                                       up=(smeta.get("mesh") or {}).get("up", "y"))
+            shoe_info.update(length_mm=read["length_mm"], width_mm=read["width_mm"])
+            params = insole_mod.InsoleParams(shoe_outline=shoe_mod.as_param(outline))
         if meta.get("method") == "imported_mesh" and (folder / "mesh.ply").is_file():
             up = (meta.get("mesh") or {}).get("up", "y")
             kind = meta.get("scan_kind") or "foot"
@@ -1109,7 +1160,7 @@ def make_insole(folder: Path, meta: dict, length_mm: float | None = None) -> dic
             source = "footscan photo reconstruction"
         else:
             return dict(error="this capture has no 3D model yet: build it (3D model) or import one first")
-    except (ValueError, insole_mod.InsoleError) as e:
+    except (ValueError, insole_mod.InsoleError) as e:  # (a ShoeError is a ValueError)
         return dict(error=str(e))
     except Exception as e:  # noqa: BLE001 - an unreadable or broken model is reported, never a crash
         return dict(error=f"couldn't make an insole from this model ({type(e).__name__}: {e})")
@@ -1132,7 +1183,8 @@ def make_insole(folder: Path, meta: dict, length_mm: float | None = None) -> dic
     r = ins.report
     return dict(made=now_iso(), foot=foot, length_mm=r["length_mm"], width_mm=r["width_mm"], height_mm=r["height_mm"],
                 max_fill_mm=r["max_fill_mm"], sole=r["sole"], bed=r["bed_fit"], warnings=r["warnings"],
-                files=sorted(INSOLE_FILES), source=stamp, shoe_length_mm=length_mm)
+                files=sorted(INSOLE_FILES), source=stamp, shoe_length_mm=length_mm,
+                shoe=dict(shoe_info, fit=r.get("shoe_fit")) if shoe_info else None)
 
 
 def prepared_scan(folder: Path, meta: dict):

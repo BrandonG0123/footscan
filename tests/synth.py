@@ -566,3 +566,55 @@ def speckle(mesh, sigma: float, grain_mm: float = 2.0, seed: int = 0):
         d = L.dot(d)
     d *= sigma / d.std()
     return trimesh.Trimesh(m.vertices + m.vertex_normals * d[:, None], m.faces, process=False)
+
+
+def shoe_plan(length: float = 270.0, ball: float = 104.0, heel: float = 66.0, foot: str = "right"):
+    """SYNTHETIC outline of a shoe's insole, mm, heel at x = 0: the rubber band round a heel circle, a
+    ball circle a little to the outer side and a big-toe circle to the inner side (as real insoles are:
+    the inner side straighter, the big toe's end the furthest forward). Inner side = +y for a right shoe."""
+    import shapely
+    from shapely.geometry import Point
+
+    s = 1.0 if foot == "right" else -1.0
+    r_toe = 0.3 * ball
+    return shapely.convex_hull(shapely.union_all([
+        Point(heel / 2, 0).buffer(heel / 2, 64),
+        Point(0.64 * length, -s * 0.04 * ball).buffer(ball / 2, 64),
+        Point(length - r_toe, s * 0.12 * ball).buffer(r_toe, 64)]))
+
+
+def shoe_insole(length: float = 270.0, ball: float = 104.0, heel: float = 66.0, foot: str = "right",
+                table: bool = True, upside_down: bool = False, yaw: float = 35.0):
+    """SYNTHETIC scan of a shoe's insole lying flat (4 mm thick, a 12 mm heel cup rim 6 mm wide round the
+    back 70 mm), optionally on a table (a 420 x 200 x 20 mm slab), as the iPhone app hands it over:
+    metres, Y up, turned ``yaw`` degrees. ``upside_down``: lying top down (seen from above, a mirror image)."""
+    import manifold3d as m3
+    import shapely
+    import trimesh
+
+    from footscan.recon import imported
+
+    plan = shoe_plan(length, ball, heel, foot)
+
+    def solid(poly, h):
+        ring = np.asarray(shapely.geometry.polygon.orient(poly, 1.0).exterior.coords)[:-1]
+        return m3.Manifold.extrude(m3.CrossSection([ring], m3.FillRule.Positive), h)
+
+    rim = plan.difference(plan.buffer(-6.0)).intersection(shapely.box(-1, -200, 70, 200))
+    body = solid(plan, 4.0) + solid(max(getattr(rim, "geoms", [rim]), key=lambda g: g.area), 12.0)
+    mm = body.to_mesh()
+    m = trimesh.Trimesh(np.asarray(mm.vert_properties)[:, :3], np.asarray(mm.tri_verts), process=True)
+    if upside_down:  # turned over about its long axis: rim down, lying on its top
+        m.apply_transform(trimesh.transformations.rotation_matrix(np.pi, [1, 0, 0]))
+        m.apply_translation([0, 0, -m.bounds[0][2]])
+    m = m.refine() if hasattr(m, "refine") else m
+    if table:
+        slab = trimesh.creation.box([420.0, 200.0, 20.0])
+        slab.apply_translation([length / 2, 0, -10.0])
+        m = trimesh.util.concatenate([m, slab])
+    T = trimesh.transformations.rotation_matrix(np.radians(yaw), [0, 0, 1])
+    T[:3, 3] = [30, -12, 0]
+    m.apply_transform(T)
+    m.apply_transform(np.block([[imported.UP["y"].T, np.zeros((3, 1))], [np.zeros((1, 3)), np.ones((1, 1))]]))
+    m.apply_scale(0.001)
+    return m

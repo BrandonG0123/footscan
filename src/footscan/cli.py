@@ -184,7 +184,17 @@ def cmd_insole(args) -> int:
         mesh, units, _ = to_millimetres(load_geometry(args.mesh))
         from .insole import InsoleParams
 
-        ins = from_scan(mesh, args.foot, InsoleParams(target_length_mm=args.length) if args.length else None)
+        params = None
+        if args.shoe:
+            from .recon import shoe
+
+            outline, shoe_info = shoe.outline_from_scan(load_geometry(args.shoe), up=args.shoe_up)
+            print(f"shoe's insole: {shoe_info['length_mm']} x {shoe_info['width_mm']} mm"
+                  f"{' (on a table)' if shoe_info['table_found'] else ''}")
+            params = InsoleParams(shoe_outline=shoe.as_param(outline), target_length_mm=args.length)
+        elif args.length:
+            params = InsoleParams(target_length_mm=args.length)
+        ins = from_scan(mesh, args.foot, params)
     except (InsoleError, ValueError) as err:
         print(f"{args.mesh}: {err}", file=sys.stderr)
         return 1
@@ -282,6 +292,9 @@ def main(argv=None) -> int:
     ins.add_argument("-o", "--output", required=True, help="folder for the files")
     ins.add_argument("--length", type=float, help="the shoe's insole length, mm: the front is lengthened to it "
                                                    "(the shape under the heel, arch and ball unchanged)")
+    ins.add_argument("--shoe", help="a scan of the shoe's own insole lying flat (as the iPhone app hands it over): "
+                                    "the insole takes its outline, fitted round the foot")
+    ins.add_argument("--shoe-up", default="y", choices=["y", "z"], help="the shoe scan's up axis (default y)")
     ins.set_defaults(func=cmd_insole)
 
     cp = sub.add_parser("compare", help="how much two scans of the same foot agree (repeatability)")

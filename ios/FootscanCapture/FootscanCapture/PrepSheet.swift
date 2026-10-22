@@ -10,6 +10,7 @@ extension Subject {
         case .rightSole, .leftSole: "shoeprints.fill"
         case .rightSoleFlat, .leftSoleFlat: "bed.double.fill"
         case .rightPrint, .leftPrint: "shippingbox.fill"
+        case .shoeInsole: "shoe.fill"
         case .calibration: "cube.fill"
         case .rightFoot, .leftFoot: "figure.seated.side.right"
         case .other: "sparkles"
@@ -36,6 +37,11 @@ extension Subject {
             ("figure.seated.side.right", "Seated, press straight down", "Knee over the ankle. Push the foot down until the heel and toes are sunk in, then lift it straight up without rocking."),
             ("table.furniture.fill", "Box on a table, in even light", "With room to walk all the way round. The phone must see into the print from every side."),
             ("ruler.fill", "Calipers ready (optional)", "Measure how deep the heel print is; the studio reports the scan's depth, so you can compare."),
+        ]
+        case .shoeInsole: [
+            ("shoe.fill", "The insole from the shoe you'll wear", "Pull it out of the shoe. One is enough: the studio fits it to either foot."),
+            ("table.furniture.fill", "Flat on a plain, matte table, top side up", "With room to walk all the way round. A dark table if the insole is light, so its edge shows."),
+            ("sun.max.fill", "Even light", "No harsh shadows across the edge."),
         ]
         case .calibration: [
             ("printer.fill", "Printed at 100%", "Matte, light-coloured filament; no supports."),

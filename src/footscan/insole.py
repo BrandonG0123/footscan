@@ -95,6 +95,8 @@ class InsoleParams:
     posting_forefoot_deg: float = 0.0
     toes_flat_from: float | None = None  # if set, fill tapers to none under the toes, from this share of the length
     target_length_mm: float | None = None  # if set, the outline reaches this length (a shoe's insole), see build()
+    shoe_outline: tuple | None = None   # if set, the outline is this shoe's own insole's ((x, y), ...) mm, heel at
+                                        # the origin (recon/shoe.py), fitted round the foot; see build()
     bed_mm: float = 256.0           # printer bed (Bambu X1/P1/A1); for the fit check only
 
 
@@ -146,8 +148,8 @@ def sole_heights(mesh, xs: np.ndarray, ys: np.ndarray, inside: np.ndarray):
     return H, S
 
 
-def silhouette(mesh, notes: list | None = None):
-    """The foot seen from above (below SILHOUETTE_HEIGHT_MM), as a polygon.
+def silhouette(mesh, notes: list | None = None, height: float = SILHOUETTE_HEIGHT_MM):
+    """The foot seen from above (below ``height``, SILHOUETTE_HEIGHT_MM unless given), as a polygon.
 
     If GEOS can't make the concave outline, the convex one (the rubber band
     round the foot) is used instead: always filled, never smaller than the
@@ -157,7 +159,7 @@ def silhouette(mesh, notes: list | None = None):
     from shapely.geometry import MultiPoint
 
     V = np.asarray(mesh.vertices)
-    low = V[V[:, 2] < SILHOUETTE_HEIGHT_MM][:, :2]
+    low = V[V[:, 2] < height][:, :2]
     if len(low) < 50:
         raise InsoleError("almost nothing of the foot near the floor: is this a standing or seated scan on the mat?")
     # one point per 0.5 mm square: dense scans repeat and line up points, which can trip GEOS's
@@ -225,20 +227,34 @@ def build(foot_mesh, foot: str, params: InsoleParams | None = None) -> Insole:
     x0, y0, x1, y1 = sil.bounds
     length = x1 - x0
 
-    # outline: margin all round, a wider margin round the heel for the cup wall
-    heel = sil.intersection(shapely.box(x0 - 50, y0 - 50, x0 + p.heel_zone * length, y1 + 50))
-    outline = sil.buffer(p.margin_mm).union(heel.buffer(p.heel_wall_margin_mm))
-    outline = outline.buffer(3.0).buffer(-3.0).simplify(0.2)
-    if outline.geom_type != "Polygon":
-        outline = max(outline.geoms, key=lambda g: g.area)
-    extended = 0.0
-    if p.target_length_mm is not None:
-        outline, extended = _to_length(outline, x0 + 0.7 * length, p.target_length_mm)
+    extended, shoe_fit = 0.0, None
+    if p.shoe_outline is not None:
+        # the shoe's own insole's outline, placed round the foot (heel against the counter); the foot-shaped
+        # top inside it is made exactly as without it
+        from .recon import shoe as shoe_mod
+
+        if p.target_length_mm is not None:
+            raise InsoleError("give the shoe's insole or a length, not both (the insole's outline sets the length)")
+        # against the foot's outline near the floor: what stands on the insole (the heel bulges out above it)
+        standing = silhouette(m, height=shoe_mod.FIT_HEIGHT_MM)
+        outline, shoe_fit = shoe_mod.fit_to_foot(shapely.Polygon(p.shoe_outline), standing, foot, p.heel_wall_margin_mm)
+        outline = outline.simplify(0.2)
+    else:
+        # outline: margin all round, a wider margin round the heel for the cup wall
+        heel = sil.intersection(shapely.box(x0 - 50, y0 - 50, x0 + p.heel_zone * length, y1 + 50))
+        outline = sil.buffer(p.margin_mm).union(heel.buffer(p.heel_wall_margin_mm))
+        outline = outline.buffer(3.0).buffer(-3.0).simplify(0.2)
+        if outline.geom_type != "Polygon":
+            outline = max(outline.geoms, key=lambda g: g.area)
+        if p.target_length_mm is not None:
+            outline, extended = _to_length(outline, x0 + 0.7 * length, p.target_length_mm)
 
     # grid over the outline
     ox0, oy0, ox1, oy1 = outline.bounds
-    xs = np.arange(ox0 - 1, ox1 + 1 + GRID_MM, GRID_MM)
-    ys = np.arange(oy0 - 1, oy1 + 1 + GRID_MM, GRID_MM)
+    # on whole multiples of the grid step: the sole is sampled at the same points whatever the outline
+    # (the foot's own, lengthened, or a shoe's), so the shape under the foot is exactly the same
+    xs = np.arange(np.floor((ox0 - 1) / GRID_MM), np.ceil((ox1 + 1) / GRID_MM) + 1) * GRID_MM
+    ys = np.arange(np.floor((oy0 - 1) / GRID_MM), np.ceil((oy1 + 1) / GRID_MM) + 1) * GRID_MM
     X, Y = np.meshgrid(xs, ys, indexing="xy")
     in_sil = shapely.contains_xy(sil, X, Y)
     in_out = shapely.contains_xy(outline.buffer(1.0), X, Y)
@@ -313,6 +329,8 @@ def build(foot_mesh, foot: str, params: InsoleParams | None = None) -> Insole:
     if holes > 0.05:
         warnings.append(f"{holes:.0%} of the area under the foot is a hole in the scan (taken as flat).")
     warnings += outline_notes
+    if shoe_fit is not None:
+        warnings += shoe_mod.fit_warnings(shoe_fit)
     if extended:
         warnings.append(f"lengthened to {p.target_length_mm:.0f} mm for the shoe: the flat front was extended by "
                         f"{extended:.0f} mm past the toes; the shape under the heel, arch and ball is unchanged")
@@ -330,6 +348,7 @@ def build(foot_mesh, foot: str, params: InsoleParams | None = None) -> Insole:
         max_fill_mm=round(float(fill[in_sil].max()), 2),
         max_fill_at_mm=dict(x=round(float(X[peak]), 1), y=round(float(Y[peak]), 1)),
         bed_fit=bed_fit_shape(np.asarray(mesh.vertices)[:, :2], p.bed_mm),
+        shoe_fit=shoe_fit,
         warnings=warnings,
         frame="mm; x forward from the back of the heel, y toward the foot's left, z up; bottom at z = 0",
     )
@@ -518,6 +537,17 @@ def capture_html(prep: dict | None) -> str:
     return "<h2>How the foot was captured</h2>\n<table>\n" + "\n".join(rows) + "\n</table>"
 
 
+def shoe_row(fit: dict | None) -> str:
+    """The summary sheet's line on the outline: the foot's own, or fitted to a shoe's insole."""
+    if not fit:
+        return ""
+    o = fit["overhang"]
+    over = (f"the foot is wider than it at the {o['where']} by up to {o['max_mm']} mm (the insole stops at the shoe's edge)"
+            if o["max_mm"] > 1.0 else "the foot is inside it all round")
+    return (f'<tr><th>Outline</th><td colspan="3">the shoe\'s own insole ({fit["shoe_length_mm"]} mm long, '
+            f'{fit["room_past_toes_mm"]} mm past the toes{", matched mirrored" if fit["mirrored"] else ""}); {over}</td></tr>')
+
+
 def summary_html(insole: Insole, scan_label: str, synthetic: bool = False) -> str:
     """The clinician summary sheet (docs/SAFETY.md, requirement 1), for this first-fit device."""
     from html import escape
@@ -558,6 +588,7 @@ anything and is not equivalent to, or a substitute for, a prescribed orthotic. N
 <tr><th>Stiffness</th><td colspan="3">Uniform (no lattice zones). Material and infill as printed: record below.</td></tr>
 <tr><th>Size</th><td colspan="3">{r['length_mm']} &times; {r['width_mm']} mm, {r['height_mm']} mm tall</td></tr>
 {f'<tr><th>Under the toes</th><td colspan="3">no fill from {p.toes_flat_from:.0%} of the length (the toes lie flat when standing)</td></tr>' if p.toes_flat_from is not None else ''}
+{shoe_row(r.get('shoe_fit'))}
 </table>
 
 {capture}

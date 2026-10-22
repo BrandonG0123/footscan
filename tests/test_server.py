@@ -850,6 +850,46 @@ def test_make_insole_can_lengthen_to_a_shoe(servers):
     assert call(f"{op}/api/captures/{cid}/insole", "POST", {"length_mm": "nine"})[0] == 400
 
 
+def test_make_insole_can_fit_to_a_scanned_shoes_insole(servers):
+    """POST {shoe}: the insole takes that shoe's-insole capture's outline; a shoe and a length together, or a
+    capture that isn't a shoe's insole, are refused; a changed shoe scan makes the insole stale."""
+    import os
+    import time
+
+    import synth
+
+    op, _, data = servers
+    foot = body(call(f"{op}/api/captures", "POST", {"condition": "swb", "foot": "right", "session": "LIDAR",
+                                                     "load_kg": 30, "method": "imported_mesh"}))["id"]
+    assert call(f"{op}/api/captures/{foot}/mesh?ext=obj&up=y", "PUT", _object_capture_foot("right"),
+                {"Content-Type": "application/octet-stream"})[0] == 200
+    st, raw, _ = call(f"{op}/api/captures", "POST", {"condition": "shoe_insole", "session": "LIDAR",
+                                                     "method": "imported_mesh", "notes": "trainers"})
+    assert st in (200, 201), raw
+    shoe = json.loads(raw)["id"]
+    assert call(f"{op}/api/captures/{shoe}/mesh?ext=obj&up=y", "PUT",
+                synth.shoe_insole().export(file_type="obj").encode(), {"Content-Type": "application/octet-stream"})[0] == 200
+
+    st, raw, _ = call(f"{op}/api/captures/{foot}/insole", "POST", {"shoe": shoe})
+    assert st == 200, raw
+    r = json.loads(raw)
+    assert "error" not in r, r
+    assert r["length_mm"] == pytest.approx(271, abs=2) and r["shoe"]["capture"] == shoe
+    assert r["shoe"]["fit"]["shoe_length_mm"] == pytest.approx(271, abs=2)
+    assert call(f"{op}/api/captures/{foot}/insole", "POST", {"shoe": shoe, "length_mm": 280})[0] == 400
+    assert call(f"{op}/api/captures/{foot}/insole", "POST", {"shoe": foot})[0] == 400  # not a shoe's insole
+    assert call(f"{op}/api/captures/{foot}/insole", "POST", {"shoe": "../x"})[0] == 400
+
+    # the shoe's scan changes underneath: the insole fitted to it is stale, downloads refused
+    assert call(f"{op}/api/captures/{foot}/insole/insole.3mf")[0] == 200
+    mesh = data / "captures" / shoe / "mesh.ply"
+    later = time.time() + 5
+    os.utime(mesh, (later, later))
+    listed = [c for c in body(call(f"{op}/api/captures")) if c["capture_id"] == foot][0]
+    assert listed["insole"].get("stale") is True
+    assert call(f"{op}/api/captures/{foot}/insole/insole.3mf")[0] == 409
+
+
 def test_the_studio_compares_two_scans_of_the_same_foot(servers):
     """POST /api/compare {a, b}: two imports of the same synthetic foot agree closely; studio only."""
     op, phone, _ = servers

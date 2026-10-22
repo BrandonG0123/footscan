@@ -25,6 +25,8 @@ enum Subject: String, CaseIterable, Identifiable, Codable {
     case leftSoleFlat = "left-sole-legs-flat"
     case rightPrint = "right-foam-print"
     case leftPrint = "left-foam-print"
+    // the shoe's own insole, lying flat: the printed insole can take its outline, to fit that shoe
+    case shoeInsole = "shoe-insole"
     case calibration = "calibration-object"
     case rightFoot = "right-foot"
     case leftFoot = "left-foot"
@@ -37,7 +39,7 @@ enum Subject: String, CaseIterable, Identifiable, Codable {
         switch self {
         case .rightSole, .rightSoleFlat, .rightPrint, .rightFoot: "right"
         case .leftSole, .leftSoleFlat, .leftPrint, .leftFoot: "left"
-        case .calibration, .other: nil
+        case .shoeInsole, .calibration, .other: nil
         }
     }
 
@@ -54,14 +56,14 @@ enum Subject: String, CaseIterable, Identifiable, Codable {
         case .rightSoleFlat, .leftSoleFlat: "sole_hanging"
         case .rightPrint, .leftPrint: "impression"
         case .rightFoot, .leftFoot: "foot"
-        case .calibration, .other: nil
+        case .shoeInsole, .calibration, .other: nil
         }
     }
 
     /// Sole and foam-print scans use Apple's 3D capture (the printed mat can't go under a raised sole or a foam box).
     var needs3DCapture: Bool {
         switch self {
-        case .rightSole, .leftSole, .rightSoleFlat, .leftSoleFlat, .rightPrint, .leftPrint: true
+        case .rightSole, .leftSole, .rightSoleFlat, .leftSoleFlat, .rightPrint, .leftPrint, .shoeInsole: true
         default: false
         }
     }
@@ -75,6 +77,7 @@ enum Subject: String, CaseIterable, Identifiable, Codable {
         case .leftSoleFlat: "Legs flat, left"
         case .rightPrint: "Right foam print"
         case .leftPrint: "Left foam print"
+        case .shoeInsole: "Shoe's insole"
         case .calibration: "Calibration"
         case .rightFoot: "Whole right foot"
         case .leftFoot: "Whole left foot"
@@ -90,6 +93,7 @@ enum Subject: String, CaseIterable, Identifiable, Codable {
         case .leftSoleFlat: "Left sole, legs flat"
         case .rightPrint: "Right foam print"
         case .leftPrint: "Left foam print"
+        case .shoeInsole: "Your shoe's insole"
         case .calibration: "Calibration object"
         case .rightFoot: "Whole right foot"
         case .leftFoot: "Whole left foot"
@@ -103,6 +107,7 @@ enum Subject: String, CaseIterable, Identifiable, Codable {
         case .rightSole, .leftSole: "Sole up, today"
         case .rightSoleFlat, .leftSoleFlat: "Steadier? Compare"
         case .rightPrint, .leftPrint: "Most accurate"
+        case .shoeInsole: "Fit to your shoe"
         case .calibration: "Check accuracy"
         case .rightFoot, .leftFoot: "Size, not sole"
         case .other: "Practice"
@@ -117,6 +122,8 @@ enum Subject: String, CaseIterable, Identifiable, Codable {
             "Lie face down on a bed with your legs straight and your feet just past the end, hanging relaxed. Someone else sweeps the phone round behind the foot."
         case .rightPrint, .leftPrint:
             "Press this foot straight down into a foam impression box while seated, lift it straight out, and scan the print from all round, with the box on a table."
+        case .shoeInsole:
+            "Take the insole out of the shoe you'll wear and lay it flat on a plain, matte table, top side up, with space to walk all the way round. The printed insole takes its outline."
         case .calibration:
             "Put the printed calibration object on a plain, matte table with space to walk all the way round. Even light, no harsh shadows."
         case .rightFoot, .leftFoot:

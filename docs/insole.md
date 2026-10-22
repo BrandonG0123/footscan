@@ -25,6 +25,36 @@ flat front reaches further, the shape under the heel, arch and ball stays
 where the foot is, and it's never made shorter than the foot. In the studio
 it's the *Shoe insole length* box on the scan's card.
 
+`--shoe shoe-insole.obj` goes further: the insole takes the outline of the
+shoe's own insole, from a scan of it lying flat on a table (the app's
+*Shoe's insole* card; in the studio, *Fit to the shoe's insole* on the
+scan's card). How (`src/footscan/recon/shoe.py`):
+
+- **Reading the scan.** If the model kept the table, it's cut away (the
+  lowest big level surface whose cut leaves something insole-shaped above
+  it); the outline is then everything seen from above, heel (the narrower
+  end) at the back. On synthetic insoles it comes out within 0.8 mm of the
+  true outline everywhere, 0.3 mm outside it on average.
+- **Which shoe.** A shoe's last curves in toward the big toe, so the toe
+  end lies to the big-toe side of the line from the heel's middle through
+  the ball's. An insole from the other shoe, or scanned upside down, is the
+  mirror image of the one wanted: it's mirrored back, and the sheet says so.
+  A straight shoe (toe end within 4 mm of the line) is used as scanned,
+  with a warning to check.
+- **Placing it.** Against the foot's outline within 10 mm of the floor,
+  which is what stands on an insole (higher up, the heel bulges out over it,
+  inside the shoe's counter: on the first real scan, 71 mm across near the
+  floor against 86 mm at 30 mm up). The shoe's heel goes 3 mm behind the
+  foot's, then it's turned (up to 10 degrees) and slid sideways (up to 8 mm)
+  to where the least of the foot hangs over its edge.
+- **Inside it,** the top is made exactly as without it (the same grid
+  points, so the same heights to the hundredth of a millimetre). Where the
+  foot is wider than the shoe's insole, the insole stops at the shoe's edge,
+  and a warning says where and by how much; the heel cup wall only exists
+  where the shoe's outline leaves room for it outside the heel.
+
+Not yet tried on a real shoe's insole.
+
 ## From the iPhone app
 
 The insole is the shape of the bottom of the foot, so the app's first

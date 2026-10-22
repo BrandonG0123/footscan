@@ -158,7 +158,7 @@ struct HomeView: View {
     }
 
     /// 0 scan the sole, 1 send it, 2 make the insole on the Mac (sign-off follows there).
-    private var soleScans: [Scan] { library.scans.filter { $0.record?.subject.needs3DCapture == true && $0.hasOBJ } }
+    private var soleScans: [Scan] { library.scans.filter { ($0.record?.subject).map { $0.needs3DCapture && $0.isFoot } == true && $0.hasOBJ } }
 
     private var insoleStep: Int {
         let soles = soleScans
