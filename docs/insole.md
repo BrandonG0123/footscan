@@ -169,10 +169,15 @@ arch, the scan actually saw. If it saw almost none of the arch, it warns:
 scan again with a low lap aimed under the inner arch.
 
 Then: light smoothing that may only lower the surface; safety caps (20 mm
-arch fill, 12 mm heel); the outline (the foot's silhouette + 2 mm, + 3 mm
-round the heel, kept small because a shoe's heel counter is firm); a heel
-cup wall *outside* the scanned heel, rising over 2.5 mm, so it holds without
-pressing in; a flat 3 mm base tapering to 2 mm at the toes. For a sole-up or
+arch fill, 12 mm heel); the outline (the foot's silhouette + 2 mm; round
+the heel, the heel as it is at the cup's 12 mm height + 3 mm, kept small
+because a shoe's heel counter is firm); a heel cup wall *outside* the
+scanned heel, rising over 2.5 mm, so it holds without pressing in. The heel
+is measured at the cup's height because heels bulge out higher up: on the
+first real scan, 74 mm across at 12 mm and 86 mm at 30 mm. Measured at
+30 mm, that insole's heel came out 92.6 mm wide with its cup wall standing
+about 6 mm off the heel each side; measured at 12 mm, 80.2 mm, the wall
+against the heel; a flat 3 mm base tapering to 2 mm at the toes. For a sole-up or
 legs-flat scan, no fill under the toes from 78% of the length on (a relaxed
 unloaded foot curls its toes; standing, they lie flat).
 

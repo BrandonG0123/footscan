@@ -59,6 +59,38 @@ def test_the_heel_cup_wall_is_outside_the_foot(right):
     assert _top(right, 200.0, -44.0) < p.base_mm + 0.5
 
 
+def test_the_heel_is_held_where_it_stands_not_where_it_bulges_higher_up():
+    """A heel wider higher up than at the cup's height (as real heels are: the first real scan was 74 mm
+    across at 12 mm, 86 mm at 30 mm): the outline round the heel and the cup wall follow the heel at the
+    cup's height; the bulge sits over the cup, as it does inside a shoe's counter. The cup never comes
+    closer than the relief to the bulge's underside."""
+    import manifold3d as m3
+    import trimesh
+
+    foot = synth.curved_foot("right", leg=False)
+    f = m3.Manifold(m3.Mesh(vert_properties=np.asarray(foot.vertices, dtype=np.float32),
+                            tri_verts=np.asarray(foot.faces, dtype=np.uint32)))
+    # a ring round the heel 8 mm wider all round, from 16 to 26 mm up (heel circle: r 32 at (32, 45))
+    bulge = m3.Manifold.cylinder(10.0, 40.0, 40.0, 96).translate((32.0, 45.0, 16.0))
+    mm = (f + bulge).to_mesh()
+    m = trimesh.Trimesh(np.asarray(mm.vert_properties)[:, :3], np.asarray(mm.tri_verts), process=True)
+    ins = insole.from_scan(m, "right")
+    plain = insole.from_scan(foot, "right")
+    p = ins.params
+
+    def across_heel(i):  # the insole's width across the heel's widest point
+        at = i.mesh.vertices[np.abs(i.mesh.vertices[:, 0] - 32.0) < 0.75]
+        return at[:, 1].max() - at[:, 1].min(), at[:, 1].min()
+
+    (width, lo), (plain_width, _) = across_heel(ins), across_heel(plain)
+    assert width == pytest.approx(plain_width, abs=1.0)  # the bulge (16 mm wider) doesn't widen it
+    assert width < 64.0 + 2 * p.heel_wall_margin_mm + 2.5
+    # the wall stands beside the heel at the cup's height...
+    assert _top(ins, 32.0, lo + 0.6) > p.base_mm + 0.85 * p.heel_cup_depth_mm
+    # ...and stays the relief below the bulge's underside (16 mm up) where the two overlap
+    assert _top(ins, 32.0, lo + 2.0) <= p.base_mm + 16.0 - p.relief_mm + 0.3
+
+
 def test_left_is_the_mirror_of_right(right):
     left = insole.from_scan(synth.block_foot(37.0, "left"), "left")
     assert left.mesh.volume == pytest.approx(right.mesh.volume, rel=0.01)

@@ -37,14 +37,20 @@ From heights to a solid
    heel cup depth, is clipped and reported. They are safety limits on a
    first fit, not design choices.
 3. **Outline**: the foot seen from above (its plan-view silhouette below
-   30 mm), plus a margin (2 mm), plus a wider margin round the heel for the
-   cup wall (6 mm). Corners are rounded.
-4. **Heel cup wall**: outside the silhouette, around the back third of the
-   foot, the top rises to the cup depth over 2.5 mm (the outline allows
-   3 mm there: a shoe's heel counter is firm, so the wall stays slim). The
-   wall is entirely outside the scanned foot, so it holds the heel without
-   pressing into it; inside, the scanned heel's own rounded underside forms
-   the cup.
+   30 mm), plus a margin (2 mm). Round the heel (the back 30%), the heel
+   as it is at the cup's height instead (its silhouette below the cup
+   depth, 12 mm), plus 3 mm for the cup wall: a heel bulges out higher up,
+   over the cup, inside the shoe's counter (on the first real scan, 74 mm
+   across at 12 mm, 86 mm at 30 mm), so the 30 mm outline made the heel
+   12 mm wider than anything the cup held. It widens in straight lines
+   into the rest over the next 10% of the length. Corners are rounded.
+4. **Heel cup wall**: outside the heel's cup-height silhouette, the top
+   rises to the cup depth over 2.5 mm (the outline allows 3 mm there: a
+   shoe's heel counter is firm, so the wall stays slim). The wall is
+   entirely outside the scanned heel up to the cup's height, and never
+   closer than the relief to any part of the sole the scan saw, so it holds
+   the heel without pressing into it; inside, the scanned heel's own
+   rounded underside forms the cup.
 5. **Base**: a flat bottom (it prints flat on the bed), 3 mm thick under
    the foot, tapering to 2 mm at the toes; beyond the heel it thins to
    1.2 mm over the last 4 mm to the edge (a bevel), so it follows the
@@ -226,6 +232,12 @@ def build(foot_mesh, foot: str, params: InsoleParams | None = None) -> Insole:
     sil = silhouette(m, outline_notes)
     x0, y0, x1, y1 = sil.bounds
     length = x1 - x0
+    try:  # the foot at the heel cup's height: what the cup holds
+        cup_sil = silhouette(m, height=p.heel_cup_depth_mm).intersection(sil)
+        if cup_sil.geom_type != "Polygon":
+            cup_sil = max(cup_sil.geoms, key=lambda g: g.area)
+    except (InsoleError, shapely.errors.GEOSException, ValueError):
+        cup_sil = sil
 
     extended, shoe_fit = 0.0, None
     if p.shoe_outline is not None:
@@ -240,9 +252,17 @@ def build(foot_mesh, foot: str, params: InsoleParams | None = None) -> Insole:
         outline, shoe_fit = shoe_mod.fit_to_foot(shapely.Polygon(p.shoe_outline), standing, foot, p.heel_wall_margin_mm)
         outline = outline.simplify(0.2)
     else:
-        # outline: margin all round, a wider margin round the heel for the cup wall
-        heel = sil.intersection(shapely.box(x0 - 50, y0 - 50, x0 + p.heel_zone * length, y1 + 50))
-        outline = sil.buffer(p.margin_mm).union(heel.buffer(p.heel_wall_margin_mm))
+        # outline: margin all round; round the heel, the heel at the cup's height plus the cup wall's margin
+        # (higher up, the heel bulges out over the cup), widening straight into the rest over the next 10%
+        hx = x0 + p.heel_zone * length
+        jx = hx + 0.10 * length
+        heel = cup_sil.intersection(shapely.box(x0 - 50, y0 - 50, hx, y1 + 50))
+        join = shapely.convex_hull(shapely.union_all([  # straight from the heel's end to the midfoot's
+            cup_sil.intersection(shapely.box(hx - 1.0, y0 - 50, hx, y1 + 50)),
+            sil.intersection(shapely.box(jx, y0 - 50, jx + 1.0, y1 + 50))]))
+        heel = shapely.union_all([heel, join])
+        front = sil.intersection(shapely.box(jx, y0 - 50, x1 + 50, y1 + 50))
+        outline = heel.buffer(p.heel_wall_margin_mm).union(front.buffer(p.margin_mm))
         outline = outline.buffer(3.0).buffer(-3.0).simplify(0.2)
         if outline.geom_type != "Polygon":
             outline = max(outline.geoms, key=lambda g: g.area)
@@ -257,6 +277,7 @@ def build(foot_mesh, foot: str, params: InsoleParams | None = None) -> Insole:
     ys = np.arange(np.floor((oy0 - 1) / GRID_MM), np.ceil((oy1 + 1) / GRID_MM) + 1) * GRID_MM
     X, Y = np.meshgrid(xs, ys, indexing="xy")
     in_sil = shapely.contains_xy(sil, X, Y)
+    in_cup = shapely.contains_xy(cup_sil, X, Y)
     in_out = shapely.contains_xy(outline.buffer(1.0), X, Y)
 
     # 1. the sole, under the foot only
@@ -276,12 +297,14 @@ def build(foot_mesh, foot: str, params: InsoleParams | None = None) -> Insole:
         w_toe = np.clip((X - (x0 + p.toes_flat_from * length)) / (0.08 * length), 0, 1)
         fill = fill * (1 - w_toe)
 
-    # 4. heel cup wall, outside the foot only
-    outside = ~in_sil
+    # 4. heel cup wall, outside the heel at the cup's height only, and never closer than the relief to
+    # any sole the scan saw (higher up, the heel's flank can bulge out over the wall)
+    outside = ~in_cup
     d_out = ndimage.distance_transform_edt(outside) * GRID_MM
     ramp = np.clip(d_out / p.heel_wall_ramp_mm, 0, 1)
     ramp = ramp * ramp * (3 - 2 * ramp)  # smoothstep: a rounded rim, no sharp corner
     wall = np.where(outside, p.heel_cup_depth_mm * ramp * w_heel, 0.0)
+    wall = np.where(in_sil & (S == 1), np.minimum(wall, raw), wall)
 
     # 5. base, tapering toward the toes, and thinning toward the edge beyond the heel (a bevel):
     # a shoe's footbed curves up into its sides, and a square-edged insole would dig into the curve
