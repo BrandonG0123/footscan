@@ -584,7 +584,7 @@ def shoe_plan(length: float = 270.0, ball: float = 104.0, heel: float = 66.0, fo
 
 
 def shoe_insole(length: float = 270.0, ball: float = 104.0, heel: float = 66.0, foot: str = "right",
-                table: bool = True, upside_down: bool = False, yaw: float = 35.0):
+                table: bool = True, upside_down: bool = False, yaw: float = 35.0, tilt: float = 0.0):
     """SYNTHETIC scan of a shoe's insole lying flat (4 mm thick, a 12 mm heel cup rim 6 mm wide round the
     back 70 mm), optionally on a table (a 420 x 200 x 20 mm slab), as the iPhone app hands it over:
     metres, Y up, turned ``yaw`` degrees. ``upside_down``: lying top down (seen from above, a mirror image)."""
@@ -612,6 +612,8 @@ def shoe_insole(length: float = 270.0, ball: float = 104.0, heel: float = 66.0, 
         slab = trimesh.creation.box([420.0, 200.0, 20.0])
         slab.apply_translation([length / 2, 0, -10.0])
         m = trimesh.util.concatenate([m, slab])
+    if tilt:  # the table (and the insole on it) this far off the phone's level, about the insole's long axis
+        m.apply_transform(trimesh.transformations.rotation_matrix(np.radians(tilt), [1, 0, 0]))
     T = trimesh.transformations.rotation_matrix(np.radians(yaw), [0, 0, 1])
     T[:3, 3] = [30, -12, 0]
     m.apply_transform(T)

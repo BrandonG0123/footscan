@@ -21,8 +21,8 @@ def _signed_gaps(outline, truth):
     return np.where(shapely.contains_xy(truth, E[:, 0], E[:, 1]), -d, d)
 
 
-@pytest.mark.parametrize("kw", [dict(), dict(table=False), dict(upside_down=True, yaw=-70.0)],
-                         ids=["on a table", "no table", "upside down"])
+@pytest.mark.parametrize("kw", [dict(), dict(table=False), dict(upside_down=True, yaw=-70.0), dict(tilt=5.0)],
+                         ids=["on a table", "no table", "upside down", "table 5 degrees off level"])
 def test_the_shoe_insoles_outline_is_read_from_its_scan(kw):
     import shapely.affinity
 
@@ -30,6 +30,8 @@ def test_the_shoe_insoles_outline_is_read_from_its_scan(kw):
 
     outline, info = shoe.outline_from_scan(synth.shoe_insole(**kw))
     assert info["table_found"] == kw.get("table", True) and info["units_detected"] == "m"
+    if info["table_found"]:  # cut along the table itself, however it's tilted
+        assert info["table_tilt_deg"] == pytest.approx(kw.get("tilt", 0.0), abs=0.2)
     assert 270.0 <= info["length_mm"] <= 272.0 and 104.0 <= info["width_mm"] <= 106.0
     assert outline.bounds[0] == pytest.approx(0.0, abs=1e-6)  # heel at x = 0, toes along +x
     if kw.get("upside_down"):  # seen from above it's the mirror image; mirrored back, it's the same shape

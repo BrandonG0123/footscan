@@ -154,15 +154,24 @@ def outline_from_scan(mesh, up: str = "y"):
         for mask, area in _pieces(flat):
             if area < TABLE_MIN_AREA_MM2:
                 break
-            z = flat.triangles_center[mask, 2]
-            tops.append(float(np.average(z, weights=flat.area_faces[mask])))
-    candidates = sorted(tops)[:TABLE_TRIES]
+            # the patch's own plane: a table a few degrees off the phone's level is cut along itself
+            w = flat.area_faces[mask]
+            c = np.average(flat.triangles_center[mask], axis=0, weights=w)
+            n = np.average(flat.face_normals[mask], axis=0, weights=w)
+            tops.append((float(c[2]), c, n / np.linalg.norm(n)))
+    candidates = sorted(tops, key=lambda t: t[0])[:TABLE_TRIES]
 
-    def above(z_cut):
-        keep = m.triangles_center[:, 2] > z_cut
+    def above(c, n):
+        """What's more than TABLE_CUT_MM above the plane through c with normal n, levelled onto it."""
+        T = np.eye(4)
+        T[:3, :3] = imported._level(n)
+        T[:3, 3] = -T[:3, :3] @ c
+        lev = m.copy()
+        lev.apply_transform(T)
+        keep = lev.triangles_center[:, 2] > TABLE_CUT_MM
         if not keep.any():
             return None
-        part = m.copy()
+        part = lev.copy()
         part.update_faces(keep)
         part.remove_unreferenced_vertices()
         pieces = _pieces(part)
@@ -173,13 +182,13 @@ def outline_from_scan(mesh, up: str = "y"):
         return part
 
     chosen, table = None, None
-    for z in candidates:
-        part = above(z + TABLE_CUT_MM)
+    for z, c, n in candidates:
+        part = above(c, n)
         if part is not None and len(part.vertices) >= 20:
             v, f = trimesh.remesh.subdivide_to_size(part.vertices, part.faces, 2.0)
             poly = _outline(np.asarray(v)[:, :2])
             if _plausible(poly):
-                chosen, table = poly, z
+                chosen, table = poly, n
                 break
     if chosen is None:  # no table in the model: the insole on its own
         v, f = trimesh.remesh.subdivide_to_size(m.vertices, m.faces, 2.0)
@@ -191,6 +200,8 @@ def outline_from_scan(mesh, up: str = "y"):
                             f"a quarter to a half as wide)")
     out, widths = _oriented(chosen)
     x0, y0, x1, y1 = out.bounds
+    if table is not None:
+        info["table_tilt_deg"] = round(float(np.degrees(np.arccos(np.clip(table[2], -1, 1)))), 2)
     info.update(table_found=table is not None, length_mm=round(x1 - x0, 1), width_mm=round(y1 - y0, 1),
                 end_widths_mm=widths)
     return out, info
