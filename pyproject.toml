@@ -10,6 +10,7 @@ dependencies = ["numpy", "scipy", "trimesh"]
 # operations), Manifold (exact CSG for the calibration object), OpenCV.
 recon = ["opencv-python-headless", "pycolmap", "pymeshlab", "manifold3d", "rtree", "shapely"]
 dev = ["pytest", "opencv-python-headless", "pymupdf", "embreex"]  # embreex: ray casting for synthetic test scenes
+second-look = ["anthropic"]  # scripts/second_look_eval.py: does a Claude look at a scan catch what the checks miss?
 
 [project.scripts]
 footscan = "footscan.cli:main"

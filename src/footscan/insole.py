@@ -80,6 +80,7 @@ SILHOUETTE_HEIGHT_MM = 30.0
 DOWNWARD_FACING = -0.1   # cos: a hit counts as "sole" if its normal points at least this much down
 SMOOTH_SIGMA_MM = 1.5
 SMOOTH_MAY_RAISE_MM = 0.5
+HOLE_ABOVE_FLOOR_MM = 3.0  # an unseen hit higher than this: the inside of the foot, through its open bottom
 
 
 @dataclass
@@ -130,11 +131,15 @@ def output_frame(foot_mesh, foot: str):
     return m
 
 
-def sole_heights(mesh, xs: np.ndarray, ys: np.ndarray, inside: np.ndarray):
+def sole_heights(mesh, xs: np.ndarray, ys: np.ndarray, inside: np.ndarray, with_hit_z: bool = False):
     """Height of the sole above the floor at each grid point inside the outline.
 
     Returns (height grid, state grid) where state is 1 = sole seen, 0 = sole
     not seen (resting on the floor), -1 = no surface (hole), and nan outside.
+    With ``with_hit_z``, also the height of whatever the ray hit first (nan for
+    none): an unseen hit well above the floor is the inside of the foot, seen
+    through its open bottom. For a foot standing on the floor that's expected;
+    for a scan that should show the whole sole, it's a hole (see build()).
     """
     X, Y = np.meshgrid(xs, ys, indexing="xy")
     pts = np.c_[X[inside], Y[inside]]
@@ -151,7 +156,13 @@ def sole_heights(mesh, xs: np.ndarray, ys: np.ndarray, inside: np.ndarray):
     S = np.full(X.shape, np.nan)
     H[inside] = h
     S[inside] = state
-    return H, S
+    if not with_hit_z:
+        return H, S
+    z = np.full(len(pts), np.nan)
+    z[ray_idx] = loc[:, 2]
+    Z = np.full(X.shape, np.nan)
+    Z[inside] = z
+    return H, S, Z
 
 
 def silhouette(mesh, notes: list | None = None, height: float = SILHOUETTE_HEIGHT_MM):
@@ -281,7 +292,7 @@ def build(foot_mesh, foot: str, params: InsoleParams | None = None) -> Insole:
     in_out = shapely.contains_xy(outline.buffer(1.0), X, Y)
 
     # 1. the sole, under the foot only
-    H, S = sole_heights(m, xs, ys, in_sil)
+    H, S, Zhit = sole_heights(m, xs, ys, in_sil, with_hit_z=True)
     raw = np.where(in_sil, np.maximum(0.0, np.nan_to_num(H) - p.relief_mm), 0.0)
     smooth = ndimage.gaussian_filter(raw, SMOOTH_SIGMA_MM / GRID_MM)
     fill = np.minimum(smooth, raw + SMOOTH_MAY_RAISE_MM)
@@ -343,6 +354,9 @@ def build(foot_mesh, foot: str, params: InsoleParams | None = None) -> Insole:
     # report: what the bottom of the foot gave us
     st = S[in_sil]
     seen, contact, holes = (float(np.mean(st == 1)), float(np.mean(st == 0)), float(np.mean(st == -1)))
+    # unseen, and what's above is the inside of the foot well off the floor: through an open bottom (a foot
+    # standing on the floor) or a hole in the sole (any scan that should show it all; foot_prep warns)
+    inside_seen = float(np.mean((st == 0) & (Zhit[in_sil] > HOLE_ABOVE_FLOOR_MM)))
     arch_band = in_sil & (X > x0 + 0.3 * length) & (X < x0 + 0.65 * length)
     arch_seen = float(np.mean(S[arch_band] == 1)) if arch_band.any() else 0.0
     peak = np.unravel_index(np.argmax(np.where(in_sil, fill, -1)), fill.shape)
@@ -368,6 +382,7 @@ def build(foot_mesh, foot: str, params: InsoleParams | None = None) -> Insole:
         volume_cm3=round(float(mesh.volume) / 1000, 1),
         triangles=int(len(mesh.faces)),
         sole=dict(seen=round(seen, 3), resting_on_floor=round(contact, 3), holes=round(holes, 3),
+                  open_above=round(inside_seen, 3),
                   seen_under_arch=round(arch_seen, 3)),
         max_fill_mm=round(float(fill[in_sil].max()), 2),
         max_fill_at_mm=dict(x=round(float(X[peak]), 1), y=round(float(Y[peak]), 1)),

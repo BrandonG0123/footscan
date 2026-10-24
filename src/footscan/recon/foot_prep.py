@@ -469,6 +469,12 @@ def _orient_and_trim(placed, info, trim_mm, heel_by: str = "leg", track: list | 
     V = placed.vertices
     back = V[V[:, 1] < V[:, 1].min() + HEEL_BACK_SHARE * np.ptp(V[:, 1])]
     info["heel_back_above_floor_mm"] = round(float(back[:, 2].min()), 1)
+    # Object Capture's models are closed: open edges near the floor are a part of the foot that's missing
+    import trimesh
+
+    e = placed.edges_sorted[trimesh.grouping.group_rows(placed.edges_sorted, require_count=1)]
+    low = V[e][:, :, 2].max(axis=1) < OPEN_EDGE_BELOW_MM
+    info["open_edges_near_floor_mm"] = round(float(np.linalg.norm(V[e[low, 0]] - V[e[low, 1]], axis=1).sum()), 0)
     return placed
 
 
@@ -1009,6 +1015,13 @@ FOOT_LENGTH_MM = (180.0, 330.0)
 # rebuilds of that same scan, which lost the heel's underside: 46.3 and 48.4 mm.
 HEEL_BACK_SHARE = 0.05
 HEEL_OFF_FLOOR_MM = 15.0
+# Open (torn) edges within OPEN_EDGE_BELOW_MM of the floor, in total: the first real sole scan has none
+# (its only opening is where the leg was cut, higher up); with its toes, heel underside, one side or a
+# patch under the arch cut out, 190-593 mm. Object Capture usually closes a gap with guessed surface
+# instead, which this can't see (the heel check catches one such case).
+SOLE_OPEN_WARN = 0.05  # share of a sole scan's footprint that's a hole up into the foot, before warning
+OPEN_EDGE_BELOW_MM = 40.0
+OPEN_EDGE_WARN_MM = 50.0
 FOOT_RATIO = (0.28, 0.50)
 INVENTED_SOLE_SHARE = 0.9
 
@@ -1029,6 +1042,10 @@ def plausibility(info: dict, report: dict, foot: str | None = None) -> list[str]
                    "footprint, but a foot resting on the floor hides most of its sole. Object Capture closes the "
                    "bottom of a model by itself, so this underside is probably guessed, not scanned. "
                    "Don't trust the arch shape from this scan.")
+    if kind != "foot" and report["sole"].get("open_above", 0.0) > SOLE_OPEN_WARN:
+        out.append(f"{report['sole']['open_above']:.0%} OF THE SOLE IS A HOLE: looking up there, the scan sees the "
+                   "inside of the foot, so the sole's surface is missing. The insole is flat there, whatever the "
+                   "foot's shape. Scan again, covering the whole sole.")
     if kind != "foot" and report["sole"]["seen"] < 0.6:
         out.append(f"ONLY {report['sole']['seen']:.0%} OF THE SOLE WAS SCANNED: this kind of scan should show "
                    "nearly all of it. Scan again, covering the whole sole.")
@@ -1050,6 +1067,12 @@ def plausibility(info: dict, report: dict, foot: str | None = None) -> list[str]
         out.append(f"THE HEEL MAY BE MISSING: the back of the scan is {info['heel_back_above_floor_mm']:.0f} mm above the "
                    "floor, but a heel rests on it. The underside of the heel probably wasn't scanned, so the "
                    "insole's length, heel and floor can't be trusted. Scan again, covering the whole heel.")
+    # only for the sole scans: a foam print is cut out of the foam, and a foot standing on the floor can have
+    # no bottom at all, both open by design
+    if kind in ("sole_up", "sole_hanging") and info.get("open_edges_near_floor_mm", 0.0) > OPEN_EDGE_WARN_MM:
+        out.append(f"THE SCAN IS TORN NEAR THE FLOOR: {info['open_edges_near_floor_mm']:.0f} mm of open edges within "
+                   f"{OPEN_EDGE_BELOW_MM:.0f} mm of the floor, where part of the foot (toes, heel, a side or the "
+                   "sole) is missing. Scan again, covering the whole foot.")
     for k in ("heel_warning", "pieces_warning", "shallow_warning"):
         if k in info:
             out.append(info[k])

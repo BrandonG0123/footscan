@@ -745,3 +745,35 @@ def test_a_scan_whose_heel_is_off_the_floor_is_flagged():
     assert not foot_prep.plausibility(dict(info, heel_back_above_floor_mm=1.2), report, "right")
     warned = foot_prep.plausibility(dict(info, heel_back_above_floor_mm=46.3), report, "right")
     assert len(warned) == 1 and warned[0].startswith("THE HEEL MAY BE MISSING") and "46 mm" in warned[0]
+
+
+def test_a_hole_under_the_arch_is_a_hole_not_a_flat_arch():
+    """Looking up through a hole in the sole, the first surface is the inside of the foot's top, facing up,
+    high above the floor. That's a hole (reported, never filled upward), not sole resting on the floor."""
+    foot = synth.curved_foot("right", leg=False)
+    c = foot.triangles_center
+    hole = (c[:, 0] > 90) & (c[:, 0] < 130) & (np.abs(c[:, 1] - 45) < 15) & (c[:, 2] < 20)
+    plain = insole.from_scan(foot, "right")
+    foot.update_faces(~hole)
+    foot.remove_unreferenced_vertices()
+    ins = insole.from_scan(foot, "right")
+    from footscan.recon import foot_prep
+
+    assert plain.report["sole"]["open_above"] < 0.01
+    assert ins.report["sole"]["open_above"] > 0.05
+    info = dict(kind="sole_up", footprint_mm=dict(length=250.0, width=100.0))
+    assert not foot_prep.plausibility(info, plain.report, "right")
+    assert any("OF THE SOLE IS A HOLE" in w for w in foot_prep.plausibility(info, ins.report, "right"))
+    # a foot standing on the floor shows no sole by design: no such warning for that kind of scan
+    assert not any("OF THE SOLE IS A HOLE" in w
+                   for w in foot_prep.plausibility(dict(info, kind="foot"), ins.report, "right"))
+
+
+def test_a_scan_torn_near_the_floor_is_flagged():
+    from footscan.recon import foot_prep
+
+    report = dict(sole=dict(seen=0.95), max_fill_mm=10.0, max_fill_at_mm=dict(x=100.0, y=20.0))
+    info = dict(kind="sole_up", footprint_mm=dict(length=245.0, width=95.0))
+    assert not foot_prep.plausibility(dict(info, open_edges_near_floor_mm=0.0), report, "right")
+    warned = foot_prep.plausibility(dict(info, open_edges_near_floor_mm=208.0), report, "right")
+    assert len(warned) == 1 and warned[0].startswith("THE SCAN IS TORN NEAR THE FLOOR: 208 mm")

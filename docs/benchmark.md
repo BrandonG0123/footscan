@@ -195,6 +195,38 @@ BE MISSING (phone: 1.2 mm, no warning; the two Mac rebuilds: 46.3 and
 phone's model is the right *size* is a separate question: measure the foot
 (see below).
 
+### Catching an incomplete scan (24 Oct)
+
+`scripts/second_look_eval.py` takes the first real sole scan as it is, the
+same scan with a known part cut out (the last 15% of the toes, the heel's
+underside, one side below 25 mm, a patch under the arch), and the two Mac
+rebuilds that lost the heel's underside, runs each through Make insole's
+preparation, and scores footscan's own warnings against what each case is
+known to be. Before this round they caught 5 of 7: a hole under the arch
+read as sole resting on the floor (the arch silently flat), and the cut-off
+toes passed. Two checks since, for the sole scans (knee bent, legs flat):
+
+- **OF THE SOLE IS A HOLE**: where a ray up from the floor finds the inside
+  of the foot more than 3 mm up instead of the sole, the sole is missing;
+  over 5% of the footprint, a warning (a foot standing on the floor has no
+  sole in its scan by design, so not for that kind).
+- **THE SCAN IS TORN NEAR THE FLOOR**: Object Capture's models are closed,
+  so open edges within 40 mm of the floor are a missing part. The real scan
+  has none (its only opening is the leg's cut, higher up); the damaged ones
+  190-593 mm; warning over 50 mm.
+
+Now 7 of 7, no warning on the real scan, and in the 58 synthetic benchmark
+cases only the two with holes cut in them warn. The limit: Object Capture
+usually closes a gap itself with guessed surface, which no open-edge or
+hole check can see; the heel check caught the one such case so far.
+
+The same script can also ask Claude (`claude-opus-5-5`) to look at four
+rendered views of each case and say only whether the scan looks complete,
+to see whether an advisory "second look" would catch anything these checks
+don't. Not run yet: it needs an API key or `ant auth login`. Footscan's own
+checks already get every case it has, so it would have to find a kind of
+flaw nobody has thought to check for to be worth adding.
+
 ## Measuring it end to end (needs real objects)
 
 To compare with the table at the top on equal terms:
