@@ -111,7 +111,8 @@ def _view(mesh, right: np.ndarray, up: np.ndarray, px: int = VIEW_PX) -> np.ndar
 def picture(placed) -> bytes:
     """Four views of a prepared model (mm, z up, toes +y): below, from the heel, both sides."""
     X, Y, Z = np.eye(3)
-    views = [_view(placed, X, Y, VIEW_PX), _view(placed, X, Z, VIEW_PX),
+    # the camera looks along right x up and keeps the nearest surface: (-X, Z) looks along +y, from the heel
+    views = [_view(placed, X, Y, VIEW_PX), _view(placed, -X, Z, VIEW_PX),
              _view(placed, Y, Z, VIEW_PX), _view(placed, -Y, Z, VIEW_PX)]
     grid = np.vstack([np.hstack(views[:2]), np.hstack(views[2:])])
     grid[VIEW_PX - 1:VIEW_PX + 1, :] = 0
