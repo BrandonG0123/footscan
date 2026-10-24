@@ -181,11 +181,17 @@ data) were copied off the phone and rebuilt on the Mac with
 | Mac, full, with the phone's checkpoint | 11,482 | 9 / 44 / 56 / 74 / 72 | 232.1 |
 | Mac, full, object masking off | 11,270 | 18 / 28 / 34 / 43 / 52 | 215.2 |
 
-Every Mac rebuild lost most of the heel (9-22 mm wide at 10% of the length,
-against 75 mm on the phone), and the preparation then rested the
-incomplete foot 5-26 degrees off. The phone's own model is the most
-complete of the six. So more detail from the Mac isn't available from these
-photos; the phone's model stays the one insoles are made from. Whether the
+Every Mac rebuild came out narrower (ball 73-80 mm against 88), and the
+widths near the back above are misleading: re-measured (24 Oct) on the
+full and raw rebuilds, the back tenth of each scan sits 23-57 mm above the
+floor, against under 5 mm on the phone's. The underside of the heel wasn't
+rebuilt, so the furthest-back part left is the ankle, off the floor, and
+the preparation rested the rest tipped 10-13 degrees. Either way the
+phone's own model is the most complete of the six, and stays the one
+insoles are made from. Make insole now catches this case: if the back 5%
+of a prepared scan is more than 15 mm above the floor it warns THE HEEL MAY
+BE MISSING (phone: 1.2 mm, no warning; the two Mac rebuilds: 46.3 and
+48.4 mm, warned; none of the 58 synthetic benchmark cases). Whether the
 phone's model is the right *size* is a separate question: measure the foot
 (see below).
 

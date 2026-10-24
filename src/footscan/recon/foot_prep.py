@@ -465,6 +465,10 @@ def _orient_and_trim(placed, info, trim_mm, heel_by: str = "leg", track: list | 
         placed.remove_unreferenced_vertices()
         placed = _lid(placed, trim_mm)
     info["to_mat"] = np.round(track[0], 9).tolist()
+    # a heel rests on the floor: the back of the scan should be down there too (see plausibility)
+    V = placed.vertices
+    back = V[V[:, 1] < V[:, 1].min() + HEEL_BACK_SHARE * np.ptp(V[:, 1])]
+    info["heel_back_above_floor_mm"] = round(float(back[:, 2].min()), 1)
     return placed
 
 
@@ -999,6 +1003,12 @@ def insole_from_object_capture(mesh, foot: str, up: str = "y", params=None, kind
 # An adult foot's footprint: length and width/length ratio well outside these
 # means the scan isn't a foot resting on the floor (or wasn't levelled right).
 FOOT_LENGTH_MM = (180.0, 330.0)
+# The lowest point of the back HEEL_BACK_SHARE of a prepared foot: a heel rests on the floor, so this is
+# a few mm at most (the first real sole scan: 1.2 mm). Far above it, the scan's furthest-back part isn't
+# the heel's underside: it's missing, and what's left (the ankle, the leg) reaches further back. Two Mac
+# rebuilds of that same scan, which lost the heel's underside: 46.3 and 48.4 mm.
+HEEL_BACK_SHARE = 0.05
+HEEL_OFF_FLOOR_MM = 15.0
 FOOT_RATIO = (0.28, 0.50)
 INVENTED_SOLE_SHARE = 0.9
 
@@ -1036,6 +1046,10 @@ def plausibility(info: dict, report: dict, foot: str | None = None) -> list[str]
                    "floor set from the heel and the ball of the foot, but on test shapes this much noise still left "
                    "the sole off by up to about a millimetre and the floor tipped by up to about a degree. "
                    "Scan again more slowly, in brighter, even light.")
+    if info.get("heel_back_above_floor_mm", 0.0) > HEEL_OFF_FLOOR_MM:
+        out.append(f"THE HEEL MAY BE MISSING: the back of the scan is {info['heel_back_above_floor_mm']:.0f} mm above the "
+                   "floor, but a heel rests on it. The underside of the heel probably wasn't scanned, so the "
+                   "insole's length, heel and floor can't be trusted. Scan again, covering the whole heel.")
     for k in ("heel_warning", "pieces_warning", "shallow_warning"):
         if k in info:
             out.append(info[k])

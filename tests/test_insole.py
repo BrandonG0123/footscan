@@ -733,3 +733,15 @@ def test_a_legs_flat_scan_is_stood_up_from_the_leg_and_reads_the_arch(foot, bed)
     assert (r["max_fill_at_mm"]["y"] > 0) == (foot == "right")
     assert placed.vertices[:, 2].max() <= foot_prep.LEG_TRIM_MM + 1.5  # cut by triangle centres: corners poke a little above
     assert not [w for w in r["warnings"] if "ARCH IS ON THE OUTSIDE" in w or "DOESN'T LOOK" in w]
+
+
+def test_a_scan_whose_heel_is_off_the_floor_is_flagged():
+    """A heel rests on the floor. When the back of a prepared scan is far above it, the heel's underside is
+    missing (as in two Mac rebuilds of the first real sole scan: 46.3 and 48.4 mm; the phone's own: 1.2 mm)."""
+    from footscan.recon import foot_prep
+
+    report = dict(sole=dict(seen=0.95), max_fill_mm=10.0, max_fill_at_mm=dict(x=100.0, y=20.0))
+    info = dict(kind="sole_up", footprint_mm=dict(length=245.0, width=95.0))
+    assert not foot_prep.plausibility(dict(info, heel_back_above_floor_mm=1.2), report, "right")
+    warned = foot_prep.plausibility(dict(info, heel_back_above_floor_mm=46.3), report, "right")
+    assert len(warned) == 1 and warned[0].startswith("THE HEEL MAY BE MISSING") and "46 mm" in warned[0]
