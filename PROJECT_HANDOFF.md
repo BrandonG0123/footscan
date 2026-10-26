@@ -78,7 +78,7 @@ DNS, the Cloudflare tunnel or the public site; enrolling or changing Apple signi
 Remember these for this project:
 - Not a medical device, ever; clinician sign-off before sport, 2-week break-in with skin checks and stop-on-pain, no equivalence claims. Refuse to soften these.
 - Every accuracy figure must come from a real run and say what it ran on; synthetic results are labelled synthetic, never reported as real.
-- Owner: Brandon, a student with flat feet who plays tennis; iPhone 17 Pro; Bambu printer with a 256 mm bed; prints TPU 95A.
+- Owner: Brandon, a student with flat feet who plays tennis; iPhone 17 Pro; Bambu printer (256 mm bed assumed, not confirmed); nothing printed yet, TPU 95A is only the suggested starting material.
 - Owner prefers plain words, short answers, and being told what's done vs what's assumed; explain geometry, push back on looks-over-measurements.
 - Insole top = scanned sole minus 1 mm relief; unseen sole is never filled upward; 20 mm arch cap, 12 mm heel cup; no posting in a first fit.
 - Heel outline and cup come from the heel's outline at cup height (12 mm), not 30 mm: the real heel is 74 mm wide at 12 mm, 86 mm at 30 mm.
@@ -97,3 +97,51 @@ Remember these for this project:
 - Phone-to-studio sending fails on the home Wi-Fi; cause unknown (possibly client isolation); waiting on the owner's Safari test.
 - Codex review (/codex:review) was run after every change in the old session; it only works on the owner's Mac.
 ```
+
+## E. Setup migration
+
+Cloud threads load only the root `CLAUDE.md`, `.claude/CLAUDE.md` and `.claude/rules/` from the repo. Everything
+else from the Mac stays behind unless it's moved somewhere below.
+
+| Local piece | What it is here | New home |
+|---|---|---|
+| Rules from this chat (safety, ground rules, never-commit, verify commands) | Only in the conversation until now | **Root `CLAUDE.md`** (added on this branch) + project instructions (C) + memory (D) |
+| Subfolder `CLAUDE.md` files, path-specific rules | None in this repo | Nothing to move |
+| `.claude/launch.json` | Desktop-app preview servers (`footscan serve` on ports 8765-8769) | **Local threads only** (cloud threads run `footscan serve` themselves if a task needs it) |
+| `.mcp.json`, repo skills, agents, commands | None in this repo | Nothing to move |
+| Codex plugin (`/codex:review`, a Node script under `~/.claude/plugins`) | Second-opinion review after each change | **Local threads only**. In cloud threads, ask for a review thread instead, or run it on the Mac before merging |
+| Your other local plugins and hooks (Cache Keeper, Recording Mode, Goal Meter, Collision Guard, next-steps-desktop) | Personal Claude Code mods | **Local threads only** (they're from local marketplaces; add to **Project settings > Plugins** only if they're published, **UNVERIFIED**) |
+| Permission rules in your user settings | Local approvals | **Local threads only**; cloud threads ask for approval in the thread |
+| Built-in browser pane, iOS Simulator tool | Desktop-app tools used to check the studio and the app | **Local threads only** |
+| `claude-api` skill | Built into Claude Code | Nothing to move |
+| Env vars | The code reads none | Nothing to move |
+| `ANTHROPIC_API_KEY` (name only) | Needed only by `scripts/second_look_eval.py`, which costs money | **Cloud environment network secret**, only if you approve that task; otherwise local |
+| `.studio_key`, `.certs/` | Studio login key and the self-signed HTTPS certificate | **Stay on the Mac / deploy machine.** Tests make their own temporary ones |
+| `.demo-data/`, `data/captures/` | Real and demo scans | **Stay on the Mac**; the one real scan file goes to the Library (B) |
+| Python ≥ 3.11 + uv + `.[dev,recon]` | The Python environment (3.14 here) | **Cloud environment setup script** (below) |
+| Node | Used by one optional test (skips without it) | Setup script, optional |
+| Xcode, `xcodebuild`, `xcrun simctl`, `xcrun devicectl`, `swiftc` | iOS build, tests, install on the iPhone, Mac rebuild tool | **Local threads only** (macOS) |
+| Your iPhone (paired) and Bambu Studio | Installing the app; opening 3MFs | **Local threads only** |
+| Extra domains | pypi.org and files.pythonhosted.org (in the default allowlist); github.com / objects.githubusercontent.com if uv has to download a Python; api.anthropic.com only for the second-look eval | **Cloud environment > allowed domains** |
+
+### Draft setup script (cloud environment)
+
+```bash
+#!/usr/bin/env bash
+# footscan cloud thread setup: tools only. Each thread then runs, in the repo:
+#   uv venv && uv pip install -e ".[dev,recon]"
+set -euo pipefail
+if ! command -v uv >/dev/null 2>&1; then
+  python3 -m pip install --quiet --user uv || pip install --quiet uv
+fi
+export PATH="$HOME/.local/bin:$PATH"
+uv --version
+# footscan needs Python >= 3.11; if the image's python3 is older, let uv fetch one:
+python3 -c 'import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)' || uv python install 3.13
+# optional, for the one test that uses node (it skips without it):
+command -v node >/dev/null 2>&1 || true
+```
+
+**UNVERIFIED:** whether `pycolmap` and `pymeshlab` wheels install in the cloud image. If they don't, the thread
+reports it (per the instructions) and you can drop `recon` to `.[dev]`: `tests/test_recon.py` then skips itself,
+and the insole, shoe, compare and server tests don't need them.
