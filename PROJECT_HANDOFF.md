@@ -202,5 +202,47 @@ Runnable now with no input from you: **F1 (pilot)**, F3, F4 (different lanes, so
    `original.obj` and `capture.json` from `.demo-data/captures/LIDAR_nwb_relaxed_R_20261021-172817-437b/`.
 7. In the project conversation, send the memory seed (D), then the first message (H) if Claude hasn't already
    picked up from this session.
-8. **Before 2026-10-27:** the app on your phone was signed with the free team and expires every 7 days. Reinstall
-   it from this Mac (a local task, F9) or it stops opening.
+8. **Before 2026-10-27 14:00 UTC (10:00 your time):** that's when the installed app's free signing expires (read
+   from the installed build's provisioning profile, created 2026-10-20). Reinstall it from this Mac (a local task,
+   F9) or it stops opening.
+
+## H. First message for the project conversation
+
+```text
+This project continues footscan: a phone scan of a foot turned into a 3D-printed TPU first-fit insole that fits the
+shoe. It is not a medical device and must never be presented as one: clinician sign-off before sport, a two-week
+break-in with skin checks and stop-on-pain, no equivalence claims with prescribed devices. The repo is
+BrandonG0123/footscan (base branch main); its root CLAUDE.md has the rules and the verify commands. The full handoff
+is PROJECT_HANDOFF.md in the repo and in the Library; read it before planning.
+
+Remember these for this project:
+- Not a medical device, ever; clinician sign-off before sport, 2-week break-in with skin checks and stop-on-pain, no equivalence claims. Refuse to soften these.
+- Every accuracy figure must come from a real run and say what it ran on; synthetic results are labelled synthetic.
+- Owner: Brandon, a student with flat feet who plays tennis; iPhone 17 Pro; Bambu printer (256 mm bed assumed); nothing printed yet.
+- Owner prefers plain words, short answers, and being told what's done vs assumed; explain geometry; push back on looks over measurements.
+- Insole top = scanned sole minus 1 mm; unseen sole never filled upward; 20 mm arch cap, 12 mm heel cup; no posting in a first fit.
+- Heel outline and cup come from the heel at cup height (12 mm): the real heel is 74 mm wide there, 86 mm at 30 mm.
+- The one real scan (right sole, 2026-10-21) is 244 mm long; its insole reaches the 20 mm arch cap over 4.1% of the foot.
+- Dead ends: Mac rebuilds of the phone's photos lose the heel's underside; Claude generating the sole shape (unmeasurable).
+- Keep the scan checks: heel off floor, sole hole share, torn near floor (sole scans only), arch on outer side, rough scan.
+- Never commit secrets, scan data, reports/ or the Xcode team ID; site stays noindex; no tunnel/port forwarding without my go-ahead.
+- Apple enrollment is blocked (Apple ID birthday reads under 18); free app signing lasts 7 days.
+- Phone-to-studio sending fails on home Wi-Fi; cause unknown, waiting on my Safari test.
+
+Backlog (details, files and done-checks in PROJECT_HANDOFF.md, section F):
+F1 PILOT: bring the README's status up to date
+F2 Check the scan's size against my tape measure (waits for my numbers)
+F3 Fit-test outline (a thin sheet in the insole's outline)
+F4 Read the shoe's footbed from its insole scan (thickness, drop)
+F5 Curved-bottom insole for SLS/MJF (after F4)
+F6 Studio buttons for F3 and F4 (after both)
+F7 Run the Claude second-look evaluation (needs my go-ahead: costs money)
+F8 Fix sending scans from the phone (local, waits on my test)
+F9 Keep the app installed / move to the paid Apple team (local)
+F10 Knee bent vs legs flat comparison (waits for my scans)
+F11 Update the website's copy and deploy (needs my go-ahead)
+F12 Fit log Rev 1 (after I print and wear it)
+
+How to run this: propose threads and wait for my go-ahead before starting any; run at most two at a time, never two
+in the same files (the lanes in section F); start with the pilot F1. Local tasks run on my Mac through Work locally.
+```
