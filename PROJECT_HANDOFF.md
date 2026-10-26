@@ -159,7 +159,7 @@ LAN, or a secret that stays there).
 | F2 | **Check the scan's size against the tape measure** | Once Brandon sends standing length and width: the real scan's footprint length and widest width, measured by a small script, compared with his numbers (standing is expected a few mm larger than an unloaded scan); written up in `docs/benchmark.md` under "Measuring it end to end". | new `scripts/measure_scan.py`, `docs/benchmark.md` | Script prints both numbers from `/mnt/project-files/original.obj`; doc states the method, both measurements and the difference; no number without its source. | Cloud | Brandon's two measurements | docs-benchmark |
 | F3 | **Fit-test outline** | `footscan insole ... --fit-test` also writes a flat 1.5 mm sheet in the insole's exact outline (3MF), which prints in minutes to check length and width in the shoe before a long TPU print. | new `src/footscan/fit_test.py`, `src/footscan/cli.py`, new `tests/test_fit_test.py` | Test: the sheet's outline matches the insole's within 0.5 mm, is 1.5 mm thick, is closed, and fits the bed; full suite passes. | Cloud | none | cli |
 | F4 | **Read the shoe's footbed from its insole scan** | From a shoe's-insole scan: its thickness at heel, arch and forefoot and its heel-to-toe drop, in the fit report; a warning where the printed insole would be thicker than the stock one by more than a set margin. Report and warn only, no geometry change yet. | `src/footscan/recon/shoe.py`, `tests/test_shoe.py`, `tests/synth.py` (`shoe_insole` gets a thickness profile) | Synthetic insole with a known profile reads back within 0.5 mm; tests fail without the change; benchmark `failed: 0`. | Cloud | none (real check needs Brandon's shoe-insole scan) | shoe |
-| F5 | **Curved-bottom insole for SLS/MJF printing** | A second export whose bottom follows the shoe's footbed (from F4), for powder-bed printing; the flat-bottomed file stays the default for the Bambu. | `src/footscan/insole.py`, `tests/test_insole.py` | Bottom matches the synthetic footbed within 0.5 mm; top unchanged to 0.01 mm; flat export byte-identical to before. | Cloud | F4 | shoe |
+| F5 | **Curved-bottom insole for SLS/MJF printing** | A second export whose bottom follows the shoe's footbed (from F4), for powder-bed printing; the flat-bottomed file stays the default for the Bambu. | `src/footscan/insole.py`, `tests/test_insole.py` | Bottom matches the synthetic footbed within 0.5 mm; top unchanged to 0.01 mm; flat export's mesh unchanged (same vertices and faces as before). | Cloud | F4 | shoe |
 | F6 | **Studio buttons for F3 and F4** | The scan card offers the fit-test sheet download and shows the footbed report. | `src/footscan/server.py`, `web/studio/captures.html`, `tests/test_server.py` | Server tests cover the new endpoints; page checked in a browser (local) or with the server tests (cloud). | Cloud (browser check local) | F3, F4 | studio |
 | F7 | **Run the Claude "second look" evaluation** | `scripts/second_look_eval.py` on the real scan and its damaged copies; does Claude catch anything footscan's checks miss? Results added to `docs/benchmark.md`. | `docs/benchmark.md` (results only) | Script's score line for both, with the date and model; no claims beyond the 7 cases. | Local, or cloud with `ANTHROPIC_API_KEY` as a secret | **Your go-ahead (costs money)**; after F2 (same doc) | docs-benchmark |
 | F8 | **Fix sending scans from the phone to the studio** | The app's scan reaches the studio on the home network, or a clear diagnosis of why the network blocks it. | `ios/FootscanCapture/FootscanCapture/Studio.swift`, maybe `src/footscan/server.py` | A real scan sent from the phone appears in the studio. | Local (iPhone + LAN) | Brandon's Safari test of the studio address | phone |
@@ -169,3 +169,38 @@ LAN, or a secret that stays there).
 | F12 | **Fit log: Rev 1** | After printing and wearing: the first entry in `docs/fit-log.md`. Open question for Brandon: the fit log says Phase 0 must pass before Rev 1; does the walking-only first fit count as Rev 1 or as a pre-Rev-1 test? | `docs/fit-log.md` | Entry filled from what Brandon reports, nothing invented. | Cloud | Brandon prints and wears it | docs-fitlog |
 
 Runnable now with no input from you: **F1 (pilot)**, F3, F4 (different lanes, so any two together).
+
+## G. Your transfer steps (this is a local session on your Mac)
+
+1. **Put the repo on GitHub** (nothing has been pushed; the repo has no remote).
+   - On github.com, create an **empty, private** repo `BrandonG0123/footscan` (no README, no licence, no .gitignore).
+   - Then, in `~/code/footscan` (or tell Claude in this session to run it; SSH to GitHub already works on this Mac):
+     ```bash
+     git remote add origin git@github.com:BrandonG0123/footscan.git
+     ```
+     ```bash
+     git push -u origin main project-handoff/footscan
+     ```
+2. **Merge the handoff branch into `main` first.** Threads branch from the default branch, and the handoff branch
+   is `main` plus documentation commits only (`CLAUDE.md`, `PROJECT_HANDOFF.md`), so a fast-forward is safe:
+   ```bash
+   git switch main && git merge --ff-only project-handoff/footscan && git push
+   ```
+   The base branch in the instructions (C) is then `main`.
+3. **Install the Claude GitHub App** on `BrandonG0123/footscan` (github.com/apps/claude), with push access.
+4. **Move this session into a project:** run `/remote-control` in this session, then at claude.ai/code find this
+   session's row in the sidebar, open its menu, **Move to project > Continue as new project**. This fails if
+   **Require trusted devices** is on (then use the fallback). Fallback: **New project**, add `BrandonG0123/footscan`,
+   and send the message in H.
+5. **Project settings:**
+   - **Memory > Project instructions:** paste the block from C.
+   - **Environment:** the repo; the setup script from E; allowed domains as in E.
+   - **General:** Thread model **Opus, high effort** for code (geometry and safety-relevant numbers); ask for
+     Sonnet per task for doc-only work (F1, F12) to save plan limits. Coordinator **Opus, low effort** (the default)
+     is enough: it plans and routes, the threads do the work.
+6. **Library:** upload `PROJECT_HANDOFF.md`, and (your call: it's a scan of your foot) the real scan's
+   `original.obj` and `capture.json` from `.demo-data/captures/LIDAR_nwb_relaxed_R_20261021-172817-437b/`.
+7. In the project conversation, send the memory seed (D), then the first message (H) if Claude hasn't already
+   picked up from this session.
+8. **Before 2026-10-27:** the app on your phone was signed with the free team and expires every 7 days. Reinstall
+   it from this Mac (a local task, F9) or it stops opening.
