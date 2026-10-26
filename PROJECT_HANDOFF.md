@@ -246,3 +246,69 @@ F12 Fit log Rev 1 (after I print and wear it)
 How to run this: propose threads and wait for my go-ahead before starting any; run at most two at a time, never two
 in the same files (the lanes in section F); start with the pilot F1. Local tasks run on my Mac through Work locally.
 ```
+
+## I. Where the work stands (reconstructed from git, docs and files)
+
+**Done** (commits 2026-09-16 to 2026-10-24, 88 on `main`, last `58551bd`):
+- Phases 0-3 (measurement protocol, capture mat and pages, COLMAP reconstruction, landmark viewer) are built and
+  waiting for real data (README phase table).
+- iPhone app: Object Capture scanning with a coverage gate (Finish only once every side has photos); scan kinds:
+  sole up (knee bent), sole legs flat, foam print, shoe's insole, whole foot, calibration object; animated
+  instructions; sending to the studio; unit tests pass in the simulator.
+- Studio: research library, Make insole (optional shoe length or a scanned shoe insole), 3-D preview, Compare scans.
+- Insole generator: sole height map, caps, toes flat, outline, heel shaped at cup height, heel cup wall that never
+  rises where no sole was seen, edge bevel, bed fit at any angle, 3MF/STL, clinician summary sheet.
+- Scan checks: not foot-shaped, invented sole, little sole seen, heel off the floor, hole in the sole, torn near the
+  floor, arch on the outer side, rough scan.
+- Synthetic benchmark: 58 cases, 0 failed, p95 at most 0.97 mm (`docs/benchmark.md`). Full test suite: 240 passed
+  on 2026-10-24.
+- One insole from the real scan: `~/Desktop/footscan-insole/right-insole-2026-10-25.3mf` (270 mm, US men's 9 length
+  assumed). Not printed or worn.
+
+**Half done:**
+- Shoe fit: built and tested on synthetic insoles; never tried on a real shoe insole.
+- Legs flat vs knee bent: the comparison tool exists; no real pairs of scans yet.
+- Claude second look: `scripts/second_look_eval.py` built; only dry-run (footscan's own checks: 7 of 7 cases right);
+  the Claude part never ran (no API key on the Mac).
+- Hosting: `docs/HOSTING.md` and `docs/DEPLOY-TANK.md` written; the tunnel stage waits for your go-ahead. Whether
+  anything is running on the deploy machine now: **UNVERIFIED**.
+- README status table is out of date (F1).
+- Apple Developer enrollment blocked by the Apple ID's birthday.
+- Sending from the phone to the studio fails on the home network (cause **UNVERIFIED**).
+
+**Left:** the backlog in F, and these that only you can do: tape-measure the foot, scan the shoe's insole, print and
+wear the insole, clinician sign-off, the Safari test, enrollment.
+
+**Decisions and why:**
+- Sole-first scanning (knee bent, legs flat, foam print) over whole-foot scans: a foot standing on the floor hides
+  its sole, and Object Capture invents an underside.
+- Flat insole bottom: prints without supports; TPU bends into the shoe. Curved bottoms wait for SLS/MJF.
+- Heel at cup height (12 mm), not 30 mm: on the real scan the old outline made a 92.6 mm heel with the wall about
+  6 mm off the heel; now 80.2 mm.
+- Which shoe an insole comes from is read from its toe end (shoe lasts curve toward the big toe), not from which
+  way fits the foot best: on the real scan, best-fit mirroring picked the wrong side.
+- Shoe fit compares the foot's outline within 10 mm of the floor (what stands on an insole).
+- A plain heel check (back of the scan within 15 mm of the floor) instead of AI: it separated the real scan (1.2 mm)
+  from the Mac rebuilds (46.3, 48.4 mm) with no false alarms in 58 synthetic cases.
+
+**Tried and dropped:**
+- Rebuilding the phone's photos on the Mac (full, raw, with the phone's checkpoint, unmasked): all lost the heel's
+  underside (`docs/benchmark.md`).
+- Claude generating the sole shape: nothing to check it against, can't be explained on the clinician sheet.
+- Heel-to-ball width ratio as a heel check: didn't separate (0.62 for the Mac rebuilds vs 0.67 for a good synthetic foot).
+- trimesh's Taubin smoothing (shrinks the shape), then true Taubin (doesn't remove speckle): replaced by a measured
+  Gaussian blur. Smooth-and-compare noise estimate: replaced by curved-patch residuals.
+- Plain outline ICP for scan comparison: one missing stretch dragged it; now trimmed to the closest 70%.
+
+**Known bugs and pitfalls:**
+- A scan missing 60 mm of toes shifts the floor (the ball is found as a share of the length): p95 1.2 mm, arch 1.3 mm low.
+- Unloaded scans catch the arch at its highest; the real insole reaches the 20 mm cap.
+- Object Capture fills gaps with guessed surface that open-edge checks can't see.
+- Foam prints and foot-on-floor scans are open meshes by design: the torn and hole checks apply to sole scans only.
+- The Xcode project file carries the team ID locally and must stay uncommitted.
+- `docs/fit-log.md` says Phase 0 must pass before Rev 1; whether the walking-only first fit counts is undecided.
+
+**How Brandon likes to work:** short, plain answers that say what's done and what's assumed; real numbers only;
+the work kept moving without stopping to ask unless blocked; a Codex review after each change, with its findings
+fixed; descriptive commits (what changed for a user, and why); ask before anything outward-facing, costly or
+irreversible. He's new to his Claude Code mods and likes a one-line explanation when one shows up (local only).
