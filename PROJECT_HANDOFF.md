@@ -143,5 +143,6 @@ command -v node >/dev/null 2>&1 || true
 ```
 
 **UNVERIFIED:** whether `pycolmap` and `pymeshlab` wheels install in the cloud image. If they don't, the thread
-reports it (per the instructions) and you can drop `recon` to `.[dev]`: `tests/test_recon.py` then skips itself,
-and the insole, shoe, compare and server tests don't need them.
+reports it (per the instructions). The fallback is
+`uv pip install -e ".[dev]" manifold3d rtree shapely opencv-python-headless`: the insole, shoe, compare and server
+code needs those four but not COLMAP or MeshLab, and `tests/test_recon.py` skips itself without `pymeshlab`.
