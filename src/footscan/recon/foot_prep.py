@@ -475,11 +475,47 @@ def _orient_and_trim(placed, info, trim_mm, heel_by: str = "leg", track: list | 
     e = placed.edges_sorted[trimesh.grouping.group_rows(placed.edges_sorted, require_count=1)]
     low = V[e][:, :, 2].max(axis=1) < OPEN_EDGE_BELOW_MM
     info["open_edges_near_floor_mm"] = round(float(np.linalg.norm(V[e[low, 0]] - V[e[low, 1]], axis=1).sum()), 0)
+    sides = _ball_sides(placed)
+    if sides is not None:
+        info["ball_sides_above_floor_mm"] = dict(minus_x=round(sides[0], 1), plus_x=round(sides[1], 1))
     return placed
 
 
-def prepare(mesh, up: str = "y", trim_mm: float | None = LEG_TRIM_MM):
-    """Any-units, Object-Capture-frame foot -> (mat-frame mesh, decisions). Doesn't modify the input."""
+BALL_FROM, BALL_TO = 0.60, 0.75  # share of the length from the heel: the ball of the foot (the metatarsal heads)
+
+
+def _ball_sides(placed) -> tuple[float, float] | None:
+    """How high the two sides of the ball of the foot sit above the floor (mm): (-x side, +x side).
+
+    A standing foot rests on both sides of the ball: the big toe's joint on
+    the inner side, the little toe's on the outer. Across the ball
+    (``BALL_FROM``-``BALL_TO`` of the length from the heel, toes toward +y),
+    the underside is split into thirds and the lowest of each outer third
+    is read (its 2nd percentile, so one speck of noise doesn't count). On a
+    foot standing level both are near 0. One well above the floor means the
+    forefoot was rolled onto its other edge when it was scanned, which a
+    flat floor can't undo: see plausibility(). None if the scan has too
+    little underside there.
+    """
+    C, N = placed.triangles_center, placed.face_normals
+    y0, L = float(placed.vertices[:, 1].min()), float(np.ptp(placed.vertices[:, 1]))
+    under = ((N[:, 2] < -0.3) & (C[:, 1] > y0 + BALL_FROM * L) & (C[:, 1] < y0 + BALL_TO * L)
+             & (C[:, 2] < OPEN_EDGE_BELOW_MM))
+    if under.sum() < 30:
+        return None
+    x, z = C[under, 0], C[under, 2]
+    lo, hi = np.percentile(x, [2, 98])
+    third = (hi - lo) / 3
+    a, b = z[x < lo + third], z[x > hi - third]
+    if len(a) < 10 or len(b) < 10:
+        return None
+    return float(np.percentile(a, 2)), float(np.percentile(b, 2))
+
+
+def prepare(mesh, up: str = "y", trim_mm: float | None = LEG_TRIM_MM, foot: str | None = None):
+    """Any-units, Object-Capture-frame foot -> (mat-frame mesh, decisions). Doesn't modify the input.
+
+    ``foot`` is taken by every ``PREPARE`` step alike; this one doesn't need it."""
     mm, units, factor = imported.to_millimetres(mesh)
     placed, _, floor_info = imported.to_floor_frame(mm, up)
     track = [np.array(floor_info["transform"]) @ np.diag([factor, factor, factor, 1.0])]
@@ -530,7 +566,7 @@ def _bed_height(m) -> float | None:
     return None
 
 
-def prepare_sole_up(mesh, up: str = "y", trim_mm: float | None = LEG_TRIM_MM):
+def prepare_sole_up(mesh, up: str = "y", trim_mm: float | None = LEG_TRIM_MM, foot: str | None = None):
     """Sole-up scan (the sole faced the ceiling, nothing pressing on it) -> (mat-frame mesh, decisions).
 
     1. Turn it over: the phone knows which way was up, so the sole now faces
@@ -618,7 +654,7 @@ def _bed_under(m):
     return zb, outline
 
 
-def prepare_sole_hanging(mesh, up: str = "y", trim_mm: float | None = LEG_TRIM_MM):
+def prepare_sole_hanging(mesh, up: str = "y", trim_mm: float | None = LEG_TRIM_MM, foot: str | None = None):
     """Legs-flat sole scan (face down, legs straight, the feet just past the end of the bed) -> (mat frame, decisions).
 
     Here the sole faces back, not up, so which way is "up" for the foot comes
@@ -631,6 +667,7 @@ def prepare_sole_hanging(mesh, up: str = "y", trim_mm: float | None = LEG_TRIM_M
        which hangs lower than the shin.
     3. Turned so that direction points up and the front of the shin (facing
        the bed, so down) faces forward: the foot as if standing, unloaded.
+       If both legs are in the scan, only ``foot``'s is kept (``_one_foot``).
     4. As a sole-up scan from there: rested, stood on the tripod, toes to
        +y, the leg trimmed.
     """
@@ -652,17 +689,29 @@ def prepare_sole_hanging(mesh, up: str = "y", trim_mm: float | None = LEG_TRIM_M
         m.remove_unreferenced_vertices()
         bed_centre = np.array(outline.centroid.coords[0])
         info["bed_found"] = True
-    m, _ = _largest_piece(m)
+    # the biggest piece, or the two biggest if they're much the same size: both legs, each in a piece of its
+    # own (the right one is chosen once the scan is stood up, by _one_foot)
+    pieces = _pieces(m)
+    if not pieces:
+        raise FootPrepError("almost nothing left once the bed is taken away: is the foot in the scan?")
+    keep = pieces[0][0]
+    if len(pieces) > 1 and pieces[1][1] >= TWO_LEGS_SHARE * pieces[0][1]:
+        keep = keep | pieces[1][0]
+    m.update_faces(keep)
+    m.remove_unreferenced_vertices()
     if len(m.faces) < 100:
         raise FootPrepError("almost nothing left once the bed is taken away: is the foot in the scan?")
 
-    # 2. the leg's direction (level): the piece's long axis seen from above
+    # 2. the leg's direction (level): the long axis seen from above, of the surface by area (not of the
+    # points: a finely meshed foot would outweigh a coarsely meshed leg)
     V = np.asarray(m.vertices)
-    xy = V[:, :2] - V[:, :2].mean(0)
-    axis = np.linalg.eigh(np.cov(xy.T))[1][:, 1]
+    w = m.area_faces
+    mid = np.average(m.triangles_center[:, :2], axis=0, weights=w)
+    axis = np.linalg.eigh(np.cov((m.triangles_center[:, :2] - mid).T, aweights=w))[1][:, 1]
+    xy = V[:, :2] - mid
     along = xy @ axis
     if bed_centre is not None:
-        knee_way = float((bed_centre - V[:, :2].mean(0)) @ axis)
+        knee_way = float((bed_centre - mid) @ axis)
         info["leg_from"] = "toward the bed"
     else:
         lo, hi = along < np.percentile(along, 15), along > np.percentile(along, 85)
@@ -681,7 +730,74 @@ def prepare_sole_hanging(mesh, up: str = "y", trim_mm: float | None = LEG_TRIM_M
     _move(m, _shift(0, 0, -m.vertices[:, 2].min()), track)
     m.update_faces(m.triangles_center[:, 2] < SOLE_UP_KEEP_MM)
     m.remove_unreferenced_vertices()
+    m = _one_foot(m, foot, info)
     return _finish_unloaded(m, info, track, trim_mm)
+
+
+# Legs flat, both legs lie on the bed, so a box drawn loosely takes in both feet; side by side they often
+# touch, and Object Capture joins them into one piece.
+SHINS_FROM_MM = 75.0       # look for two shins from this high up (the feet and ankles, lower down, may touch)
+SHINS_BAND_MM = 25.0
+SHINS_GAP_MM = 10.0        # an empty strip at least this wide between them
+SHIN_MIN_SHARE = 0.25      # each side holds at least this share of the band's surface: two legs, not a leg and a crumb
+TWO_LEGS_SHARE = 0.5       # a second piece at least this big next to the biggest: the other leg, kept until _one_foot
+
+
+def _one_foot(m, foot: str | None, info):
+    """In a legs-flat scan stood up (leg along +z, the front of the shin toward +x): keep only ``foot``.
+
+    Seen from the front, a person's left is on their left, which in this
+    frame is +y (x forward, z up). Going up the scan in 25 mm bands from
+    ``SHINS_FROM_MM``, the first band whose surface, summed across (y, in
+    5 mm steps), has an empty strip at least ``SHINS_GAP_MM`` wide with a
+    good share of surface on each side holds two shins. The scan is cut in
+    two down the middle of that strip, top to bottom, and the side of
+    ``foot`` is kept. Lower down, the feet may touch and be joined; the cut
+    separates them there too, along the same line. The cut leaves an open
+    edge where they touched, which the torn-scan check reports if it's
+    long: the inner side of the foot was hidden against the other one.
+
+    One leg (no such strip), or no ``foot`` given: the scan as it was.
+    """
+    C, A = m.triangles_center, m.area_faces
+    for z0 in np.arange(SHINS_FROM_MM, C[:, 2].max(), SHINS_BAND_MM):
+        band = (C[:, 2] >= z0) & (C[:, 2] < z0 + SHINS_BAND_MM)
+        if A[band].sum() <= 0:
+            continue
+        y = C[band, 1]
+        edges = np.arange(y.min(), y.max() + 5.0, 5.0)
+        if len(edges) < 3:
+            continue
+        hist, edges = np.histogram(y, bins=edges, weights=A[band])
+        cum = np.cumsum(hist) / hist.sum()
+        empty = hist <= 0
+        i = 0
+        while i < len(hist):
+            if not empty[i]:
+                i += 1
+                continue
+            j = i
+            while j < len(hist) and empty[j]:
+                j += 1
+            # bins i..j-1 are empty: a strip from edges[i] to edges[j]
+            if (edges[j] - edges[i] >= SHINS_GAP_MM and cum[i - 1] >= SHIN_MIN_SHARE
+                    and 1.0 - cum[i - 1] >= SHIN_MIN_SHARE):
+                split = float((edges[i] + edges[j]) / 2)
+                info["two_feet"] = dict(found_mm_up=round(float(z0), 0), split_at_y_mm=round(split, 1))
+                if foot not in ("left", "right"):
+                    info["two_feet_warning"] = ("BOTH FEET ARE IN THE SCAN and it isn't said which one this is: "
+                                                "scan one foot at a time")
+                    return m
+                keep = C[:, 1] > split if foot == "left" else C[:, 1] < split
+                out = m.copy()
+                out.update_faces(keep)
+                out.remove_unreferenced_vertices()
+                info["two_feet"]["kept"] = foot
+                info["two_feet_note"] = (f"both feet were in the scan: the {foot} one was kept (cut between the shins, "
+                                         f"{z0:.0f} mm up). Next time, keep the other foot out of the box")
+                return out
+            i = j
+    return m
 
 
 
@@ -994,7 +1110,7 @@ def insole_from_object_capture(mesh, foot: str, up: str = "y", params=None, kind
 
     if kind not in PREPARE:
         raise FootPrepError(f"kind must be one of {sorted(PREPARE)}")
-    placed, info = (PREPARE[kind](mesh, up, foot=foot) if kind == "impression" else PREPARE[kind](mesh, up))
+    placed, info = PREPARE[kind](mesh, up, foot=foot)
     if kind in ("sole_up", "sole_hanging"):
         # relaxed in the air the toes hang up off the floor; standing they lie flat: no fill under them
         from dataclasses import replace
@@ -1023,6 +1139,13 @@ SOLE_OPEN_WARN = 0.05  # share of a sole scan's footprint that's a hole up into 
 OPEN_EDGE_BELOW_MM = 40.0
 OPEN_EDGE_WARN_MM = 50.0
 FOOT_RATIO = (0.28, 0.50)
+# The two sides of the ball of the foot (_ball_sides) after the floor is set: on the first real left sole-up
+# scan (LIDAR_nwb_relaxed_L_20261027-151404-89df), whose forefoot was rolled onto its outer edge, 8.6 mm apart;
+# on the right one from the same session (..._R_20261027-151404-2349), 1.2 mm. The tripod floor
+# (_settle_floor) doesn't level a roll that big: it looks for the ball's sides only up to UNLOADED_CONTACT_MM.
+# 5 mm is a judgment between the two: past it, the fill under the raised side is a wedge that changes how
+# the foot stands.
+BALL_ROLL_WARN_MM = 5.0
 INVENTED_SOLE_SHARE = 0.9
 
 
@@ -1073,7 +1196,15 @@ def plausibility(info: dict, report: dict, foot: str | None = None) -> list[str]
         out.append(f"THE SCAN IS TORN NEAR THE FLOOR: {info['open_edges_near_floor_mm']:.0f} mm of open edges within "
                    f"{OPEN_EDGE_BELOW_MM:.0f} mm of the floor, where part of the foot (toes, heel, a side or the "
                    "sole) is missing. Scan again, covering the whole foot.")
-    for k in ("heel_warning", "pieces_warning", "shallow_warning"):
+    sides = info.get("ball_sides_above_floor_mm")
+    if kind in ("sole_up", "sole_hanging") and sides:
+        lift = abs(sides["plus_x"] - sides["minus_x"])
+        if lift > BALL_ROLL_WARN_MM:
+            out.append(f"THE FOREFOOT WAS ROLLED ONTO ONE EDGE: one side of the ball of the foot is {lift:.0f} mm higher "
+                       "than the other. Standing, both sides rest on the floor, so the insole would fill under the "
+                       "raised side: a wedge (posting), which a first fit must not have. Don't print this insole. "
+                       "Scan again with the ankle held at a right angle and the sole facing straight up.")
+    for k in ("two_feet_warning", "two_feet_note", "heel_warning", "pieces_warning", "shallow_warning"):
         if k in info:
             out.append(info[k])
     return out

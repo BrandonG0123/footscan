@@ -1196,8 +1196,7 @@ def prepared_scan(folder: Path, meta: dict):
         kind = meta.get("scan_kind") or "foot"
         up = (meta.get("mesh") or {}).get("up", "y")
         mesh = load_geometry(folder / "mesh.ply")
-        prep = foot_prep.PREPARE[kind]
-        return (prep(mesh, up, foot=meta["foot"]) if kind == "impression" else prep(mesh, up))[0]
+        return foot_prep.PREPARE[kind](mesh, up, foot=meta["foot"])[0]
     if (folder / "recon" / "mesh.ply").is_file():
         return load_geometry(folder / "recon" / "mesh.ply")  # a photo reconstruction is already on the mat
     return None
