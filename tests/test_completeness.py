@@ -66,3 +66,15 @@ def test_make_insole_warns_about_missing_toes_too():
     whole, _ = foot_prep.insole_from_object_capture(synth.sole_up_capture(synth.shaped_foot("right")), "right",
                                                     kind="sole_up")
     assert not any("MISSING" in w or "CUT OFF" in w for w in whole.report["warnings"])
+
+
+def test_a_scan_that_isnt_one_foot_is_caught_before_its_ends_are_judged():
+    """The legs-flat scan 2190 caught both feet merged: its outline read 264.9 x 254.3 mm (real check, Oct 28).
+    A real kept right sole scan, 2349, read 244.1 x 89.6 mm."""
+    both = dict(length_mm=264.9, width_mm=254.3, toe_end=0.24, heel_end=0.28)
+    found = completeness.problems(both)
+    assert len(found) == 1 and found[0].startswith("THIS ISN'T ONE WHOLE FOOT: seen from above the scan is 265 x 254 mm")
+    assert completeness.problems(dict(length_mm=244.1, width_mm=89.6, toe_end=0.23, heel_end=0.48)) == []
+    # far too short to be an adult foot
+    assert completeness.problems(dict(length_mm=150.0, width_mm=60.0, toe_end=0.3, heel_end=0.4))[0].startswith(
+        "THIS ISN'T ONE WHOLE FOOT")

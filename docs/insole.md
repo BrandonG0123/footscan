@@ -152,12 +152,28 @@ page, marks the scan *Scan again*, and never sends it again (not even with
   `LIDAR_nwb_relaxed_L_20261027-151404-89df` made a 227.0 x 86.3 mm
   outline against 246.4 x 102.3 mm for the right foot's scan that afternoon,
   and passed every check before this one.
+- **Not one whole foot**: the outline's length or width/length is outside an
+  adult foot's (180-330 mm, 0.28-0.50), e.g. both feet caught together.
 - **The studio couldn't prepare it at all** (no foot found on the floor).
 
 The end-shape thresholds were set on SYNTHETIC scans (tests/synth.py's
 `shaped_foot` and `curved_foot` with an end cut off and closed over, as
 sole-up scans in metres, Y up), not on real feet; the numbers above are from
-those runs. A standing foot and a foam print aren't checked. Make insole on a
+those runs.
+
+First run on real scans (`scripts/check_completeness.py` on the studio's
+captures, 2026-10-28): the right sole-up scan
+`LIDAR_nwb_relaxed_R_20261027-151404-2349` is kept (244.1 x 89.6 mm, toe end
+0.23, heel end 0.48). The left sole-up scan 89df and its duplicate 537f
+(228.2 x 79.8 mm, toe end 0.46, heel end 0.59, toe tip 17.8 mm up) are
+refused, by the length check: 16 mm shorter than 2349. Their ends weren't
+square enough for the shape checks. The legs-flat scan
+`LIDAR_nwb_relaxed_L_20261027-151815-2190`, which caught both feet merged,
+read 264.9 x 254.3 mm and was kept by that first version; the *not one whole
+foot* check was added for it. Four real scans: the thresholds aren't proven
+by them.
+
+A standing foot and a foam print aren't checked. Make insole on a
 scan kept before this check still lists the same problems as warnings. To see
 what the check makes of the scans already in the studio, without changing
 them: `.venv/bin/python scripts/check_completeness.py`.

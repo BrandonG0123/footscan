@@ -116,7 +116,21 @@ def measure(placed) -> dict:
 
 
 def problems(m: dict) -> list[str]:
-    """What's missing from a scan, in plain words (each ends with what to do), from ``measure``'s result."""
+    """What's missing from a scan, in plain words (each ends with what to do), from ``measure``'s result.
+
+    First, is the outline one foot at all? Its length and width against foot_prep's limits for an adult
+    foot (the same ones Make insole warns with). The legs-flat scan LIDAR_nwb_relaxed_L_20261027-151815-2190
+    caught both feet merged into one piece: 264.9 x 254.3 mm. Then its ends mean nothing, so nothing else
+    is said."""
+    from . import foot_prep
+
+    L, W = m["length_mm"], m["width_mm"]
+    lo, hi = foot_prep.FOOT_RATIO
+    if not (foot_prep.FOOT_LENGTH_MM[0] <= L <= foot_prep.FOOT_LENGTH_MM[1]) or not (lo <= W / max(L, 1e-9) <= hi):
+        return [f"THIS ISN'T ONE WHOLE FOOT: seen from above the scan is {L:.0f} x {W:.0f} mm, but a foot is about "
+                f"{foot_prep.FOOT_LENGTH_MM[0]:.0f}-{foot_prep.FOOT_LENGTH_MM[1]:.0f} mm long and {lo:.2f}-{hi:.2f} "
+                "times as wide as long. Both feet may have been caught together, or part of the bed or leg. Scan "
+                "again with only this foot in view, the other foot well out of the way."]
     out = []
     if m["toe_end"] > TOE_END_SQUARE:
         out.append(f"THE TOES ARE MISSING: the front of the scan ends square ({m['toe_end']:.0%} of the foot's width "
