@@ -137,7 +137,7 @@ first (`_lay_toes_flat`): from the last point past the ball still on the
 floor, the toes' angle is read off the underside, and the front of the foot
 is turned down by it round a 10 mm joint just behind that point (toes bend at
 their joints, not at the skin; 10 mm is a judgment, to be set from a ruler
-measurement). Laid flat, the same foot reads -3.4 to +6.6 mm at 35 degrees.
+measurement). Laid flat, the same foot reads -4.1 to +6.6 mm at 35 degrees.
 The table of runs is beside `TOES_JOINT_UP_MM` in `foot_prep.py`; the
 decision is recorded as `toes_laid_flat` (angle, pivot, joint, length before
 and after). A front rising more than 60 degrees isn't laid flat and gets a
@@ -203,7 +203,9 @@ foot* check was added for it. Four real scans: the thresholds aren't proven
 by them.
 Those lengths predate laying hung-up toes flat (29 Oct): 89df's toe tip was
 17.8 mm up, so it may read longer now; not yet rerun. Saved measures from
-before are measured again before a length comparison (`MEASURED_AS`).
+before are measured again before a length comparison, and a sole scan's
+insole made before then shows as out of date until it's made again
+(`foot_prep.prep_version()`).
 
 A standing foot and a foam print aren't checked. Make insole on a
 scan kept before this check still lists the same problems as warnings. To see

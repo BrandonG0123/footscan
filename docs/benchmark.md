@@ -164,9 +164,9 @@ ball along the whole underside when the toes hang up:
 | case | outline length, mm (before -> after) | p95 height error, mm | floor tilt, deg | arch on the inner side |
 |---|---|---|---|---|
 | sole up, toes bent up 20 | -4.8 / -4.9 -> -1.4 | 0.19 / 1.49 -> 0.19 | 0.14 / 1.73 -> 0.14 / 0.13 | yes -> yes |
-| sole up, toes bent up 35 | -19.8 / -19.5 -> -3.4 | 1.15 / 1.44 -> 0.30 | 1.30 / 1.61 -> 0.16 / 0.15 | NO (false "arch on the outside") -> yes |
-| sole up, toes bent up 35, speckle 0.6 | -19.4 / -20.7 -> -4.4 / -4.9 | 2.28 / 0.91 -> 0.81 | 2.81 / 0.83 -> 0.95 / 0.86 | yes -> yes |
-| legs flat, toes bent up 35 | -19.8 / -19.6 -> -3.4 | 1.15 / 1.43 -> 0.29 | 1.31 / 1.60 -> 0.13 / 0.14 | NO -> yes |
+| sole up, toes bent up 35 | -19.8 / -19.5 -> -3.9 / -4.0 | 1.15 / 1.44 -> 0.30 | 1.30 / 1.61 -> 0.16 / 0.15 | NO (false "arch on the outside") -> yes |
+| sole up, toes bent up 35, speckle 0.6 | -19.4 / -20.7 -> -4.6 / -4.9 | 2.28 / 0.91 -> 0.83 / 0.80 | 2.81 / 0.83 -> 0.98 / 0.84 | yes -> yes |
+| legs flat, toes bent up 35 | -19.8 / -19.6 -> -3.9 / -4.0 | 1.15 / 1.43 -> 0.29 | 1.31 / 1.60 -> 0.13 / 0.14 | NO -> yes |
 
 The other 58 cases are unchanged to the last digit. Where toes really bend
 (at the joints, inside the ball of the foot, or nearer the skin) changes

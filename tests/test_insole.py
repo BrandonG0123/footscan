@@ -313,11 +313,14 @@ def test_toes_hanging_up_in_a_sole_scan_are_laid_flat_so_the_outline_keeps_its_l
     assert V[:, 2].min() > -0.3
     front = V[V[:, 1] > V[:, 1].max() - 40.0]
     assert front[:, 2].min() < 2.0
+    # bent, not torn: the top of the foot over the joint stretches, it doesn't open up into long triangles
+    long_edges = lambda m: int((m.edges_unique_length > 6.0).sum())
 
     monkeypatch.setattr(foot_prep, "LAY_TOES_FLAT", False)
     as_scanned, info2 = foot_prep.prepare_sole_up(scan, foot=foot)
     assert "toes_laid_flat" not in info2
     assert completeness.measure(as_scanned)["length_mm"] < 235.0
+    assert long_edges(placed) <= long_edges(as_scanned)
     # the heel, the arch and the ball (everything behind the joint) are where they were: the whole foot is
     # only centred on the mat afresh (a slide, recorded in to_mat), the longer outline's centre being further on
     from scipy.spatial import cKDTree
@@ -343,6 +346,19 @@ def test_toes_hanging_up_dont_tip_the_floor_set_under_the_heel_and_ball(foot):
     assert abs(sides["minus_x"]) < 0.5 and abs(sides["plus_x"]) < 0.5
     assert abs(info["heel_back_above_floor_mm"]) < 0.5
     assert info.get("floor_corrected_deg", 0.0) < 0.5
+
+
+def test_a_front_too_steep_for_toes_hanging_up_is_left_as_scanned_and_refused_on_arrival():
+    """A front rising 65 degrees past the ball isn't toes hanging up: it's left as scanned, Make insole warns
+    the insole may be short, and the arrival check refuses the scan for it."""
+    from footscan.recon import completeness, foot_prep
+
+    scan = synth.sole_up_capture(synth.bend_toes(synth.refined(synth.curved_foot("right")), 65.0))
+    ins, _ = foot_prep.insole_from_object_capture(scan, "right", kind="sole_up")
+    info = ins.report["prep"]
+    assert "toes_laid_flat" not in info
+    assert any(w.startswith("THE FRONT OF THE FOOT RISES") for w in ins.report["warnings"])
+    assert any(w.startswith("THE FRONT OF THE FOOT RISES") for w in completeness.from_prep(info))
 
 
 def test_toes_already_flat_are_left_exactly_as_scanned(monkeypatch):

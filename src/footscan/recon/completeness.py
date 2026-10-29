@@ -41,10 +41,6 @@ END_TURN_DEG = 8.0        # ...across lines up to this far off square to the foo
 TOE_END_SQUARE = 0.6
 HEEL_END_SQUARE = 0.65
 HEEL_SHARE = 0.3          # the back of the foot that holds the heel
-# How the measures were taken, saved with them: a scan measured another way (before sole scans' toes were laid
-# flat, foot_prep._lay_toes_flat, a hung-up toe read up to about 20 mm short) is measured again before its length
-# is compared with a new scan's.
-MEASURED_AS = "toes laid flat (2026-10-29)"
 # Shorter than another scan of the same person by more than this (mm) is a missing end. The one real
 # case so far: 19.4 mm (89df against the right foot's 2349, insole outlines).
 SHORTER_THAN_OTHER_MM = 12.0
@@ -100,6 +96,7 @@ def measure(placed) -> dict:
     of the length from the heel. ``toe_tip_above_floor_mm``: the lowest point of the front
     ``END_PROBE_MM`` (recorded, not judged: relaxed toes hang up off the floor in a sole scan)."""
     from .. import insole
+    from . import foot_prep
 
     poly = _along_its_length(insole.silhouette(placed))
     _, y0, _, y1 = poly.bounds
@@ -116,7 +113,7 @@ def measure(placed) -> dict:
         toe_end=round(_end_share(poly, +1, W), 2), heel_end=round(_end_share(poly, -1, W_heel), 2),
         ball_at=round(float((ys[int(np.argmax(widths))] - y0) / L), 2),
         toe_tip_above_floor_mm=round(float(front[:, 2].min()), 1) if len(front) else None,
-        measured_as=MEASURED_AS,
+        measured_as=foot_prep.prep_version(),  # see server.other_scans: measures taken another way are taken again
     )
 
 
@@ -170,8 +167,9 @@ def against_others(m: dict, others: list[dict]) -> list[str]:
 
 def from_prep(info: dict) -> list[str]:
     """What the preparation (foot_prep) already found missing, worded for a retake: the heel's underside
-    (the back of the scan far above the floor) and open edges near the floor (a torn-off part). Make insole
-    warns about the same two (foot_prep.plausibility); on arrival they refuse the scan."""
+    (the back of the scan far above the floor), open edges near the floor (a torn-off part), and a front
+    too steep to be toes hanging up (left as scanned, so short). Make insole warns about the same
+    (foot_prep.plausibility); on arrival they refuse the scan."""
     from . import foot_prep
 
     out = []
@@ -179,6 +177,8 @@ def from_prep(info: dict) -> list[str]:
         out.append(f"THE HEEL IS MISSING: the back of the scan is {info['heel_back_above_floor_mm']:.0f} mm above the "
                    "floor, but a heel rests on it, so the underside of the heel wasn't scanned. Scan again, taking the "
                    "phone round behind and under the heel.")
+    if "toes_warning" in info:
+        out.append(info["toes_warning"])
     if info.get("open_edges_near_floor_mm", 0.0) > foot_prep.OPEN_EDGE_WARN_MM:
         out.append(f"PART OF THE FOOT IS MISSING: the scan is torn open near the floor "
                    f"({info['open_edges_near_floor_mm']:.0f} mm of open edges), where the toes, the heel or a side "

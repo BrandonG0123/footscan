@@ -69,7 +69,7 @@ def _profile(placed) -> dict:
     return dict(length_below_mm=lengths, lowest_every_5mm_from_heel=prof)
 
 
-def measure_scan(folder: Path, meta: dict) -> dict:
+def measure_scan(folder: Path, meta: dict) -> tuple[dict, object]:
     kind = meta.get("scan_kind") or "foot"
     up = (meta.get("mesh") or {}).get("up", "y")
     mesh = load_geometry(folder / "mesh.ply")
