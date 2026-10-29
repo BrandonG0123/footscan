@@ -45,14 +45,19 @@ def render(system: str, root: Path, data_dir: Path | None = None, port: int = 87
     exe = footscan_exe(system, root)
     args = serve_args(data_dir, port, review)
     log = data_dir / "server.log"
+    # the same command again, with the same choices, for the step that saves its output into place
+    regen = f'"{exe}" service --system {system} --data "{data_dir}" --port {port}' + ("" if review else " --no-review")
     if system == "macos":
-        return _launchd(root, exe, args, log, port)
+        return _launchd(root, exe, args, log, port, regen)
     if system == "linux":
-        return _systemd(root, exe, args, log, port)
+        return _systemd(root, exe, args, log, port, regen)
+    if any(" " in a for a in args):
+        # NSSM takes the arguments as one quoted string; a quoted path inside it can't survive PowerShell
+        raise ValueError("on Windows, choose a data folder without spaces in its path (e.g. C:\\srv\\footscan-data)")
     return _nssm(root, exe, args, log, port)
 
 
-def _launchd(root, exe, args, log, port) -> dict:
+def _launchd(root, exe, args, log, port, regen) -> dict:
     """A LaunchAgent: starts when the owner's account logs in, restarts if it stops.
     (A LaunchAgent, not a system daemon: it runs as the owner, so it uses their checkout and their files.)"""
     prog = "".join(f"\n    <string>{escape(str(a))}</string>" for a in [exe, *args])
@@ -81,7 +86,7 @@ def _launchd(root, exe, args, log, port) -> dict:
 </plist>
 """
     path = f"~/Library/LaunchAgents/{LABEL}.plist"
-    steps = [f'"{exe}" service > {path}',
+    steps = [f"{regen} > {path}",
              f"launchctl bootstrap gui/$(id -u) {path}",
              "System Settings > Energy (or Battery > Options): turn on 'Prevent automatic sleeping when the display "
              "is off'; Users & Groups: log in automatically as you, so it starts again after a power cut",
@@ -90,7 +95,7 @@ def _launchd(root, exe, args, log, port) -> dict:
     return dict(path=path, content=content, steps=steps, port=port)
 
 
-def _systemd(root, exe, args, log, port) -> dict:
+def _systemd(root, exe, args, log, port, regen) -> dict:
     """A user unit: runs as the owner; 'linger' keeps it running when nobody is logged in."""
     def q(s):
         s = str(s)
@@ -114,7 +119,7 @@ WantedBy=default.target
 """
     path = "~/.config/systemd/user/footscan.service"
     steps = ["mkdir -p ~/.config/systemd/user",
-             f'"{exe}" service > {path}',
+             f"{regen} > {path}",
              "systemctl --user daemon-reload && systemctl --user enable --now footscan",
              "sudo loginctl enable-linger $USER    # keep it running after you log out and after a reboot",
              f"sudo ufw allow from 192.168.0.0/16 to any port {port} proto tcp    # only if ufw is on: home Wi-Fi only",
@@ -124,13 +129,9 @@ WantedBy=default.target
 
 def _nssm(root, exe, args, log, port) -> dict:
     """A Windows service through NSSM (tank already runs Caddy this way). Commands, not a file."""
-    def q(s):
-        s = str(s)
-        return f'"{s}"' if " " in s else s
-
     content = "\n".join([
         "# Administrator PowerShell. NOT a medical device; Wi-Fi only (no tunnel, no port forwarding).",
-        f'nssm install Footscan "{exe}" "{" ".join(q(a) for a in args)}"',
+        f'nssm install Footscan "{exe}" "{" ".join(args)}"',
         f'nssm set Footscan AppDirectory "{root}"',
         f'nssm set Footscan AppStdout "{log}"',
         f'nssm set Footscan AppStderr "{log}"',
@@ -140,7 +141,8 @@ def _nssm(root, exe, args, log, port) -> dict:
         "nssm start Footscan",
         "",
     ])
-    steps = [f'First start it once by hand from Git Bash, where openssl is on the PATH: "{exe}" {" ".join(q(a) for a in args)} '
+    bash = " ".join(a.replace("\\", "/") for a in args)  # Git Bash reads a backslash as an escape
+    steps = [f'First start it once by hand from Git Bash, where openssl is on the PATH: "{exe}" {bash} '
              "(it makes .studio_key and the HTTPS certificate in .certs, which the service then reuses); Ctrl+C",
              "Open PowerShell as Administrator and paste the commands above",
              "Settings > Network: your Wi-Fi must be a Private network, or the firewall rule doesn't apply",

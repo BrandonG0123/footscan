@@ -22,7 +22,9 @@ never suggest posting or any correction (the first fit has none). Every number y
    .venv/bin/footscan review --list   # packets nobody has answered
    ```
 
-   Each packet is `data/reviews/<capture>/<made>/`. Review every unanswered one, newest first.
+   Each packet is `data/reviews/<capture>/<made>/`, with its own copies of the insole's files in `files/`.
+   `--list` shows only packets for insoles the studio still offers (a rebuilt or stale one is left out). Review
+   every listed one, newest first.
 
 2. Read `packet.md` (and `review.json` for exact values). Note the shoe from the packet's spec (today: ASICS Gel
    Resolution X, US men's 9.5, 275 mm chart length) and every **FLAG** in the plain checks.
@@ -31,7 +33,7 @@ never suggest posting or any correction (the first fit has none). Every number y
    "Look at the pictures" with what you actually see, one line each, yes or no plus the reason. If a picture is
    unclear, say so: "can't tell" is an answer.
 
-4. Read `summary.html` (the clinician sheet) as text. Check it names the right foot, shows the not-a-medical-device
+4. Read `files/summary.html` (the clinician sheet) as text. Check it names the right foot, shows the not-a-medical-device
    notice and the signature and break-in sections, and that its length matches `review.json`.
 
 5. For each FLAG, say what it most likely means and the fix, in the studio, not the slicer:

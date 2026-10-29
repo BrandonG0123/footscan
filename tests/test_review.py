@@ -157,6 +157,95 @@ def test_a_broken_insole_is_logged_and_the_others_still_get_packets(data):
     assert any("Lfoot" in m and "failed" in m for m in logs)
 
 
+def test_a_packet_never_mixes_two_builds(data):
+    """The studio swaps in a rebuilt insole a moment before it records the build in capture.json:
+    a packet started for the old build is dropped, and nothing half-written is left behind."""
+    _only(data, "R275")
+    [(folder, meta)] = review.pending(data)
+    j = folder / "insole" / "insole.json"
+    rep = json.loads(j.read_text())
+    j.write_text(json.dumps(dict(rep, length_mm=rep["length_mm"] + 5)))  # new files, capture.json not yet updated
+    with pytest.raises(review.Superseded):
+        review.build_packet(data, folder, meta, SPEC)
+    assert not review.packet_dir(data, "R275", meta["insole"]["made"]).exists()
+    j.write_text(json.dumps(rep))
+    server.write_json(folder / "capture.json", dict(meta, insole=dict(meta["insole"], made="2099-01-01T00:00:00")))
+    with pytest.raises(review.Superseded):  # capture.json already names a newer build
+        review.build_packet(data, folder, meta, SPEC)
+
+
+def test_a_packet_reads_its_own_copies_of_the_files(data):
+    _only(data, "R275")
+    [p] = review.run_once(data, SPEC)
+    files = json.loads((p / "review.json").read_text())["files"]
+    for name in ("insole.json", "insole.stl", "insole.3mf", "summary.html"):
+        assert files[name] == str(p / "files" / name) and (p / "files" / name).is_file()
+
+
+def test_a_packet_for_a_build_that_has_since_changed_is_no_longer_listed(data):
+    _only(data, "R275")
+    [p] = review.run_once(data, SPEC)
+    assert review.unreviewed(data) == [p]
+    mesh = data / "captures" / "R275" / "mesh.ply"
+    mesh.write_bytes(mesh.read_bytes() + b"\n")  # the scan's model replaced: that insole is stale
+    assert review.unreviewed(data) == []
+
+
+def test_the_watcher_keeps_going_after_a_bad_round(data, tmp_path):
+    """A mistyped review-spec.json is logged, and once it's fixed the next round writes the packet."""
+    import threading
+
+    _only(data, "R275")
+    spec = tmp_path / "spec.json"
+    spec.write_text("{ not json")
+    stop, logs = threading.Event(), []
+
+    def log(m):
+        logs.append(m)
+        if "this round failed" in m:
+            spec.write_text(json.dumps(SPEC))
+        if m.startswith("review packet: ") and "trying" not in m:
+            stop.set()
+
+    t = threading.Thread(target=review.watch, args=(data, 0.05, spec), kwargs=dict(stop=stop, log=log))
+    t.start()
+    t.join(120)
+    assert not t.is_alive() and any("this round failed" in m for m in logs) and review.unreviewed(data)
+
+
+def test_the_bed_is_checked_against_the_printer_in_the_spec(data):
+    _only(data, "R275")
+    [p] = review.run_once(data, dict(SPEC, bed_mm=150.0))
+    assert not _check(p, "bed")["ok"] and "150 mm bed" in _check(p, "bed")["found"]
+
+
+def test_a_3mf_placed_with_a_stretch_is_flagged(data):
+    """A 10% stretch across the insole (the transform's second row) would print 10% too wide at 100%."""
+    _only(data, "R275")
+    f = data / "captures" / "R275" / "insole" / "insole.3mf"
+    with zipfile.ZipFile(f) as z:
+        parts = {n: z.read(n) for n in z.namelist()}
+    model = parts["3D/3dmodel.model"].decode()
+    i = model.index('transform="') + len('transform="')
+    t = model[i:model.index('"', i)].split()
+    t[3:6] = [str(float(v) * 1.1) for v in t[3:6]]
+    parts["3D/3dmodel.model"] = (model[:i] + " ".join(t) + model[model.index('"', i):]).encode()
+    with zipfile.ZipFile(f, "w") as z:
+        for n, b in parts.items():
+            z.writestr(n, b)
+    [p] = review.run_once(data, SPEC)
+    assert not _check(p, "3mf_size")["ok"]
+
+
+def test_a_summary_sheet_without_its_signature_line_is_flagged(data):
+    _only(data, "R275")
+    f = data / "captures" / "R275" / "insole" / "summary.html"
+    f.write_text(f.read_text().replace("<th>Signature</th>", "<th></th>"))
+    [p] = review.run_once(data, SPEC)
+    c = _check(p, "summary_sheet")
+    assert not c["ok"] and "signature" in c["found"]
+
+
 def test_packet_folders_have_no_colons_so_they_work_on_windows(tmp_path):
     p = review.packet_dir(tmp_path, "cap", "2026-10-29T17:49:04")
     assert p.name == "2026-10-29T17-49-04"
@@ -204,6 +293,16 @@ def test_the_windows_service_opens_the_port_on_private_networks_only(tmp_path):
     r = service.render("windows", tmp_path / "footscan", tmp_path / "data")
     assert "nssm install Footscan" in r["content"] and "Scripts/footscan.exe" in r["content"].replace("\\", "/")
     assert "-Profile Private" in r["content"]
+
+
+def test_the_windows_service_refuses_a_data_folder_with_spaces(tmp_path):
+    with pytest.raises(ValueError, match="without spaces"):
+        service.render("windows", tmp_path / "footscan", tmp_path / "my data")
+
+
+def test_the_save_step_repeats_the_choices_made(tmp_path):
+    r = service.render("linux", tmp_path / "footscan", tmp_path / "feet", port=9000, review=False)
+    assert "--port 9000" in r["steps"][1] and "--no-review" in r["steps"][1] and str(tmp_path / "feet") in r["steps"][1]
 
 
 def test_footscan_service_prints_only_the_file_on_stdout(capsys, tmp_path):

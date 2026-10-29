@@ -94,9 +94,12 @@ def pending(data_dir: Path) -> list[tuple[Path, dict]]:
 
 
 def unreviewed(data_dir: Path) -> list[Path]:
-    """Packets that Claude (or Brandon) hasn't answered yet: no claude-review.md beside review.json."""
+    """Packets nobody has answered yet (no claude-review.md beside review.json), for insoles that are
+    still current. A packet for a build that has since been rebuilt or gone stale is left out: its
+    answer would be about a file the studio no longer offers."""
+    current = {packet_dir(data_dir, f.name, m["insole"]["made"]) for f, m in _insole_captures(data_dir)}
     return sorted(p.parent for p in (Path(data_dir) / "reviews").glob("*/*/review.json")
-                  if not (p.parent / "claude-review.md").is_file())
+                  if p.parent in current and not (p.parent / "claude-review.md").is_file())
 
 
 def _other_foot(data_dir: Path, folder: Path, meta: dict) -> tuple[Path, dict] | None:
@@ -112,8 +115,8 @@ def _other_foot(data_dir: Path, folder: Path, meta: dict) -> tuple[Path, dict] |
 # ---------------------------------------------------------------------------
 # the plain checks
 # ---------------------------------------------------------------------------
-def checks(ins_dir: Path, meta: dict, report: dict, spec: dict, other: dict | None) -> list[dict]:
-    """Arithmetic on the insole's files. Each: name, ok (True/False), and what was found."""
+def checks(ins_dir: Path, meta: dict, report: dict, mesh, spec: dict, other: dict | None) -> list[dict]:
+    """Arithmetic on the insole's files (``mesh``: its STL). Each: name, ok (True/False), what was found."""
     from .insole import read_3mf
 
     out = []
@@ -137,22 +140,34 @@ def checks(ins_dir: Path, meta: dict, report: dict, spec: dict, other: dict | No
     add("fill_cap", float(report["max_fill_mm"]) <= cap + 0.01,
         f"highest fill {report['max_fill_mm']} mm (cap {cap:g} mm)")
 
-    bed = report.get("bed_fit") or {}
-    add("bed", bed.get("fits", False), f"{bed.get('how', 'unknown')} on a {bed.get('bed_mm', '?')} mm bed")
+    # The bed from the spec (the printer actually used), not the generator's default
+    from .insole import bed_fit_shape
 
-    # The 3MF is what Bambu Studio opens: millimetres, no scale in its placement, and the same
-    # length as the STL and insole.json. A file that passes this prints at the right size at 100%.
+    bed = bed_fit_shape(np.asarray(mesh.vertices)[:, :2], float(spec["bed_mm"]))
+    add("bed", bed["fits"], f"{bed['how']} on a {spec['bed_mm']:g} mm bed")
+
+    # The 3MF is what Bambu Studio opens: millimetres, a placement that only turns and moves it (no
+    # scale or mirror), and the same length as the STL and insole.json. A file that passes this
+    # prints at the right size at 100%.
     m = read_3mf(ins_dir / "insole.3mf")
-    t = m["transform"]
-    scale = float(np.hypot(t[0], t[1]))
+    R = np.asarray(m["transform"][:9]).reshape(3, 3)
+    turn_only = bool(np.allclose(R @ R.T, np.eye(3), atol=1e-4) and abs(np.linalg.det(R) - 1) < 1e-4)
     tm_len = float(np.ptp(m["vertices"][:, 0])) if len(m["vertices"]) else 0.0
-    add("3mf_size", m["unit"] == "millimeter" and abs(scale - 1) < 1e-4 and abs(tm_len - length) <= 0.15,
-        f"3MF in {m['unit']}, placement scale {scale:.4f}, {tm_len:.1f} mm long (insole.json says {length:.1f})")
+    stl_len = float(np.ptp(np.asarray(mesh.vertices)[:, 0]))
+    add("3mf_size", m["unit"] == "millimeter" and turn_only and abs(tm_len - length) <= 0.15
+        and abs(stl_len - length) <= 0.15,
+        f"3MF in {m['unit']}, placement {'turns and moves only' if turn_only else 'SCALES OR MIRRORS'}, "
+        f"{tm_len:.1f} mm long; STL {stl_len:.1f} mm; insole.json says {length:.1f}")
 
+    # SAFETY.md requirement 1: the sheet a clinician signs, with the break-in protocol on it
     summary = (ins_dir / "summary.html").read_text(errors="replace") if (ins_dir / "summary.html").is_file() else ""
-    add("summary_sheet", "NOT A MEDICAL DEVICE" in summary.upper() and "sign" in summary.lower(),
-        "clinician summary sheet present, with the not-a-medical-device notice and a signature line"
-        if summary else "summary.html is missing")
+    parts = {"the not-a-medical-device notice": "NOT A MEDICAL DEVICE" in summary,
+             "the signature line": "<th>Signature</th>" in summary,
+             "the break-in section": "Break-in" in summary}
+    missing = [k for k, ok in parts.items() if not ok]
+    add("summary_sheet", summary and not missing,
+        "summary.html is missing" if not summary else
+        "clinician summary sheet with " + ", ".join(parts) if not missing else f"summary.html lacks {', '.join(missing)}")
 
     if report.get("synthetic"):
         add("real_scan", False, "SYNTHETIC test geometry, not a foot: never print or wear it")
@@ -179,14 +194,14 @@ def write_png(path: Path, rgb: np.ndarray) -> None:
                            + chunk(b"IDAT", zlib.compress(raw, 6)) + chunk(b"IEND", b""))
 
 
-def _points(mesh, per_mm2: float = 40.0) -> np.ndarray:
-    """Points spread over the surface, about 10 per 0.5 mm pixel of the top, so that no pixel of it is
-    missed (a missed one would show the bottom face through it, a false pit)."""
+def _points(mesh, per_mm2: float = 40.0) -> tuple[np.ndarray, np.ndarray]:
+    """Points spread over the surface (and the face each lies on), about 10 per 0.5 mm pixel of the
+    top, so that no pixel of it is missed. Sampled once per insole; every picture reuses them."""
     import trimesh
 
     n = int(min(max(mesh.area * per_mm2, 20_000), 4_000_000))
-    pts, _ = trimesh.sample.sample_surface(mesh, n, seed=0)
-    return np.vstack([pts, mesh.vertices])
+    pts, face = trimesh.sample.sample_surface(mesh, n, seed=0)
+    return pts, face
 
 
 def _raster(u: np.ndarray, v: np.ndarray, val: np.ndarray, lo, hi, pad: int = 20):
@@ -230,12 +245,12 @@ def _scale_bar(rgb: np.ndarray, mm: float = 50.0) -> np.ndarray:
     return rgb
 
 
-def top_view(mesh) -> np.ndarray:
+def top_view(mesh, pts=None) -> np.ndarray:
     """Looking down: heel at the left, toes at the right, the foot's left at the top. 0.5 mm per pixel."""
-    # Only faces that can be seen from above (not the bottom): a pixel the samples happen to miss is
-    # then empty, and filled from its neighbours, instead of showing the bottom face as a false pit.
-    seen = mesh.submesh([np.flatnonzero(mesh.face_normals[:, 2] > -0.05)], append=True)
-    p = _points(seen)
+    pts, face = pts if pts is not None else _points(mesh)
+    # Only points on faces that can be seen from above (not the bottom): a pixel the samples happen to
+    # miss is then empty, and filled from its neighbours, instead of showing the bottom face as a false pit.
+    p = pts[mesh.face_normals[face, 2] > -0.05]
     lo, hi = mesh.bounds[0, :2], mesh.bounds[1, :2]
     return _scale_bar(_shade(_raster(p[:, 0], p[:, 1], p[:, 2], lo, hi)))
 
@@ -243,27 +258,25 @@ def top_view(mesh) -> np.ndarray:
 SIDE_STRETCH = 2.0
 
 
-def side_view(mesh) -> np.ndarray:
+def side_view(mesh, pts=None) -> np.ndarray:
     """From the foot's left: heel at the left, the bed along the bottom. Heights are drawn
     ``SIDE_STRETCH`` times taller than lengths, so a few millimetres of heel cup or arch show."""
-    p = _points(mesh)
+    p = (pts if pts is not None else _points(mesh))[0]
     lo, hi = mesh.bounds[0, [0, 2]] * [1, SIDE_STRETCH], mesh.bounds[1, [0, 2]] * [1, SIDE_STRETCH]
     h = _raster(p[:, 0], p[:, 2] * SIDE_STRETCH, p[:, 1], lo, hi)  # nearest the viewer (largest y) wins
     rgb = np.where(np.isnan(h)[..., None], 255, np.array([110, 110, 120])).astype(np.uint8)
     return _scale_bar(rgb)
 
 
-def pair_view(this_mesh, this_foot: str, other_mesh) -> np.ndarray:
-    """Both outlines from above, the left foot's mirrored so a matched pair lies on top of itself.
-    This foot's in orange, the other's in blue, where they overlap dark grey."""
-    def foot_xy(m, foot):
-        p = _points(m, 12.0)[:, :2]
-        if foot == "left":
-            p = p * [1, -1]
+def pair_view(this_pts: np.ndarray, this_foot: str, other_pts: np.ndarray) -> np.ndarray:
+    """Both outlines from above (surface points of each), the left foot's mirrored so a matched pair
+    lies on top of itself. This foot's in orange, the other's in blue, where they overlap dark grey."""
+    def foot_xy(p, foot):
+        p = p[:, :2] * ([1, -1] if foot == "left" else [1, 1])
         return p - [p[:, 0].min(), 0]  # both heels at x = 0
 
     other_foot = "left" if this_foot == "right" else "right"
-    a, b = foot_xy(this_mesh, this_foot), foot_xy(other_mesh, other_foot)
+    a, b = foot_xy(this_pts, this_foot), foot_xy(other_pts, other_foot)
     allp = np.vstack([a, b])
     lo, hi = allp.min(0), allp.max(0)
     ra = np.isfinite(_raster(a[:, 0], a[:, 1], np.ones(len(a)), lo, hi))
@@ -278,53 +291,80 @@ def pair_view(this_mesh, this_foot: str, other_mesh) -> np.ndarray:
 # ---------------------------------------------------------------------------
 # the packet
 # ---------------------------------------------------------------------------
+SNAPSHOT = ("insole.json", "insole.stl", "insole.3mf", "summary.html")
+SAME_BUILD = ("length_mm", "width_mm", "height_mm", "max_fill_mm")
+
+
+class Superseded(Exception):
+    """The insole was rebuilt while its packet was being written: try again on the next round."""
+
+
 def build_packet(data_dir: Path, folder: Path, meta: dict, spec: dict | None = None) -> Path:
-    """Write the review packet for one capture's current insole; returns its folder."""
+    """Write the review packet for one capture's current insole; returns its folder.
+
+    The insole's files are copied into the packet first (``files/``) and everything is read from
+    those copies, so the numbers, the checks and the pictures are all of one build, and stay so if
+    the studio rebuilds the insole later. The studio swaps in a rebuilt insole/ folder a moment
+    before it records the new build in capture.json, so after copying, capture.json is read again
+    and must still name this build with the copied insole.json's own numbers; if not, the packet
+    is dropped (``Superseded``) and the next round picks up the new build.
+    """
+    import shutil
+
     import trimesh
 
+    from .server import read_json
+
     spec = spec or load_spec()
-    ins_dir = folder / "insole"
-    report = json.loads((ins_dir / "insole.json").read_text())
     made = meta["insole"]["made"]
     out = packet_dir(data_dir, folder.name, made)
-    out.mkdir(parents=True, exist_ok=True)
-    (out / "pair.png").unlink(missing_ok=True)  # left from an earlier, unfinished attempt: drawn afresh below
+    if out.exists():
+        shutil.rmtree(out)  # an earlier, unfinished attempt (no review.json): start clean
+    snap = out / "files"
+    snap.mkdir(parents=True)
+    for name in SNAPSHOT:
+        if (folder / "insole" / name).is_file():
+            shutil.copy2(folder / "insole" / name, snap / name)
+    report = json.loads((snap / "insole.json").read_text())
+    now = (read_json(folder / "capture.json").get("insole") or {})
+    if now.get("made") != made or any(now.get(k) != report.get(k) for k in SAME_BUILD):
+        shutil.rmtree(out)
+        raise Superseded(f"{folder.name}: the insole was rebuilt while its packet was being written")
 
     other = _other_foot(data_dir, folder, meta)
-    other_info = None
-    if other is not None:
-        orep = json.loads((other[0] / "insole" / "insole.json").read_text())
-        other_info = dict(capture=other[0].name, foot=other[1]["foot"], length_mm=orep["length_mm"],
-                          width_mm=orep["width_mm"], made=other[1]["insole"]["made"])
-
-    mesh = trimesh.load(ins_dir / "insole.stl", force="mesh")
-    write_png(out / "top.png", top_view(mesh))
-    write_png(out / "side.png", side_view(mesh))
-    pair_note = None
+    other_info = other_pts = other_note = None
     if other is not None:
         try:
-            write_png(out / "pair.png", pair_view(mesh, meta["foot"],
-                                                  trimesh.load(other[0] / "insole" / "insole.stl", force="mesh")))
-        except Exception as e:  # noqa: BLE001 - the other foot's broken file mustn't stop this foot's packet
-            pair_note = f"couldn't draw pair.png: the other foot's insole.stl didn't load ({type(e).__name__})"
+            orep = json.loads((other[0] / "insole" / "insole.json").read_text())
+            other_info = dict(capture=other[0].name, foot=other[1]["foot"], length_mm=orep["length_mm"],
+                              width_mm=orep["width_mm"], made=other[1]["insole"]["made"])
+            other_pts = _points(trimesh.load(other[0] / "insole" / "insole.stl", force="mesh"), 12.0)[0]
+        except Exception as e:  # noqa: BLE001 - the other foot's broken files mustn't stop this foot's packet
+            other_note = f"the other foot's insole ({other[0].name}) couldn't be read ({type(e).__name__})"
 
-    results = checks(ins_dir, meta, report, spec, other_info)
+    mesh = trimesh.load(snap / "insole.stl", force="mesh")
+    pts = _points(mesh)
+    write_png(out / "top.png", top_view(mesh, pts))
+    write_png(out / "side.png", side_view(mesh, pts))
+    if other_pts is not None:
+        write_png(out / "pair.png", pair_view(pts[0], meta["foot"], other_pts))
+
+    results = checks(snap, meta, report, mesh, spec, other_info)
+    has_pair = (out / "pair.png").is_file()
     packet = dict(
         capture=folder.name, foot=meta.get("foot"), scan_kind=meta.get("scan_kind"), made=made,
         synthetic=bool(report.get("synthetic")), spec=spec,
         insole=dict(length_mm=report["length_mm"], width_mm=report["width_mm"], height_mm=report["height_mm"],
                     volume_cm3=report.get("volume_cm3"), max_fill_mm=report["max_fill_mm"],
                     max_fill_at_mm=report.get("max_fill_at_mm"), sole=report.get("sole"),
-                    bed_fit=report.get("bed_fit"), shoe_fit=report.get("shoe_fit"),
-                    warnings=report.get("warnings", []), frame=report.get("frame")),
-        other_foot=other_info, checks=results, flags=[c["name"] for c in results if not c["ok"]],
-        look_checks=[dict(name=n, question=q) for n, q in LOOK_CHECKS
-                     if n != "pair" or (out / "pair.png").is_file()],
-        pair_note=pair_note,
-        files=dict(insole=str(ins_dir), stl=str(ins_dir / "insole.stl"), threemf=str(ins_dir / "insole.3mf"),
-                   summary=str(ins_dir / "summary.html"), insole_json=str(ins_dir / "insole.json"),
+                    shoe_fit=report.get("shoe_fit"), warnings=report.get("warnings", []),
+                    frame=report.get("frame")),
+        other_foot=other_info, other_note=other_note,
+        checks=results, flags=[c["name"] for c in results if not c["ok"]],
+        look_checks=[dict(name=n, question=q) for n, q in LOOK_CHECKS if n != "pair" or has_pair],
+        files=dict(studio_insole=str(folder / "insole"), **{n: str(snap / n) for n in SNAPSHOT if (snap / n).is_file()},
                    top=str(out / "top.png"), side=str(out / "side.png"),
-                   pair=str(out / "pair.png") if (out / "pair.png").is_file() else None),
+                   pair=str(out / "pair.png") if has_pair else None),
         written=time.strftime("%Y-%m-%dT%H:%M:%S%z"),
     )
     (out / "packet.md").write_text(packet_markdown(packet))
@@ -352,14 +392,13 @@ def packet_markdown(p: dict) -> str:
               f"- Highest fill {i['max_fill_mm']} mm at x {i['max_fill_at_mm']['x']}, y {i['max_fill_at_mm']['y']} mm "
               f"({i['frame']}).",
               f"- Sole seen by the scan: {i['sole']['seen']:.0%} of the footprint, "
-              f"{i['sole']['seen_under_arch']:.0%} under the arch." if i.get("sole") else "- Sole coverage: not recorded.",
-              f"- Bed: {i['bed_fit'].get('how')}." if i.get("bed_fit") else "- Bed: not recorded."]
+              f"{i['sole']['seen_under_arch']:.0%} under the arch." if i.get("sole") else "- Sole coverage: not recorded."]
     if p["other_foot"]:
         o = p["other_foot"]
         lines.append(f"- Other foot: {o['foot']} insole from capture {o['capture']}, "
                      f"{o['length_mm']} x {o['width_mm']} mm, made {o['made']}.")
-    if p.get("pair_note"):
-        lines.append(f"- {p['pair_note']}")
+    if p.get("other_note"):
+        lines.append(f"- {p['other_note']}")
     lines += ["", "## Generator warnings", ""]
     lines += [f"- {w}" for w in i["warnings"]] or ["- none"]
     lines += ["", "## Plain checks (arithmetic on the files)", "", "| check | result | found |", "|---|---|---|"]
@@ -369,7 +408,10 @@ def packet_markdown(p: dict) -> str:
               f"{SIDE_STRETCH:g} times taller, so they show); the bar at the bottom left is 50 mm with 10 mm ticks. "
               "Read sizes from the numbers above, not from the pictures.", ""]
     lines += [f"- [ ] **{c['name']}**: {c['question']}" for c in p["look_checks"]]
-    lines += ["", "## Files", ""] + [f"- {k}: `{v}`" for k, v in p["files"].items() if v]
+    lines += ["", "## Files", "",
+              "Copies of this build, taken when the packet was written (the studio's own insole/ folder is the same "
+              "build only while this packet is the newest for the capture):", ""]
+    lines += [f"- {k}: `{v}`" for k, v in p["files"].items() if v]
     return "\n".join(lines) + "\n"
 
 
@@ -380,6 +422,8 @@ def run_once(data_dir: Path, spec: dict | None = None, log=print) -> list[Path]:
         try:
             made.append(build_packet(data_dir, folder, meta, spec))
             log(f"review packet: {made[-1]}")
+        except Superseded as e:
+            log(f"review packet: {e}; trying again next round")
         except Exception as e:  # noqa: BLE001 - one bad file mustn't stop the others (or the server)
             log(f"review packet for {folder.name} failed: {type(e).__name__}: {e}")
     return made
@@ -388,14 +432,18 @@ def run_once(data_dir: Path, spec: dict | None = None, log=print) -> list[Path]:
 def watch(data_dir: Path, interval_s: float = 20.0, spec_path: Path | None = None, on_new=None,
           stop=None, log=print) -> None:
     """Poll for new insoles every ``interval_s`` and write their packets; ``on_new(packet_dir)`` after each.
-    ``stop``: a threading.Event that ends the loop (the server sets it on shutdown)."""
+    ``stop``: a threading.Event that ends the loop. Nothing in one round (a mistyped review-spec.json,
+    an unreadable capture) ends the loop: it is logged and the next round tries again."""
     while stop is None or not stop.is_set():
-        for out in run_once(data_dir, load_spec(spec_path), log=log):
-            if on_new is not None:
-                try:
-                    on_new(out)
-                except Exception as e:  # noqa: BLE001
-                    log(f"after-packet command failed for {out}: {type(e).__name__}: {e}")
+        try:
+            for out in run_once(data_dir, load_spec(spec_path), log=log):
+                if on_new is not None:
+                    try:
+                        on_new(out)
+                    except Exception as e:  # noqa: BLE001
+                        log(f"after-packet command failed for {out}: {type(e).__name__}: {e}")
+        except Exception as e:  # noqa: BLE001 - a thread that dies quietly would stop every later packet
+            log(f"review packets: this round failed ({type(e).__name__}: {e}); trying again in {interval_s:g} s")
         if stop is not None:
             stop.wait(interval_s)
         else:

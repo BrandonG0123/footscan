@@ -11,9 +11,10 @@ What you end up with:
   and restarts it if it stops. Phones on your Wi-Fi send scans to it as they do
   to the Mac today.
 - **Every new insole gets a review packet.** Within about 20 seconds of *Make
-  insole*, the server writes `data/reviews/<capture>/<made>/`: the insole's
-  numbers, the plain checks below (PASS or FLAG), and pictures drawn from the
-  STL (`top.png`, `side.png`, and `pair.png` once both feet have one).
+  insole*, the server writes `data/reviews/<capture>/<made>/`: a copy of the
+  insole's files, its numbers, the plain checks below (PASS or FLAG), and
+  pictures drawn from the STL (`top.png`, `side.png`, and `pair.png` once both
+  feet have one).
 - **A Claude Code session in the same folder reviews it** (`/review-insole`)
   and writes `claude-review.md` beside the packet: READY TO SLICE, REBUILD, or
   ASK BRANDON.
@@ -69,7 +70,7 @@ prints the start-up file for this computer, filled in with this checkout's
 paths, and the numbered steps to install it. It installs nothing itself.
 
 - **Windows** (tank): a service through NSSM, plus a firewall rule for Private
-  networks only. **First check `nssm status Footscan`**: if a service by that name
+  networks only. Keep the data folder's path free of spaces. **First check `nssm status Footscan`**: if a service by that name
   already exists, it's the public deploy from DEPLOY-TANK.md on the same port.
   Stop and decide which one tank should run; two can't share port 8765.
 - **macOS**: a LaunchAgent. It runs while your account is logged in, so turn on
@@ -142,12 +143,12 @@ you have one.
 |---|---|---|
 | `length` | within ±1 mm of the shoe's length | an insole built without the shoe length comes out at the foot's own length |
 | `pair_length` | left and right within ±1 mm of each other | both feet are built to the same shoe |
-| `3mf_size` | the 3MF is in millimetres, its placement has no scale, and it is as long as insole.json says | it prints at the right size with the slicer at 100% |
+| `3mf_size` | the 3MF is in millimetres, its placement only turns and moves it, and it and the STL are as long as insole.json says | it prints at the right size with the slicer at 100% |
 | `foot` | the insole was made for the capture's foot | a left/right mix-up |
 | `no_posting` | no posting angle set | the first fit has no posting (SAFETY.md) |
 | `fill_cap` | highest fill within the arch cap | the generator's own safety cap held |
-| `bed` | fits the printer bed as placed | |
-| `summary_sheet` | the clinician sheet is there, with the notice and the signature line | SAFETY.md requirement 1 |
+| `bed` | fits the spec's printer bed (256 mm), straight or turned | |
+| `summary_sheet` | the clinician sheet is there, with the notice, the signature line and the break-in section | SAFETY.md requirement 1 |
 | `real_scan` | (only appears for synthetic geometry, always FLAG) | test shapes must never be printed |
 
 The ±1 mm tolerances are a judgment, not measured. The picture questions

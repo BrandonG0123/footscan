@@ -271,9 +271,11 @@ def cmd_review(args) -> int:
     spec = review.load_spec(Path(args.spec) if args.spec else None)
     on_new = None
     if args.exec:
-        # e.g. --exec 'claude -p "/review-insole {packet}"': {packet} is the new packet's folder
+        # e.g. --exec 'claude -p "/review-insole {packet}"': {packet} is the new packet's folder, put in
+        # after splitting, so a path with spaces or backslashes stays one argument. Split the shell's way
+        # on every system (Windows' non-POSIX split would keep the quotes inside the prompt).
         def on_new(packet):
-            cmd = [a.replace("{packet}", str(packet)) for a in shlex.split(args.exec, posix=sys.platform != "win32")]
+            cmd = [a.replace("{packet}", str(packet)) for a in shlex.split(args.exec)]
             subprocess.run(cmd, cwd=Path(__file__).resolve().parents[2], check=False)
     if args.watch:
         try:
@@ -296,8 +298,12 @@ def cmd_service(args) -> int:
 
     system = args.system or service.this_system()
     root = Path(__file__).resolve().parents[2]
-    r = service.render(system, root, Path(args.data).resolve() if args.data else DATA_DIR, args.port,
-                       review=not args.no_review)
+    try:
+        r = service.render(system, root, Path(args.data).resolve() if args.data else DATA_DIR, args.port,
+                           review=not args.no_review)
+    except ValueError as err:
+        print(f"footscan service: {err}", file=sys.stderr)
+        return 1
     sys.stdout.write(r["content"])  # stdout is the file itself, so it can be redirected into place
     print(f"\n# footscan service for {system}" + (f": save the text above as {r['path']}" if r["path"] else ""),
           file=sys.stderr)
