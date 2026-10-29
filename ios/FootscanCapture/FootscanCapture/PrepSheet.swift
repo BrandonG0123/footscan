@@ -22,12 +22,15 @@ extension Subject {
         switch self {
         case .rightSole, .leftSole: [
             ("bed.double.fill", "Lie face down", "On a bed or sofa, chin on your hands."),
-            ("arrow.up", "Bend this knee, sole up", "Lower leg straight up, sole to the ceiling. Let the foot go floppy: don't point it or pull the toes back."),
+            ("arrow.up", "Bend this knee, sole up", "Lower leg straight up, sole to the ceiling, ankle relaxed. Don't point the foot or pull the toes back; let the toes lie straight, not curled."),
+            ("ruler.fill", "The ball of the foot level", "Before scanning, your helper looks along the sole from the toes: the big-toe side and the little-toe side of the ball should be at the same height. If the big-toe side is higher, turn the foot a little outward until they match."),
             ("shoeprints.fill", "Bare foot or a thin sock", "Nothing loose or thick."),
-            ("person.2.fill", "A helper scans", "They circle the foot slowly, phone pointing down at the sole, until the ring is full. You keep still."),
+            ("person.2.fill", "A helper scans, two laps", "They circle the foot slowly, phone pointing down at the sole, until the ring is full; then a second lap, closer, over the toes and the back of the heel. You keep still."),
         ]
         case .rightSoleFlat, .leftSoleFlat: [
             ("bed.double.fill", "Lie face down, legs straight", "Feet just past the end of the bed: ankles at the edge, feet hanging relaxed."),
+            ("arrow.left.and.right", "The other foot out of the way", "Move the other leg well to the side, a forearm's width between the feet, so only this foot is in the scan."),
+            ("ruler.fill", "The ball of the foot level", "Your helper looks along the sole from the toes: the big-toe side and the little-toe side of the ball at the same height. If the big-toe side is higher, turn the foot a little outward until they match."),
             ("shoeprints.fill", "Bare foot or a thin sock", "Nothing loose or thick."),
             ("person.2.fill", "A helper scans from behind", "Slowly from the inner side, round behind the foot, to the outer side. Then again a little higher, and lower."),
             ("leaf.fill", "Stay relaxed", "Your legs rest on the bed, so the foot can stay still. Breathe slowly."),

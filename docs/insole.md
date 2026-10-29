@@ -61,8 +61,9 @@ The insole is the shape of the bottom of the foot, so the app's first
 scans are the two that show it:
 
 - **Right / Left sole**: lie face down, bend the knee so the sole faces the
-  ceiling, foot relaxed; someone else scans over the sole and down the
-  sides. Nothing presses on the foot, so the arch is as high as it is
+  ceiling, ankle relaxed with the ball of the foot level; someone else scans
+  over the sole and down the sides, two laps. What goes wrong and how to
+  avoid it: [scanning-guide.md](scanning-guide.md). Nothing presses on the foot, so the arch is as high as it is
   unloaded (the generator's 20 mm arch cap still applies). Available today,
   no equipment.
 - **Right / Left sole, legs flat**: the same, but lying with both legs flat
@@ -112,6 +113,16 @@ Two loud warnings say when not to print:
   of the footprint. A foot resting on the floor hides most of its sole, and
   Object Capture closes a model's bottom by itself, so that underside is
   probably guessed. The arch shape can't be trusted.
+
+Two more, for the sole scans:
+- **THE FOREFOOT WAS ROLLED ONTO ONE EDGE**: once the floor is set, one side
+  of the ball of the foot sits more than 5 mm above the other. Standing,
+  both rest on the floor, so the insole would fill under the raised side: a
+  wedge. The first real left sole-up scan had 8.6 mm (its right pair 1.2 mm).
+- A legs-flat scan with **both feet** in it keeps only the chosen foot: the
+  two are cut apart down the gap between the shins, and the result says so.
+  Where the feet touched, the inner side is missing, which the torn-scan
+  warning reports.
 
 A sole-up scan is turned over (the phone knows which way was up), cut
 below the bed and rested on its heel and ball: the floor is the face of
