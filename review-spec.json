@@ -1,0 +1,13 @@
+{
+  "_about": "What every generated insole is checked against before it is sliced (footscan review, docs/ALWAYS-ON.md). Edit when the shoe changes.",
+  "shoe": "ASICS Gel Resolution X",
+  "size": "US men's 9.5",
+  "target_length_mm": 275.0,
+  "target_length_source": "size-chart insole length for US men's 9.5, not a ruler measurement of this shoe's insole",
+  "length_tolerance_mm": 1.0,
+  "pair_tolerance_mm": 1.0,
+  "tolerances_source": "a judgment, not measured: a file that misses the target by more than this was built without the shoe length or scaled",
+  "slicer": "Bambu Studio",
+  "slicer_scale_percent": 100,
+  "bed_mm": 256.0
+}

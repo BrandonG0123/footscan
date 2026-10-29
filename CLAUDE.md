@@ -24,8 +24,9 @@ say why. No posting or correction in a first fit (the generator refuses posting)
 
 ## Never commit
 
-- `.studio_key`, `.certs/`, `data/captures/`, `data/submissions/`, `data/raw/*`, `.demo-data/`, `reports/`, any
-  deploy env file or Cloudflare tunnel credentials (they live on the deploy machine, not here).
+- `.studio_key`, `.certs/`, `data/captures/`, `data/submissions/`, `data/reviews/` (pictures of a foot's shape),
+  `data/raw/*`, `.demo-data/`, `reports/`, any deploy env file or Cloudflare tunnel credentials (they live on the
+  deploy machine, not here).
 - `ios/FootscanCapture/FootscanCapture.xcodeproj/project.pbxproj` changes that only set `DEVELOPMENT_TEAM`: the
   owner's team ID stays out of git. If you must change the project file for another reason, commit only that hunk.
 - Real scans of a person's foot (personal data). Tests use `tests/synth.py` shapes.
@@ -62,5 +63,8 @@ cd ios/FootscanCapture && xcodebuild test -project FootscanCapture.xcodeproj -sc
 - `src/footscan/recon/shoe.py`: a shoe's own insole scan → outline, handedness, fit round the foot.
 - `src/footscan/recon/compare.py`: two scans of one foot → how much they agree (repeatability).
 - `src/footscan/server.py`, `web/`: the studio (`footscan serve`). `src/footscan/cli.py`: the `footscan` command.
+- `src/footscan/review.py`: a review packet per new insole (plain checks against `review-spec.json`, pictures);
+  `.claude/skills/review-insole` is how a Claude Code session answers it. `src/footscan/service.py`: start-at-boot
+  files for an always-on computer. Both in docs/ALWAYS-ON.md.
 - `scripts/benchmark_prep.py`, `scripts/second_look_eval.py`: benchmarks; results go to `reports/` (gitignored).
 - `docs/`: SAFETY, insole, benchmark, hosting, phase protocols, fit log.

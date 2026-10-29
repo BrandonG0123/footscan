@@ -57,6 +57,9 @@ share with people on your Wi-Fi, and a private studio link for your phone.
 Phones need HTTPS for the camera, so each phone shows a certificate warning
 once.
 
+To keep it running on an always-on computer (and have each new insole
+checked before slicing), see [docs/ALWAYS-ON.md](docs/ALWAYS-ON.md).
+
 Try the scan flow on a laptop with a simulated camera (nothing is sent):
 http://localhost:8765/?demo=1
 

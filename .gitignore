@@ -10,6 +10,8 @@ data/scans/
 data/captures/
 .studio_key
 data/submissions/
+data/reviews/
+data/server.log
 .demo-data/
 
 # Xcode
