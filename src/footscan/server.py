@@ -1247,8 +1247,8 @@ def scan_measures(folder: Path, meta: dict) -> tuple[dict, dict]:
 def other_scans(captures_dir: Path, meta: dict) -> list[dict]:
     """The newest kept sole scan of each foot, other than this capture, for completeness.against_others.
 
-    Scans kept from before this check have no measures yet: they're measured now and the measures saved
-    with them. One the check finds incomplete itself is passed over for the next newest (compared with
+    Scans kept from before this check have no measures yet, and ones measured before the way of measuring
+    changed (completeness.MEASURED_AS) have stale ones: they're measured now and the measures saved with them. One the check finds incomplete itself is passed over for the next newest (compared with
     a scan that's short itself, a short scan would pass)."""
     from .recon import completeness
 
@@ -1260,7 +1260,7 @@ def other_scans(captures_dir: Path, meta: dict) -> list[dict]:
         if m.get("status") != "complete" or not (folder / "mesh.ply").is_file():
             continue
         c = m.get("completeness")
-        if not c or "measures" not in c:
+        if not c or "measures" not in c or c["measures"].get("measured_as") != completeness.MEASURED_AS:
             try:
                 measures, info = scan_measures(folder, m)
             except Exception:  # noqa: BLE001 - a scan that can't be measured just isn't compared with

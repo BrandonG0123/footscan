@@ -41,6 +41,10 @@ END_TURN_DEG = 8.0        # ...across lines up to this far off square to the foo
 TOE_END_SQUARE = 0.6
 HEEL_END_SQUARE = 0.65
 HEEL_SHARE = 0.3          # the back of the foot that holds the heel
+# How the measures were taken, saved with them: a scan measured another way (before sole scans' toes were laid
+# flat, foot_prep._lay_toes_flat, a hung-up toe read up to about 20 mm short) is measured again before its length
+# is compared with a new scan's.
+MEASURED_AS = "toes laid flat (2026-10-29)"
 # Shorter than another scan of the same person by more than this (mm) is a missing end. The one real
 # case so far: 19.4 mm (89df against the right foot's 2349, insole outlines).
 SHORTER_THAN_OTHER_MM = 12.0
@@ -112,6 +116,7 @@ def measure(placed) -> dict:
         toe_end=round(_end_share(poly, +1, W), 2), heel_end=round(_end_share(poly, -1, W_heel), 2),
         ball_at=round(float((ys[int(np.argmax(widths))] - y0) / L), 2),
         toe_tip_above_floor_mm=round(float(front[:, 2].min()), 1) if len(front) else None,
+        measured_as=MEASURED_AS,
     )
 
 

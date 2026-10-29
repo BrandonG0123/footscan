@@ -991,6 +991,28 @@ def test_a_scan_kept_before_the_check_is_measured_when_compared_and_an_incomplet
     assert server.other_scans(data / "captures", dict(capture_id="new", foot="left")) == []
 
 
+def test_a_scan_measured_the_old_way_is_measured_again_before_its_length_is_compared(servers):
+    """Measures saved before the way of measuring changed (sole scans' toes now laid flat first) aren't
+    compared with a new scan's: the scan is measured again and the new measures saved."""
+    op, _, data = servers
+    old = _new_sole_capture(op, "right")
+    assert call(f"{op}/api/captures/{old}/mesh?ext=obj&up=y", "PUT", _sole_up_obj("right"),
+                {"Content-Type": "application/octet-stream"})[0] == 200
+    meta_file = data / "captures" / old / "capture.json"
+    meta = json.loads(meta_file.read_text())
+    fresh = meta["completeness"]["measures"]["length_mm"]
+    meta["completeness"]["measures"]["length_mm"] = fresh - 20.0  # as an earlier version of the check read it
+    del meta["completeness"]["measures"]["measured_as"]
+    meta_file.write_text(json.dumps(meta))
+    from footscan import server
+    from footscan.recon import completeness
+
+    found = server.other_scans(data / "captures", dict(capture_id="new", foot="left"))
+    assert [o["length_mm"] for o in found] == [fresh]
+    saved = json.loads(meta_file.read_text())["completeness"]["measures"]
+    assert saved["measured_as"] == completeness.MEASURED_AS and saved["length_mm"] == fresh
+
+
 def test_kinds_the_check_doesnt_read_are_kept_as_before(servers):
     """A foot standing on the floor (not a sole scan) isn't judged by the completeness check."""
     op, _, data = servers

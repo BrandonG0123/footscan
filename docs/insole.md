@@ -201,6 +201,9 @@ square enough for the shape checks. The legs-flat scan
 read 264.9 x 254.3 mm and was kept by that first version; the *not one whole
 foot* check was added for it. Four real scans: the thresholds aren't proven
 by them.
+Those lengths predate laying hung-up toes flat (29 Oct): 89df's toe tip was
+17.8 mm up, so it may read longer now; not yet rerun. Saved measures from
+before are measured again before a length comparison (`MEASURED_AS`).
 
 A standing foot and a foam print aren't checked. Make insole on a
 scan kept before this check still lists the same problems as warnings. To see
