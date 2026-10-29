@@ -906,3 +906,96 @@ def test_the_studio_compares_two_scans_of_the_same_foot(servers):
     r = json.loads(raw)
     assert r["typical_mm"] < 0.1 and "agree within" in r["verdict"]
     assert call(f"{op}/api/compare", "POST", {"a": ids[0], "b": ids[0]})[0] == 400
+
+
+# ---- a sole scan missing part of the foot is refused on arrival -----------------
+
+def _sole_up_obj(foot="right", **cut):
+    """A SYNTHETIC sole-up scan as the iPhone app exports it; ``cut`` (x_from, x_to) takes off an end."""
+    import synth
+
+    mesh = synth.shaped_foot(foot)
+    if cut:
+        mesh = synth.cut_ends(mesh, **cut)
+    return synth.sole_up_capture(mesh).export(file_type="obj").encode()
+
+
+def _new_sole_capture(op, foot):
+    return body(call(f"{op}/api/captures", "POST", {"condition": "nwb_relaxed", "foot": foot, "session": "LIDAR",
+                                                    "method": "imported_mesh", "scan_kind": "sole_up"}))["id"]
+
+
+def test_a_sole_scan_without_its_toes_is_refused_and_not_kept(servers):
+    op, phone, data = servers
+    cid = _new_sole_capture(op, "left")
+    st, raw, _ = call(f"{op}/api/captures/{cid}/mesh?ext=obj&up=y", "PUT", _sole_up_obj("left", x_to=200.0),
+                      {"Content-Type": "application/octet-stream"})
+    assert st == 422, raw
+    r = json.loads(raw)
+    assert r["incomplete"] and r["incomplete"][0].startswith("THE TOES ARE MISSING")
+    assert r["error"].startswith("The studio didn't keep this scan") and "Scan again" in r["error"]
+    assert not (data / "captures" / cid).exists()
+    assert cid not in [c["capture_id"] for c in body(call(f"{op}/api/captures"))]
+
+
+def test_a_whole_sole_scan_is_kept_with_its_measures(servers):
+    op, _, data = servers
+    cid = _new_sole_capture(op, "right")
+    st, raw, _ = call(f"{op}/api/captures/{cid}/mesh?ext=obj&up=y", "PUT", _sole_up_obj("right"),
+                      {"Content-Type": "application/octet-stream"})
+    assert st == 200, raw
+    c = json.loads((data / "captures" / cid / "capture.json").read_text())["completeness"]
+    assert c["problems"] == [] and c["measures"]["length_mm"] == pytest.approx(250.0, abs=3.0)
+
+
+def test_a_sole_scan_much_shorter_than_the_other_foot_is_refused(servers):
+    """Both ends there, but 25 mm of the forefoot gone short of the toes' tip: only the other foot's scan shows it."""
+    op, _, data = servers
+    right = _new_sole_capture(op, "right")
+    assert call(f"{op}/api/captures/{right}/mesh?ext=obj&up=y", "PUT", _sole_up_obj("right"),
+                {"Content-Type": "application/octet-stream"})[0] == 200
+    import synth
+
+    # the left foot made 25 mm shorter by squeezing it, not cutting it: its ends keep their round shape
+    short = synth.shaped_foot("left")
+    short.apply_scale([225.0 / 250.0, 1.0, 1.0])
+    left = _new_sole_capture(op, "left")
+    st, raw, _ = call(f"{op}/api/captures/{left}/mesh?ext=obj&up=y", "PUT",
+                      synth.sole_up_capture(short).export(file_type="obj").encode(),
+                      {"Content-Type": "application/octet-stream"})
+    assert st == 422, raw
+    found = json.loads(raw)["incomplete"]
+    assert len(found) == 1 and "SHORTER than your right foot's scan" in found[0] and right in found[0]
+
+
+def test_a_scan_kept_before_the_check_is_measured_when_compared_and_an_incomplete_one_is_passed_over(servers):
+    """Scans already in the studio have no measures: measured (and saved) the first time they're compared with.
+    One that turns out incomplete itself isn't compared with."""
+    op, _, data = servers
+    old = _new_sole_capture(op, "right")
+    assert call(f"{op}/api/captures/{old}/mesh?ext=obj&up=y", "PUT", _sole_up_obj("right"),
+                {"Content-Type": "application/octet-stream"})[0] == 200
+    meta_file = data / "captures" / old / "capture.json"
+    meta = json.loads(meta_file.read_text())
+    meta.pop("completeness")  # as if kept before this check existed
+    meta_file.write_text(json.dumps(meta))
+    from footscan import server
+
+    found = server.other_scans(data / "captures", dict(capture_id="new", foot="left"))
+    assert [o["capture_id"] for o in found] == [old] and not found[0]["same_foot"]
+    assert json.loads(meta_file.read_text())["completeness"]["problems"] == []
+    # the same scan, its saved check now saying it's incomplete: passed over
+    meta = json.loads(meta_file.read_text())
+    meta["completeness"]["problems"] = ["THE TOES ARE MISSING: ..."]
+    meta_file.write_text(json.dumps(meta))
+    assert server.other_scans(data / "captures", dict(capture_id="new", foot="left")) == []
+
+
+def test_kinds_the_check_doesnt_read_are_kept_as_before(servers):
+    """A foot standing on the floor (not a sole scan) isn't judged by the completeness check."""
+    op, _, data = servers
+    cid = body(call(f"{op}/api/captures", "POST", {"condition": "swb", "foot": "right", "session": "LIDAR",
+                                                    "load_kg": 30, "method": "imported_mesh"}))["id"]
+    assert call(f"{op}/api/captures/{cid}/mesh?ext=obj&up=y", "PUT", _object_capture_foot("right"),
+                {"Content-Type": "application/octet-stream"})[0] == 200
+    assert "completeness" not in json.loads((data / "captures" / cid / "capture.json").read_text())

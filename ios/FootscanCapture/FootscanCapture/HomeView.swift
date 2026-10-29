@@ -146,7 +146,7 @@ struct HomeView: View {
             case 0:  // pick the sole scan
                 withAnimation(.spring(duration: 0.35, bounce: 0.35)) { subjectRaw = subjects.first(where: \.needs3DCapture)?.rawValue ?? subjectRaw }
             case 1:  // open the scan that's waiting to go, where Send is
-                if let waiting = soleScans.first(where: { $0.record?.studioCaptureID == nil }) { path.append(waiting) }
+                if let waiting = soleScans.first(where: { $0.record?.studioCaptureID == nil && $0.record?.retake == nil }) { path.append(waiting) }
             default:
                 break
             }
@@ -163,7 +163,8 @@ struct HomeView: View {
     private var insoleStep: Int {
         let soles = soleScans
         if soles.contains(where: { $0.record?.studioCaptureID != nil }) { return 2 }
-        return soles.isEmpty ? 0 : 1
+        // only scans the studio refused (part of the foot missing): back to scanning
+        return soles.allSatisfy { $0.record?.retake != nil } ? 0 : 1
     }
 
     private var newScan: some View {
@@ -274,6 +275,11 @@ struct HomeView: View {
         for s in library.scans where library.work[s.folder] == nil {
             guard let r = s.record else { continue }
             if let p = library.problems[s.folder] { return (s, "\(r.subject.label) needs a look", p) }
+            if let missing = r.retake?.first, !library.scans.contains(where: { newer in
+                newer.record.map { $0.subject == r.subject && $0.created > r.created } ?? false
+            }) {
+                return (s, "Scan your \(r.subject.label.lowercased()) again", missing)
+            }
             if s.photoCount > 0 && !s.hasOBJ && CaptureMethod.lidarAvailable {
                 return (s, "Finish your \(r.subject.label.lowercased()) scan", "Its 3D model hasn't been built yet.")
             }
@@ -454,6 +460,8 @@ struct ScanStatus: View {
             case nil:
                 if library.problems[scan.folder] != nil {
                     Chip(text: "Needs a look", symbol: "exclamationmark.triangle.fill", tint: .fsWarn, soft: .fsWarnSoft)
+                } else if rec?.retake != nil {
+                    Chip(text: "Scan again", symbol: "exclamationmark.triangle.fill", tint: .fsWarn, soft: .fsWarnSoft)
                 } else if rec?.studioCaptureID != nil {
                     Chip(text: "Sent to studio", symbol: "checkmark.circle.fill", tint: .fsOK, soft: .fsOKSoft)
                 } else if scan.hasModel {
