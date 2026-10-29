@@ -105,11 +105,30 @@ def damage(m, rng, noise=0.0, grain=2.0, wavy=0.0, jitter=0.0, holes=0, junk=0):
     return m
 
 
-def sole_up_case(foot, rng, tip=25.0, roll=0.0, yaw=63.0, gravity_tilt=0.0, bed=True, **dmg):
+TOES_BEND_FROM, TOES_BEND_BLEND = 185.0, 12.0  # synth.bend_toes' hinge (x, foot coordinates) and blend, mm
+
+
+def _bent(foot, toes_up):
+    """The synthetic foot, its toes bent up ``toes_up`` degrees (synth.bend_toes) if any. Split to 2 mm
+    triangles first, so the bend is smooth (it adds points, not shape)."""
+    m = synth.curved_foot(foot)
+    return synth.bend_toes(synth.refined(m), toes_up, x_from=TOES_BEND_FROM, blend=TOES_BEND_BLEND) if toes_up else m
+
+
+def _truth(foot, toes_up):
+    """The true sole height at x, y; with the toes bent, only behind the bend (NaN past it: the toes are
+    laid flat by the preparation, which isn't a rigid move, so there they can't be mapped back exactly)."""
+    if not toes_up:
+        return lambda x, y: synth.curved_sole(x, y, foot)
+    behind = TOES_BEND_FROM - TOES_BEND_BLEND / 2 - EDGE_MM
+    return lambda x, y: np.where(np.asarray(x) < behind, synth.curved_sole(x, y, foot), np.nan)
+
+
+def sole_up_case(foot, rng, tip=25.0, roll=0.0, yaw=63.0, gravity_tilt=0.0, bed=True, toes_up=0.0, **dmg):
     """Lying face down, knee bent: the foot (with leg) turned sole-up, tipped by its relaxed ankle."""
     import trimesh
 
-    m = damage(synth.curved_foot(foot), rng, **dmg)
+    m = damage(_bent(foot, toes_up), rng, **dmg)
     P = np.diag([1.0, -1, -1, 1]) @ _rot(roll, [1, 0, 0], [0, 45, 0]) @ _rot(tip, [0, 1, 0], [0, 45, 0])
     m.apply_transform(P)
     if bed:
@@ -119,14 +138,14 @@ def sole_up_case(foot, rng, tip=25.0, roll=0.0, yaw=63.0, gravity_tilt=0.0, bed=
     S = to_object_capture(yaw, gravity_tilt)
     m.apply_transform(S)
     # synthetic foot coordinates <- scan as handed over; the true sole there is curved_sole, floor z = 0
-    return m, np.linalg.inv(S @ P), lambda x, y: synth.curved_sole(x, y, foot), 0.0
+    return m, np.linalg.inv(S @ P), _truth(foot, toes_up), 0.0
 
 
-def legs_flat_case(foot, rng, yaw=63.0, gravity_tilt=0.0, bed=True, **dmg):
+def legs_flat_case(foot, rng, yaw=63.0, gravity_tilt=0.0, bed=True, toes_up=0.0, **dmg):
     """Face down, legs straight, the foot just past the end of the bed: the sole faces back."""
     import trimesh
 
-    m = damage(synth.curved_foot(foot), rng, **dmg)
+    m = damage(_bent(foot, toes_up), rng, **dmg)
     W = np.eye(4)
     W[:3, :3] = np.c_[[0, 0, -1.0], [0, -1.0, 0], [-1.0, 0, 0]]  # standing -> lying: up -> -x, front -> down
     m.apply_transform(W)
@@ -138,7 +157,7 @@ def legs_flat_case(foot, rng, yaw=63.0, gravity_tilt=0.0, bed=True, **dmg):
         m = trimesh.util.concatenate([m, b])
     S = to_object_capture(yaw, gravity_tilt)
     m.apply_transform(S)
-    return m, np.linalg.inv(S @ W), lambda x, y: synth.curved_sole(x, y, foot), 0.0
+    return m, np.linalg.inv(S @ W), _truth(foot, toes_up), 0.0
 
 
 def print_case(foot, rng, depth=30.0, yaw=63.0, gravity_tilt=0.0, **dmg):
@@ -166,11 +185,15 @@ CASES = [
     ("holes x6", "sole_up", sole_up_case, dict(holes=6)),
     ("stray bits", "sole_up", sole_up_case, dict(junk=6)),
     ("speckle 0.6 + holes", "sole_up", sole_up_case, dict(noise=0.6, holes=6)),
+    ("toes bent up 20", "sole_up", sole_up_case, dict(toes_up=20.0)),
+    ("toes bent up 35", "sole_up", sole_up_case, dict(toes_up=35.0)),
+    ("toes bent up 35 + speckle 0.6", "sole_up", sole_up_case, dict(toes_up=35.0, noise=0.6)),
     ("clean", "sole_hanging", legs_flat_case, {}),
     ("no bed in the scan", "sole_hanging", legs_flat_case, dict(bed=False)),
     ("phone level off 4", "sole_hanging", legs_flat_case, dict(gravity_tilt=4.0)),
     ("speckle 0.6", "sole_hanging", legs_flat_case, dict(noise=0.6)),
     ("jitter 0.5", "sole_hanging", legs_flat_case, dict(jitter=0.5)),
+    ("toes bent up 35", "sole_hanging", legs_flat_case, dict(toes_up=35.0)),
     ("clean", "impression", print_case, {}),
     ("shallow 18", "impression", print_case, dict(depth=18.0)),
     ("deep 45", "impression", print_case, dict(depth=45.0)),
@@ -225,7 +248,9 @@ def measure(name, kind, builder, kw, foot, seed=0):
     plan = synth.curved_plan()
     d_edge = shapely.distance(plan.exterior, shapely.points(np.c_[xs_, ys_]))
     interior = shapely.contains_xy(plan, xs_, ys_) & (d_edge > EDGE_MM)
-    true_z = truth(xs_[interior], ys_[interior])
+    tz = truth(xs_[interior], ys_[interior])
+    interior[interior] = np.isfinite(tz)  # a case may compare only part of the sole
+    true_z = tz[np.isfinite(tz)]
     # the height the insole uses (above the floor the preparation found) against the true height
     # above the true floor, at the same spot on the foot: floor errors and surface errors together
     err = H[seen][interior] - (true_z - floor0)

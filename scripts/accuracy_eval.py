@@ -92,6 +92,7 @@ def measure_scan(folder: Path, meta: dict) -> dict:
         surface_noise_mm=info.get("surface_noise_mm"),
         open_edges_near_floor_mm=info.get("open_edges_near_floor_mm"),
         two_feet=info.get("two_feet"),
+        toes_laid_flat=info.get("toes_laid_flat"), toes_warning=info.get("toes_warning"),
         max_fill_mm=ins.report.get("max_fill_mm"),
         sole_seen=ins.report.get("sole", {}).get("seen"),
         warnings=ins.report["warnings"],

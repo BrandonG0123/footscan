@@ -150,6 +150,35 @@ Codex reviews of those fixes found more, each now fixed and tested:
 - If the exact outline can't be made, the fallback is the filled convex
   outline (it was able to collapse to a fragment), and the sheet says so.
 
+## Toes hanging up in a sole scan (29 Oct)
+
+Relaxed in the air, a foot's toes hang up off the line of its sole; the
+left sole-up scan 89df had its toe tip 17.8 mm above the floor. The
+benchmark now bends the synthetic foot's toes up (tests/synth.py
+`bend_toes`, about a line across the foot 185 mm from the heel) and
+compares the sole only behind the bend. SYNTHETIC, both feet alike unless
+shown right / left; before is the preparation as of the start of 29 Oct,
+after lays the toes flat (`_lay_toes_flat`) and places the floor's heel and
+ball along the whole underside when the toes hang up:
+
+| case | outline length, mm (before -> after) | p95 height error, mm | floor tilt, deg | arch on the inner side |
+|---|---|---|---|---|
+| sole up, toes bent up 20 | -4.8 / -4.9 -> -1.4 | 0.19 / 1.49 -> 0.19 | 0.14 / 1.73 -> 0.14 / 0.13 | yes -> yes |
+| sole up, toes bent up 35 | -19.8 / -19.5 -> -3.4 | 1.15 / 1.44 -> 0.30 | 1.30 / 1.61 -> 0.16 / 0.15 | NO (false "arch on the outside") -> yes |
+| sole up, toes bent up 35, speckle 0.6 | -19.4 / -20.7 -> -4.4 / -4.9 | 2.28 / 0.91 -> 0.81 | 2.81 / 0.83 -> 0.95 / 0.86 | yes -> yes |
+| legs flat, toes bent up 35 | -19.8 / -19.6 -> -3.4 | 1.15 / 1.43 -> 0.29 | 1.31 / 1.60 -> 0.13 / 0.14 | NO -> yes |
+
+The other 58 cases are unchanged to the last digit. Where toes really bend
+(at the joints, inside the ball of the foot, or nearer the skin) changes
+how long the laid-flat outline reads: on bends about a line 12-18 mm up it
+reads 1.7-6.6 mm long (the table beside `TOES_JOINT_UP_MM` in
+`foot_prep.py`). Only a ruler measurement of a scanned foot can say which.
+
+Not fixed: toes curled *down* past the ball (SYNTHETIC, 20 degrees) tip
+the floor 6 degrees heel to toe, because the hull rests on the heel and
+the toe tips. A sole-up or legs-flat pose lets gravity pull the toes the
+other way, so it hasn't been seen; noted here in case a real scan shows it.
+
 ## The part not measured yet: the capture
 
 The processing is not the weak link; the capture may be. The closest
