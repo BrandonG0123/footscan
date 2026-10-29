@@ -76,6 +76,10 @@ For an insole, scan the sole: *Right/Left sole* (lying face down, knee
 bent, sole to the ceiling) or *Right/Left foam print* (the print in a foam
 impression box). Both use 3D capture, need no mat and no scale reading,
 and go straight to the studio for **Make insole** (see docs/insole.md).
+A sole scan missing its toes or heel is refused when it reaches the studio
+(docs/insole.md, *Refused on arrival*): the scan's page says what's missing
+and how to scan again, the card reads *Scan again*, and that scan is never
+sent again.
 
 Scan *Whole right foot* / *Whole left foot* the same way (sit, foot flat on the mat,
 keep still; someone else holds the phone). There is no ground truth for a

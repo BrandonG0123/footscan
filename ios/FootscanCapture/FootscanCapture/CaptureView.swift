@@ -223,7 +223,7 @@ private struct Controls: View {
             }
         case .detecting:
             switch subject.scanKind {
-            case "sole_up", "sole_hanging": "Drag the box's edges so it holds the foot and a hand's width of the leg, then Start."
+            case "sole_up", "sole_hanging": "Drag the box's edges so it holds this foot and a hand's width of the leg, not the other foot, then Start."
             case "impression": "Drag the box's edges so it holds the whole foam box, then Start."
             default: "A box appears round it. Drag the box's edges so it holds just the object, then Start."
             }
@@ -234,7 +234,7 @@ private struct Controls: View {
                     ? "Enough photos. Another sweep a little higher or lower makes it better; or Finish."
                     : "Sweep slowly from the inner side, round behind the foot, to the outer side. Then again higher and lower."
             case ("sole_up", false): "Walk slowly all the way round the foot, looking down at the sole, until the ring is full. Finish unlocks then."
-            case ("sole_up", true): "Lap done. One more, closer and looking straight down at the arch, makes it better. Then Finish."
+            case ("sole_up", true): "Lap done. Now one more, closer, looking down at the arch, the toes and the back of the heel. Then Finish."
             case ("impression", false): "Walk slowly all the way round, looking down into the print, until the ring is full. Finish unlocks then."
             case ("impression", true): "Lap done. One more, higher up and looking straight down into the print, makes it better. Then Finish."
             case (_, true): "Lap done. Best results: 2 or 3 laps, one higher up looking down, one low. Then Finish."

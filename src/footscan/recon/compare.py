@@ -132,7 +132,7 @@ def compare_scans(mesh_a, mesh_b, foot: str, kind_a: str = "sole_up", kind_b: st
     from .foot_prep import PREPARE, _settle_floor  # noqa: F401  (the same preparation as Make insole)
 
     kind_b = kind_b or kind_a
-    prep = lambda mesh, kind: (PREPARE[kind](mesh, up, foot=foot) if kind == "impression" else PREPARE[kind](mesh, up))[0]
+    prep = lambda mesh, kind: PREPARE[kind](mesh, up, foot=foot)[0]
     out = compare_prepared(prep(mesh_a, kind_a), prep(mesh_b, kind_b), foot)
     out["kinds"] = [kind_a, kind_b]
     return out
