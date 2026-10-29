@@ -68,7 +68,7 @@ def test_make_insole_warns_about_missing_toes_too():
     assert not any("MISSING" in w or "CUT OFF" in w for w in whole.report["warnings"])
 
 
-def test_a_scan_that_isnt_one_foot_is_caught_before_its_ends_are_judged():
+def test_a_scan_that_isnt_one_foot_is_caught_when_its_ends_look_whole():
     """The legs-flat scan 2190 caught both feet merged: its outline read 264.9 x 254.3 mm (real check, Oct 28).
     A real kept right sole scan, 2349, read 244.1 x 89.6 mm."""
     both = dict(length_mm=264.9, width_mm=254.3, toe_end=0.24, heel_end=0.28)

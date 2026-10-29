@@ -118,19 +118,13 @@ def measure(placed) -> dict:
 def problems(m: dict) -> list[str]:
     """What's missing from a scan, in plain words (each ends with what to do), from ``measure``'s result.
 
-    First, is the outline one foot at all? Its length and width against foot_prep's limits for an adult
-    foot (the same ones Make insole warns with). The legs-flat scan LIDAR_nwb_relaxed_L_20261027-151815-2190
-    caught both feet merged into one piece: 264.9 x 254.3 mm. Then its ends mean nothing, so nothing else
-    is said."""
+    The toes and the heel first. Then, if both ends look whole, is the outline one foot at all? Its length
+    and width against foot_prep's limits for an adult foot (the same ones Make insole warns with). The
+    legs-flat scan LIDAR_nwb_relaxed_L_20261027-151815-2190 caught both feet merged into one piece:
+    264.9 x 254.3 mm, its ends round. (In that order because a foot without its toes is short for its
+    width too: the synthetic foot cut 50 mm short is 200 x 100 mm, wider for its length than the limit.)"""
     from . import foot_prep
 
-    L, W = m["length_mm"], m["width_mm"]
-    lo, hi = foot_prep.FOOT_RATIO
-    if not (foot_prep.FOOT_LENGTH_MM[0] <= L <= foot_prep.FOOT_LENGTH_MM[1]) or not (lo <= W / max(L, 1e-9) <= hi):
-        return [f"THIS ISN'T ONE WHOLE FOOT: seen from above the scan is {L:.0f} x {W:.0f} mm, but a foot is about "
-                f"{foot_prep.FOOT_LENGTH_MM[0]:.0f}-{foot_prep.FOOT_LENGTH_MM[1]:.0f} mm long and {lo:.2f}-{hi:.2f} "
-                "times as wide as long. Both feet may have been caught together, or part of the bed or leg. Scan "
-                "again with only this foot in view, the other foot well out of the way."]
     out = []
     if m["toe_end"] > TOE_END_SQUARE:
         out.append(f"THE TOES ARE MISSING: the front of the scan ends square ({m['toe_end']:.0%} of the foot's width "
@@ -141,6 +135,14 @@ def problems(m: dict) -> list[str]:
         out.append(f"THE HEEL IS CUT OFF: the back of the scan ends square ({m['heel_end']:.0%} of the foot's width "
                    f"{END_PROBE_MM:.0f} mm from its end), where a heel rounds off. Its back wasn't scanned, so the "
                    "insole's length and heel cup would be wrong. Scan again, taking the phone round behind the heel.")
+    L, W = m["length_mm"], m["width_mm"]
+    lo, hi = foot_prep.FOOT_RATIO
+    one_foot = foot_prep.FOOT_LENGTH_MM[0] <= L <= foot_prep.FOOT_LENGTH_MM[1] and lo <= W / max(L, 1e-9) <= hi
+    if not out and not one_foot:
+        out.append(f"THIS ISN'T ONE WHOLE FOOT: seen from above the scan is {L:.0f} x {W:.0f} mm, but a foot is about "
+                   f"{foot_prep.FOOT_LENGTH_MM[0]:.0f}-{foot_prep.FOOT_LENGTH_MM[1]:.0f} mm long and {lo:.2f}-{hi:.2f} "
+                   "times as wide as long. Both feet may have been caught together, or part of the bed or leg. Scan "
+                   "again with only this foot in view, the other foot well out of the way.")
     return out
 
 
