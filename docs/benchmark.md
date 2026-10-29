@@ -179,6 +179,26 @@ the floor 6 degrees heel to toe, because the hull rests on the heel and
 the toe tips. A sole-up or legs-flat pose lets gravity pull the toes the
 other way, so it hasn't been seen; noted here in case a real scan shows it.
 
+On the real scans (Brandon's Mac, 29 Oct, `scripts/accuracy_eval.py` at
+8dbfdee before and 25b3227 after; no ruler length yet, so none of these can
+be called more accurate). All three distinct sole scans had their toes up
+and were laid flat:
+
+| scan | toes raised, deg | toe tip up, mm | outline L x W, mm | footprint length, mm |
+|---|---|---|---|---|
+| 2349 right, sole up | 10.8 | 9.5 -> 0.6 | 244.1 x 89.6 -> 243.7 x 89.8 | 241.5 -> 240.8 |
+| 89df left, sole up | 12.8 | 17.8 -> 6.0 | 228.2 x 79.8 -> 229.7 x 79.9 | 203.8 -> 224.7 |
+| 2190 left, legs flat | 21.5 | 18.1 -> 14.4 | 211.9 x 107.1 -> 219.5 x 108.2 | 199.1 -> 204.9 |
+
+The left foot (89df) still reads 14.0 mm shorter and 9.9 mm narrower than
+the right (2349), so its toes were not what made it short. 2349's floor
+correction moved 3.20 -> 3.59 degrees. 2190 lost its "toes missing"
+warning (its end now rounds off) but is still refused: torn near the floor,
+rolled 23 mm, both feet in the scan. On SYNTHETIC feet with the front 15-40
+mm cut off and the rest bent up 20 or 35 degrees, laying flat never hid the
+cut (test_completeness.py); the tips of 2190's toes still curl up 14 mm,
+which the one joint doesn't straighten.
+
 ## The part not measured yet: the capture
 
 The processing is not the weak link; the capture may be. The closest

@@ -464,7 +464,8 @@ TOES_BELOW_MM = 60.0         # ...from everything below this (the foot, not the 
 TOES_BALL_ON_FLOOR_MM = 3.0  # the ball of the foot is this close to the floor, or there's nothing to lay toes against
 TOES_ON_FLOOR_MM = 1.5       # past the ball, the sole still rests on the floor while it's this close to the ball's height
 TOES_ANGLE_FROM_MM = 4.0     # the toes' angle is read from points at least this far past the pivot
-TOES_MIN_LENGTH_MM = 20.0    # less than this past the ball isn't toes: nothing to lay flat
+TOES_MIN_LENGTH_MM = 20.0    # less than this past the ball isn't toes: nothing to lay flat (measured along the
+                             # underside, not across the floor: toes raised steeply cover little floor)
 TOES_MIN_RAISE_DEG = 5.0     # toes raised less than this are as good as flat: left exactly as they are
 TOES_MAX_RAISE_DEG = 60.0    # past this it isn't toes hanging up, it's something else: left alone, with a warning
 # The radius the toes bend round: their joints sit inside the ball of the foot, this far above the floor, not at
@@ -537,7 +538,11 @@ def _lay_toes_flat(placed, info):
     while i + 1 < len(z) and (not have[i + 1] or z[i + 1] <= zb + TOES_ON_FLOOR_MM):
         i += 1
     yp = float(ys[i])
-    if y1 - yp < TOES_MIN_LENGTH_MM:
+    # how far the underside reaches from the pivot, straight-line: the horizontal reach alone would let toes raised
+    # steeply (SYNTHETIC: 50 mm of toes bent up 65 degrees reach 21 mm across the floor) skip both the laying and
+    # the too-steep warning
+    past = have & (ys > yp)
+    if not past.any() or float(np.max(np.hypot(ys[past] - yp, z[past] - zb))) < TOES_MIN_LENGTH_MM:
         return placed
     ahead = have & (ys > yp + TOES_ANGLE_FROM_MM)
     if not ahead.any():

@@ -361,6 +361,22 @@ def test_a_front_too_steep_for_toes_hanging_up_is_left_as_scanned_and_refused_on
     assert any(w.startswith("THE FRONT OF THE FOOT RISES") for w in completeness.from_prep(info))
 
 
+def test_toes_raised_steeply_from_further_forward_are_still_judged_not_skipped_as_too_short():
+    """Steep toes cover little floor: 50 mm of toes bent up 65 degrees from 200 mm reach only about 21 mm across
+    it. They were skipped as too short to be toes, so neither laid flat nor warned about, and the outline read
+    214 mm of 250 with nothing said (found by a Codex review, 29 Oct). Their reach is measured along the
+    underside now: the 65-degree front is refused, and toes bent up 50 degrees from 215 mm are laid flat."""
+    from footscan.recon import completeness, foot_prep
+
+    steep, info = foot_prep.prepare_sole_up(
+        synth.sole_up_capture(synth.bend_toes(synth.curved_foot("right"), 65.0, x_from=200.0)), foot="right")
+    assert any(w.startswith("THE FRONT OF THE FOOT RISES") for w in completeness.from_prep(info))
+    placed, info = foot_prep.prepare_sole_up(
+        synth.sole_up_capture(synth.bend_toes(synth.curved_foot("right"), 50.0, x_from=215.0)), foot="right")
+    assert info["toes_laid_flat"]["raised_deg"] == pytest.approx(50.0, abs=4.0)
+    assert completeness.measure(placed)["length_mm"] > 240.0  # 235.1 when skipped
+
+
 def test_toes_already_flat_are_left_exactly_as_scanned(monkeypatch):
     """A sole scan whose toes lie along the sole: nothing is laid flat, and the prepared foot is the same,
     point for point, as with laying toes flat turned off."""
