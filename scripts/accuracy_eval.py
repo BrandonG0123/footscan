@@ -51,6 +51,24 @@ def _full_length(placed) -> float:
     return float(y1 - y0)
 
 
+def _profile(placed) -> dict:
+    """Diagnostics for where the length goes: the outline's length below several heights, and the
+    lowest point of the foot every 5 mm from the heel back to the toe tip (mm above the floor)."""
+    V = np.asarray(placed.vertices)
+    lengths = {}
+    for h in (10, 20, 30, 45, 60):
+        try:
+            poly = completeness._along_its_length(insole.silhouette(placed, height=h))
+            lengths[str(h)] = round(float(poly.bounds[3] - poly.bounds[1]), 1)
+        except Exception:  # noqa: BLE001 - too little below that height
+            lengths[str(h)] = None
+    low = V[V[:, 2] < FULL_LENGTH_BELOW_MM]
+    y0 = float(low[:, 1].min())
+    bins = np.floor((low[:, 1] - y0) / 5.0).astype(int)
+    prof = [round(float(low[bins == b, 2].min()), 1) for b in range(int(bins.max()) + 1) if (bins == b).any()]
+    return dict(length_below_mm=lengths, lowest_every_5mm_from_heel=prof)
+
+
 def measure_scan(folder: Path, meta: dict) -> dict:
     kind = meta.get("scan_kind") or "foot"
     up = (meta.get("mesh") or {}).get("up", "y")
@@ -77,6 +95,7 @@ def measure_scan(folder: Path, meta: dict) -> dict:
         max_fill_mm=ins.report.get("max_fill_mm"),
         sole_seen=ins.report.get("sole", {}).get("seen"),
         warnings=ins.report["warnings"],
+        **_profile(placed),
         seconds=round(time.time() - t0, 1),
     ), placed
 
