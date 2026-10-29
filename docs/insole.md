@@ -127,7 +127,25 @@ Two more, for the sole scans:
 A sole-up scan is turned over (the phone knows which way was up), cut
 below the bed and rested on its heel and ball: the floor is the face of
 the scan's convex hull right under its centre, so a foot tipped by its own
-relaxed ankle lands flat. A foam print is cut out of the box (below the
+relaxed ankle lands flat. Relaxed in the air, the toes hang up off the
+line of the sole (gravity pulls them toward the top of the foot); standing,
+they lie flat. Hung up, they look shorter from above and their tips can rise
+past the 30 mm the outline is read at, so the outline comes out short
+(SYNTHETIC, the 250 mm test foot with its toes bent up 35 degrees: 14.6-20.6
+mm short, depending on where they bend). So a sole scan's toes are laid flat
+first (`_lay_toes_flat`): from the last point past the ball still on the
+floor, the toes' angle is read off the underside, and the front of the foot
+is turned down by it round a 10 mm joint just behind that point (toes bend at
+their joints, not at the skin; 10 mm is a judgment, to be set from a ruler
+measurement). Laid flat, the same foot reads -4.1 to +6.6 mm at 35 degrees.
+The table of runs is beside `TOES_JOINT_UP_MM` in `foot_prep.py`; the
+decision is recorded as `toes_laid_flat` (angle, pivot, joint, length before
+and after). A front rising more than 60 degrees isn't laid flat and gets a
+warning. With the toes hung up, the floor's heel and ball are also placed
+along the whole underside, toes included: along the contact areas alone,
+which end at the ball, the "ball" was the arch and tipped the floor
+(SYNTHETIC, toes bent up 20 degrees: 1.6 degrees across the left foot).
+A foam print is cut out of the box (below the
 foam's flat top, inside its outline, facing up), its triangles turned to
 face down the way the sole did, and rested the same way; the heel is its
 narrower end. Both add warnings if less than 60% of the sole was scanned,
@@ -183,6 +201,11 @@ square enough for the shape checks. The legs-flat scan
 read 264.9 x 254.3 mm and was kept by that first version; the *not one whole
 foot* check was added for it. Four real scans: the thresholds aren't proven
 by them.
+Those lengths predate laying hung-up toes flat (29 Oct): 89df's toe tip was
+17.8 mm up, so it may read longer now; not yet rerun. Saved measures from
+before are measured again before a length comparison, and a sole scan's
+insole made before then shows as out of date until it's made again
+(`foot_prep.prep_version()`).
 
 A standing foot and a foam print aren't checked. Make insole on a
 scan kept before this check still lists the same problems as warnings. To see

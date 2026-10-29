@@ -305,6 +305,8 @@ def _bowl_low(Q, keep_mm: float) -> np.ndarray | None:
 
 UNLOADED_CONTACT_MM = 8.0  # an unloaded foot: look this far up for the heel and the ball of the foot
 UNLOADED_MAX_TURN_DEG = 10.0
+UNLOADED_UNDERSIDE_MM = 50.0  # an unloaded foot's whole underside, toes hanging up included, is below this
+UNLOADED_TOES_UP_MM = (5.0, 15.0)  # ...longer than its contact areas by this (from, to) when the toes hang up
 UNLOADED_MIN_TURN_DEG = 1.0  # a clean scan whose tripod is this close to its resting floor already stands level
 
 
@@ -354,6 +356,18 @@ def _settle_floor(placed, info, unloaded: bool = False) -> np.ndarray:
     width_lo = np.ptp(P[along < lo + 0.3 * L][:, :2] @ side) if (along < lo + 0.3 * L).any() else 0.0
     width_hi = np.ptp(P[along > lo + 0.7 * L][:, :2] @ side) if (along > lo + 0.7 * L).any() else 0.0
     from_heel = (along - lo) if width_lo <= width_hi else (lo + L - along)
+    if unloaded:
+        # Toes hanging up are out of the contact band, so the contact areas end at the ball, and 55-80% of
+        # that is the arch, not the ball (SYNTHETIC, curved_foot with its toes bent up 20 degrees: the left
+        # foot's floor tipped 1.6 degrees across). So the length runs on to the toe tips: the whole underside's
+        # furthest point past the contact areas' toe end, blended in by how far past it is
+        # (``UNLOADED_TOES_UP_MM``), so a few mm either way doesn't jump. Only the toe end: underside past
+        # the heel (its rounded back, a shin leaning back) never moves the heel's end.
+        U = V[(N[:, 2] < -0.3) & (V[:, 2] < UNLOADED_UNDERSIDE_MM)]
+        u_heel = (U[:, :2] - P[:, :2].mean(0)) @ axis
+        u_heel = (u_heel - lo) if width_lo <= width_hi else (lo + L - u_heel)
+        past = float(u_heel.max()) - L if len(U) else 0.0
+        L += past * float(np.clip((past - UNLOADED_TOES_UP_MM[0]) / np.ptp(UNLOADED_TOES_UP_MM), 0, 1))
     heel = P[from_heel < 0.35 * L]
     ball = P[(from_heel > 0.55 * L) & (from_heel < 0.8 * L)]
     keep = max(1.0, 2.0 * noise)
@@ -436,8 +450,144 @@ def insole_silhouette_mm() -> float:
     return insole.SILHOUETTE_HEIGHT_MM
 
 
-def _orient_and_trim(placed, info, trim_mm, heel_by: str = "leg", track: list | None = None):
-    """Floor already at z = 0: turn toes to +y, centre on the mat, trim the leg."""
+LAY_TOES_FLAT = True         # sole scans: lay toes that hang up flat (_lay_toes_flat); False reads them as scanned
+
+
+def prep_version() -> str:
+    """How a sole scan is prepared, in a few words: saved with what's measured or made from it (the
+    completeness measures, an insole), so what was made another way can be told apart and made again.
+    Change it whenever a change to the preparation changes a sole scan's shape or size."""
+    return "2026-10-29: toes laid flat" if LAY_TOES_FLAT else "2026-10-29: toes as scanned"
+
+TOES_PROFILE_STEP_MM = 2.0   # the underside's lowest point is read in steps this long, heel to toe
+TOES_BELOW_MM = 60.0         # ...from everything below this (the foot, not the shin)
+TOES_BALL_ON_FLOOR_MM = 3.0  # the ball of the foot is this close to the floor, or there's nothing to lay toes against
+TOES_ON_FLOOR_MM = 1.5       # past the ball, the sole still rests on the floor while it's this close to the ball's height
+TOES_ANGLE_FROM_MM = 4.0     # the toes' angle is read from points at least this far past the pivot
+TOES_MIN_LENGTH_MM = 20.0    # less than this past the ball isn't toes: nothing to lay flat (measured along the
+                             # underside, not across the floor: toes raised steeply cover little floor)
+TOES_MIN_RAISE_DEG = 5.0     # toes raised less than this are as good as flat: left exactly as they are
+TOES_MAX_RAISE_DEG = 60.0    # past this it isn't toes hanging up, it's something else: left alone, with a warning
+# The radius the toes bend round: their joints sit inside the ball of the foot, this far above the floor, not at
+# the skin under it; how far up isn't measured here. 10 mm is a judgment, to be set from the first ruler
+# measurement of a scanned foot. On SYNTHETIC sole-up scans (tests/synth.py curved_foot, 250 mm, right foot,
+# toes bent up by synth.bend_toes about a line across the foot at x = 185 mm, prepared by prepare_sole_up, the
+# length read by completeness.measure, 2026-10-29) the outline's length came out, against 250 mm:
+#                         as scanned: 10 / 20 / 35 / 50 degrees        laid flat (10 mm): 10 / 20 / 35 / 50
+#   bent about the skin    -1.2 / -4.8 / -20.6 / -38.2               -0.4 / -1.5 / -4.1 / -6.4
+#   bent about 12 mm up    +0.8 / -0.7 / -16.4                        +1.7 / +2.7 / +3.6
+#   bent about 18 mm up           +1.2 / -14.6                               +4.5 / +6.6
+# (5 mm: +0.7 to -2.7 bent about the skin, +2.9 to +9.7 about a line 12-18 mm up; 15 mm: -1.5 to -11.1 and
+# +0.4 to +3.5.) At 35 degrees and more, as the tips rise past the outline's height, as scanned reads 14.6-38.2
+# mm short; laid flat, -6.4 to +6.6 mm, depending on where the toes really bend.
+TOES_JOINT_UP_MM = 10.0
+
+
+def _lay_toes_flat(placed, info):
+    """In a sole scan (toes toward +y, floor at z = 0): lay toes that hang up off the floor flat, as standing.
+
+    Relaxed in the air, the toes bend up off the line of the sole (the scan's
+    gravity pulls them toward the top of the foot). Seen from above they then
+    look shorter, and their tips can rise above the height the insole's
+    outline is read at (insole.SILHOUETTE_HEIGHT_MM), so the outline comes out
+    short (SYNTHETIC: see ``TOES_JOINT_UP_MM``). Standing, they lie flat on
+    the floor. So:
+
+    1. Read the underside's profile: the lowest point of the foot in every
+       ``TOES_PROFILE_STEP_MM`` from the heel to the tip.
+    2. The pivot: walking forward from the ball of the foot (the lowest point
+       55-80% of the way along), the last point still on the floor (within
+       ``TOES_ON_FLOOR_MM`` of the ball's height), at the ball's height.
+    3. The raise: the smallest angle, seen from the pivot, of any point of the
+       profile at least ``TOES_ANGLE_FROM_MM`` further forward: the line from
+       the pivot at that angle runs under all of the toes and touches one.
+    4. The toes bend round their joints, not round the skin: a circle
+       ``TOES_JOINT_UP_MM`` across that touches both the floor and that line,
+       just behind the pivot. Everything ahead of its centre whose direction
+       from it is past the line (the toes, and the top of the foot above them)
+       is turned down by the raise about the centre, which lays the line on
+       the floor. What's between the floor and the line (the skin wrapped
+       round the joint) is turned just far enough to reach the floor, so it
+       closes up instead of folding under. Nothing behind the centre moves.
+    5. Under ``TOES_MIN_RAISE_DEG`` nothing is changed; over
+       ``TOES_MAX_RAISE_DEG`` it isn't toes hanging up (a warning says so).
+
+    Not a rigid move: the toes move relative to the rest of the foot, so the
+    recorded ``to_mat`` is exact everywhere but ahead of the joint. Returns the
+    mesh (unchanged if the toes already lie flat) and records what was done
+    in ``info["toes_laid_flat"]``.
+    """
+    V = np.asarray(placed.vertices)
+    low = V[V[:, 2] < TOES_BELOW_MM]
+    if len(low) < 100:
+        return placed
+    y0, y1 = float(low[:, 1].min()), float(low[:, 1].max())
+    L = y1 - y0
+    steps = np.floor((low[:, 1] - y0) / TOES_PROFILE_STEP_MM).astype(int)
+    z = np.full(steps.max() + 1, np.inf)
+    np.minimum.at(z, steps, low[:, 2])
+    ys = y0 + (np.arange(len(z)) + 0.5) * TOES_PROFILE_STEP_MM
+    have = np.isfinite(z)
+    ball_zone = have & (ys > y0 + 0.55 * L) & (ys < y0 + 0.8 * L)
+    if not ball_zone.any():
+        return placed
+    i = int(np.nonzero(ball_zone)[0][np.argmin(z[ball_zone])])
+    zb = float(z[i])
+    if zb > TOES_BALL_ON_FLOOR_MM:
+        return placed  # the ball of the foot isn't on the floor: nothing to lay the toes against
+    while i + 1 < len(z) and (not have[i + 1] or z[i + 1] <= zb + TOES_ON_FLOOR_MM):
+        i += 1
+    yp = float(ys[i])
+    # how far the underside reaches from the pivot, straight-line: the horizontal reach alone would let toes raised
+    # steeply (SYNTHETIC: 50 mm of toes bent up 65 degrees reach 21 mm across the floor) skip both the laying and
+    # the too-steep warning
+    past = have & (ys > yp)
+    if not past.any() or float(np.max(np.hypot(ys[past] - yp, z[past] - zb))) < TOES_MIN_LENGTH_MM:
+        return placed
+    ahead = have & (ys > yp + TOES_ANGLE_FROM_MM)
+    if not ahead.any():
+        return placed
+    theta = float(np.min(np.arctan2(z[ahead] - zb, ys[ahead] - yp)))
+    raise_deg = float(np.degrees(theta))
+    if raise_deg < TOES_MIN_RAISE_DEG:
+        return placed
+    if raise_deg > TOES_MAX_RAISE_DEG:
+        info["toes_warning"] = (f"THE FRONT OF THE FOOT RISES {raise_deg:.0f} DEGREES past the ball of the foot, too steep "
+                                "for toes hanging up, so it was left as scanned and the insole may be short. Check the toes "
+                                "in the 3D model; scan again with them relaxed.")
+        return placed
+    # the joint: a circle of radius r touching the floor (z = zb) and the line from the pivot at theta, its
+    # centre on the angle between them, r up and r * tan(theta / 2) behind the pivot
+    r = TOES_JOINT_UP_MM
+    cy, cz = yp - r * np.tan(theta / 2), zb + r
+    W = np.array(placed.vertices, dtype=float)
+    dy, dz = W[:, 1] - cy, W[:, 2] - cz
+    fore = dy > 0
+    # each point's direction from the centre, from straight down (0) turning forward and up: the floor's
+    # touching point is at 0, the line's at theta; turned back by up to theta, never past straight down
+    phi = np.arctan2(dy[fore], -dz[fore])
+    turn = np.minimum(phi, theta)
+    # above the joint's centre, the turn grows from nothing straight above it to all of it 45 degrees forward,
+    # so the top of the foot over the joint stretches instead of tearing open (below the centre, ahead of it,
+    # everything turns)
+    above = dz[fore] > 0
+    k = np.clip(dy[fore][above] / dz[fore][above], 0.0, 1.0)
+    turn[above] *= k * k * (3 - 2 * k)
+    rad = np.hypot(dy[fore], dz[fore])
+    W[fore, 1] = cy + rad * np.sin(phi - turn)
+    W[fore, 2] = np.maximum(cz - rad * np.cos(phi - turn), np.minimum(W[fore, 2], zb))
+    out = placed.copy()
+    out.vertices = W
+    low2 = W[W[:, 2] < TOES_BELOW_MM, 1]
+    info["toes_laid_flat"] = dict(raised_deg=round(raise_deg, 1), pivot_from_heel_mm=round(yp - y0, 1),
+                                  joint_from_heel_mm=round(float(cy - y0), 1),
+                                  length_before_mm=round(L, 1), length_after_mm=round(float(np.ptp(low2)), 1))
+    return out
+
+
+def _orient_and_trim(placed, info, trim_mm, heel_by: str = "leg", track: list | None = None,
+                     lay_toes: bool = False):
+    """Floor already at z = 0: turn toes to +y, (a sole scan: lay raised toes flat), centre on the mat, trim the leg."""
     track = track if track is not None else [np.eye(4)]
     V = np.asarray(placed.vertices)
     low = V[V[:, 2] < FOOTPRINT_BAND_MM]
@@ -450,6 +600,11 @@ def _orient_and_trim(placed, info, trim_mm, heel_by: str = "leg", track: list | 
 
     # turn the toes onto +y, then centre the footprint on the mat
     _move(placed, _yaw(np.arctan2(toes[0], toes[1])), track)
+    if lay_toes:
+        placed = _lay_toes_flat(placed, info)
+        if "toes_laid_flat" in info:  # the footprint now reaches the toes: measure it again
+            low = placed.vertices[placed.vertices[:, 2] < FOOTPRINT_BAND_MM]
+            _, length, width = plantar.long_axis(low[:, :2])
     low_after = placed.vertices[placed.vertices[:, 2] < FOOTPRINT_BAND_MM][:, :2]
     centre = (low_after.min(0) + low_after.max(0)) / 2
     _move(placed, _shift(MAT_CENTRE[0] - centre[0], MAT_CENTRE[1] - centre[1], 0.0), track)
@@ -575,8 +730,11 @@ def prepare_sole_up(mesh, up: str = "y", trim_mm: float | None = LEG_TRIM_MM, fo
        of the leg goes), or less if a bed is found nearer (``_bed_height``),
        and the biggest connected piece.
     3. Rest it on a flat floor (``rest_on_hull``): the heel and the ball of
-       the foot touch, the arch stays as high as it was scanned.
-    4. Toes to +y (the shin is over the heel), centre, trim the shin, lid it.
+       the foot touch, the arch stays as high as it was scanned; then stand
+       it on the tripod (the heel and both sides of the ball, ``_settle_floor``).
+    4. Toes to +y (the shin is over the heel), lay toes that hang up flat
+       (``_lay_toes_flat``: not a rigid move, so ``to_mat`` is exact only
+       behind the toes' joint), centre, trim the shin, lid it.
     """
     mm, units, factor = imported.to_millimetres(mesh)
     track = [np.diag([factor, factor, factor, 1.0])]
@@ -602,7 +760,8 @@ def _finish_unloaded(m, info, track, trim_mm):
     Split into 2 mm triangles (after any cuts: what's cut needn't be), keep
     the biggest piece, take out scan speckle, rest it on its lowest points,
     then stand it on the tripod (heel and both sides of the ball), turn the
-    toes to +y, centre it and trim the leg.
+    toes to +y, lay toes that hang up flat (``_lay_toes_flat``), centre it and
+    trim the leg.
     """
     m = _densify(m, info)
     m, other = _largest_piece(m)
@@ -615,7 +774,7 @@ def _finish_unloaded(m, info, track, trim_mm):
     placed.apply_transform(T)
     track[0] = T @ track[0]
     info["tipped_to_rest_deg"] = round(tip, 1)
-    return _orient_and_trim(placed, info, trim_mm, track=track), info
+    return _orient_and_trim(placed, info, trim_mm, track=track, lay_toes=LAY_TOES_FLAT), info
 
 
 # Legs flat: lying face down, legs straight, the feet just past the end of the bed, soles facing back.
@@ -1208,7 +1367,7 @@ def plausibility(info: dict, report: dict, foot: str | None = None) -> list[str]
                        "Scan again with the ankle held at a right angle and the sole facing straight up.")
     if "completeness" in info:
         out += completeness.problems(info["completeness"])
-    for k in ("two_feet_warning", "two_feet_note", "heel_warning", "pieces_warning", "shallow_warning"):
+    for k in ("two_feet_warning", "two_feet_note", "toes_warning", "heel_warning", "pieces_warning", "shallow_warning"):
         if k in info:
             out.append(info[k])
     return out

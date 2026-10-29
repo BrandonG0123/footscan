@@ -1087,11 +1087,21 @@ def _shoe_changed(folder: Path, ins: dict) -> bool:
     return source_stamp(insole_source(sf, read_json(sf / "capture.json"))) != shoe.get("source")
 
 
+def _prepared_another_way(meta: dict, ins: dict) -> bool:
+    """Was this sole scan's insole made by a preparation that has changed since (foot_prep.prep_version())?
+    Made before 29 Oct 2026, its toes, if they hung up, weren't laid flat, and its outline can be short."""
+    from .recon import completeness, foot_prep
+
+    return (meta.get("method") == "imported_mesh" and meta.get("scan_kind") in completeness.CHECKED_KINDS
+            and ins.get("prep") != foot_prep.prep_version())
+
+
 def insole_is_stale(folder: Path, meta: dict) -> bool:
-    """Was this capture's model (or the shoe's it was fitted to) replaced or rebuilt after its insole was made?"""
+    """Was this capture's model (or the shoe's it was fitted to) replaced or rebuilt after its insole was made,
+    or the way a sole scan is prepared changed?"""
     ins = meta.get("insole") or {}
     return bool(ins) and "error" not in ins and (ins.get("source") != source_stamp(insole_source(folder, meta))
-                                                 or _shoe_changed(folder, ins))
+                                                 or _shoe_changed(folder, ins) or _prepared_another_way(meta, ins))
 
 
 def insole_downloadable(folder: Path, meta: dict) -> bool:
@@ -1099,7 +1109,7 @@ def insole_downloadable(folder: Path, meta: dict) -> bool:
     ins = meta.get("insole") or {}
     current = source_stamp(insole_source(folder, meta))
     return (bool(ins) and "error" not in ins and current is not None and ins.get("source") == current
-            and not _shoe_changed(folder, ins))
+            and not _shoe_changed(folder, ins) and not _prepared_another_way(meta, ins))
 
 
 def parse_shoe_length(value) -> float | None:
@@ -1201,7 +1211,7 @@ def make_insole(folder: Path, meta: dict, length_mm: float | None = None, shoe: 
     r = ins.report
     return dict(made=now_iso(), foot=foot, length_mm=r["length_mm"], width_mm=r["width_mm"], height_mm=r["height_mm"],
                 max_fill_mm=r["max_fill_mm"], sole=r["sole"], bed=r["bed_fit"], warnings=r["warnings"],
-                files=sorted(INSOLE_FILES), source=stamp, shoe_length_mm=length_mm,
+                files=sorted(INSOLE_FILES), source=stamp, prep=foot_prep.prep_version(), shoe_length_mm=length_mm,
                 shoe=dict(shoe_info, fit=r.get("shoe_fit")) if shoe_info else None)
 
 
@@ -1247,10 +1257,11 @@ def scan_measures(folder: Path, meta: dict) -> tuple[dict, dict]:
 def other_scans(captures_dir: Path, meta: dict) -> list[dict]:
     """The newest kept sole scan of each foot, other than this capture, for completeness.against_others.
 
-    Scans kept from before this check have no measures yet: they're measured now and the measures saved
-    with them. One the check finds incomplete itself is passed over for the next newest (compared with
-    a scan that's short itself, a short scan would pass)."""
-    from .recon import completeness
+    Scans kept from before this check have no measures yet, and ones prepared another way (their
+    ``measured_as`` isn't foot_prep.prep_version()) have stale ones: they're measured now and the measures
+    saved with them. One the check finds incomplete itself is passed over for the next newest (compared
+    with a scan that's short itself, a short scan would pass)."""
+    from .recon import completeness, foot_prep
 
     newest: dict[str, dict] = {}
     for m in list_captures(captures_dir):  # newest first
@@ -1260,7 +1271,7 @@ def other_scans(captures_dir: Path, meta: dict) -> list[dict]:
         if m.get("status") != "complete" or not (folder / "mesh.ply").is_file():
             continue
         c = m.get("completeness")
-        if not c or "measures" not in c:
+        if not c or "measures" not in c or c["measures"].get("measured_as") != foot_prep.prep_version():
             try:
                 measures, info = scan_measures(folder, m)
             except Exception:  # noqa: BLE001 - a scan that can't be measured just isn't compared with

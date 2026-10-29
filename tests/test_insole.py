@@ -296,6 +296,101 @@ def test_a_sole_up_scan_is_turned_over_rested_and_makes_the_right_insole(foot):
 
 
 @pytest.mark.parametrize("foot", ["right", "left"])
+def test_toes_hanging_up_in_a_sole_scan_are_laid_flat_so_the_outline_keeps_its_length(foot, monkeypatch):
+    """Relaxed in the air the toes bend up off the sole; standing they lie flat. Bent up 35 degrees, their
+    tips rise past the outline's height and the 250 mm foot's outline reads about 20 mm short as scanned;
+    laid flat, within a few mm (TOES_JOINT_UP_MM lists the measured error). Behind the joint nothing moves."""
+    from footscan.recon import completeness, foot_prep
+
+    scan = synth.sole_up_capture(synth.bend_toes(synth.refined(synth.curved_foot(foot)), 35.0))
+    placed, info = foot_prep.prepare_sole_up(scan, foot=foot)
+    laid = info["toes_laid_flat"]
+    assert laid["raised_deg"] == pytest.approx(35.0, abs=4.0)
+    assert laid["pivot_from_heel_mm"] == pytest.approx(185.0, abs=12.0)
+    assert completeness.measure(placed)["length_mm"] == pytest.approx(250.0, abs=7.0)
+    # laid on the floor, not folded under it: nothing below the floor, and the toes' underside down on it
+    V = placed.vertices
+    assert V[:, 2].min() > -0.3
+    front = V[V[:, 1] > V[:, 1].max() - 40.0]
+    assert front[:, 2].min() < 2.0
+    # bent, not torn: the top of the foot over the joint stretches, it doesn't open up into long triangles
+    long_edges = lambda m: int((m.edges_unique_length > 6.0).sum())
+
+    monkeypatch.setattr(foot_prep, "LAY_TOES_FLAT", False)
+    as_scanned, info2 = foot_prep.prepare_sole_up(scan, foot=foot)
+    assert "toes_laid_flat" not in info2
+    assert completeness.measure(as_scanned)["length_mm"] < 235.0
+    assert long_edges(placed) <= long_edges(as_scanned)
+    # the heel, the arch and the ball (everything behind the joint) are where they were: the whole foot is
+    # only centred on the mat afresh (a slide, recorded in to_mat), the longer outline's centre being further on
+    from scipy.spatial import cKDTree
+
+    slide = np.array(info["to_mat"]) @ np.linalg.inv(np.array(info2["to_mat"]))
+    assert np.allclose(slide[:3, :3], np.eye(3))
+    V = as_scanned.vertices
+    behind = V[(V[:, 1] < V[:, 1].min() + laid["joint_from_heel_mm"] - 1.0) & (V[:, 2] < foot_prep.LEG_TRIM_MM - 1.0)]
+    assert cKDTree(placed.vertices).query(behind + slide[:3, 3])[0].max() < 1e-6
+
+
+@pytest.mark.parametrize("foot", ["right", "left"])
+def test_toes_hanging_up_dont_tip_the_floor_set_under_the_heel_and_ball(foot):
+    """Toes bent up 20 degrees hang out of the floor's contact band, which then ends at the ball: the ball
+    is looked for along the whole underside instead, toes included, not 55-80% of the way to the ball
+    (that's the arch, which tipped the left foot's floor 1.6 degrees). The floor stays where the foot
+    stands: both sides of the ball on it, the heel too."""
+    from footscan.recon import foot_prep
+
+    scan = synth.sole_up_capture(synth.bend_toes(synth.refined(synth.curved_foot(foot)), 20.0))
+    _, info = foot_prep.prepare_sole_up(scan, foot=foot)
+    sides = info["ball_sides_above_floor_mm"]
+    assert abs(sides["minus_x"]) < 0.5 and abs(sides["plus_x"]) < 0.5
+    assert abs(info["heel_back_above_floor_mm"]) < 0.5
+    assert info.get("floor_corrected_deg", 0.0) < 0.5
+
+
+def test_a_front_too_steep_for_toes_hanging_up_is_left_as_scanned_and_refused_on_arrival():
+    """A front rising 65 degrees past the ball isn't toes hanging up: it's left as scanned, Make insole warns
+    the insole may be short, and the arrival check refuses the scan for it."""
+    from footscan.recon import completeness, foot_prep
+
+    scan = synth.sole_up_capture(synth.bend_toes(synth.refined(synth.curved_foot("right")), 65.0))
+    ins, _ = foot_prep.insole_from_object_capture(scan, "right", kind="sole_up")
+    info = ins.report["prep"]
+    assert "toes_laid_flat" not in info
+    assert any(w.startswith("THE FRONT OF THE FOOT RISES") for w in ins.report["warnings"])
+    assert any(w.startswith("THE FRONT OF THE FOOT RISES") for w in completeness.from_prep(info))
+
+
+def test_toes_raised_steeply_from_further_forward_are_still_judged_not_skipped_as_too_short():
+    """Steep toes cover little floor: 50 mm of toes bent up 65 degrees from 200 mm reach only about 21 mm across
+    it. They were skipped as too short to be toes, so neither laid flat nor warned about, and the outline read
+    214 mm of 250 with nothing said (found by a Codex review, 29 Oct). Their reach is measured along the
+    underside now: the 65-degree front is refused, and toes bent up 50 degrees from 215 mm are laid flat."""
+    from footscan.recon import completeness, foot_prep
+
+    steep, info = foot_prep.prepare_sole_up(
+        synth.sole_up_capture(synth.bend_toes(synth.curved_foot("right"), 65.0, x_from=200.0)), foot="right")
+    assert any(w.startswith("THE FRONT OF THE FOOT RISES") for w in completeness.from_prep(info))
+    placed, info = foot_prep.prepare_sole_up(
+        synth.sole_up_capture(synth.bend_toes(synth.curved_foot("right"), 50.0, x_from=215.0)), foot="right")
+    assert info["toes_laid_flat"]["raised_deg"] == pytest.approx(50.0, abs=4.0)
+    assert completeness.measure(placed)["length_mm"] > 240.0  # 235.1 when skipped
+
+
+def test_toes_already_flat_are_left_exactly_as_scanned(monkeypatch):
+    """A sole scan whose toes lie along the sole: nothing is laid flat, and the prepared foot is the same,
+    point for point, as with laying toes flat turned off."""
+    from footscan.recon import foot_prep
+
+    scan = synth.sole_up_capture(synth.curved_foot("right"))
+    placed, info = foot_prep.prepare_sole_up(scan, foot="right")
+    assert "toes_laid_flat" not in info and "toes_warning" not in info
+    monkeypatch.setattr(foot_prep, "LAY_TOES_FLAT", False)
+    as_scanned, _ = foot_prep.prepare_sole_up(scan, foot="right")
+    assert np.array_equal(placed.vertices, as_scanned.vertices)
+
+
+@pytest.mark.parametrize("foot", ["right", "left"])
 def test_a_foam_print_is_found_flipped_rested_and_makes_the_right_insole(foot):
     """A foot pressed 30 mm into a foam block on a table, scanned with the box 1.5 degrees off level:
     the print is cut out of box and table, the heel found by width, 11 mm of fill on the inner side."""
