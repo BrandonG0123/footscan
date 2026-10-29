@@ -86,7 +86,8 @@ def _launchd(root, exe, args, log, port, regen) -> dict:
 </plist>
 """
     path = f"~/Library/LaunchAgents/{LABEL}.plist"
-    steps = [f"{regen} > {path}",
+    steps = [f'mkdir -p ~/Library/LaunchAgents "{log.parent}"',
+             f"{regen} > {path}",
              f"launchctl bootstrap gui/$(id -u) {path}",
              "System Settings > Energy (or Battery > Options): turn on 'Prevent automatic sleeping when the display "
              "is off'; Users & Groups: log in automatically as you, so it starts again after a power cut",
@@ -118,7 +119,7 @@ StandardError=append:{log}
 WantedBy=default.target
 """
     path = "~/.config/systemd/user/footscan.service"
-    steps = ["mkdir -p ~/.config/systemd/user",
+    steps = [f'mkdir -p ~/.config/systemd/user "{log.parent}"',
              f"{regen} > {path}",
              "systemctl --user daemon-reload && systemctl --user enable --now footscan",
              "sudo loginctl enable-linger $USER    # keep it running after you log out and after a reboot",
@@ -144,7 +145,8 @@ def _nssm(root, exe, args, log, port) -> dict:
     bash = " ".join(a.replace("\\", "/") for a in args)  # Git Bash reads a backslash as an escape
     steps = [f'First start it once by hand from Git Bash, where openssl is on the PATH: "{exe}" {bash} '
              "(it makes .studio_key and the HTTPS certificate in .certs, which the service then reuses); Ctrl+C",
-             "Open PowerShell as Administrator and paste the commands above",
+             f'Open PowerShell as Administrator: New-Item -ItemType Directory -Force "{log.parent}", '
+             "then paste the commands above",
              "Settings > Network: your Wi-Fi must be a Private network, or the firewall rule doesn't apply",
              f"Get-Content -Wait {log}    # the studio's addresses",
              "to stop: nssm stop Footscan"]

@@ -299,37 +299,76 @@ class Superseded(Exception):
     """The insole was rebuilt while its packet was being written: try again on the next round."""
 
 
+def _identity(folder: Path) -> tuple:
+    """Which insole/ folder and which files are there now: each one's file id, size and modification time.
+    A rebuild renames a whole new folder into place, so every id changes."""
+    ids = [(".", folder.stat().st_ino)]
+    for name in SNAPSHOT:
+        f = folder / name
+        if f.is_file():
+            st = f.stat()
+            ids.append((name, st.st_ino, st.st_size, st.st_mtime_ns))
+    return tuple(ids)
+
+
 def build_packet(data_dir: Path, folder: Path, meta: dict, spec: dict | None = None) -> Path:
     """Write the review packet for one capture's current insole; returns its folder.
 
     The insole's files are copied into the packet first (``files/``) and everything is read from
     those copies, so the numbers, the checks and the pictures are all of one build, and stay so if
-    the studio rebuilds the insole later. The studio swaps in a rebuilt insole/ folder a moment
-    before it records the new build in capture.json, so after copying, capture.json is read again
-    and must still name this build with the copied insole.json's own numbers; if not, the packet
-    is dropped (``Superseded``) and the next round picks up the new build.
-    """
-    import shutil
+    the studio rebuilds the insole later. Two things prove the copies are one build: the insole/
+    folder and its files are the very same ones after copying as before (a rebuild swaps in a new
+    folder), and capture.json still names this build with the copied insole.json's own numbers. If
+    not, the packet is dropped (``Superseded``) and the next round picks up the new build.
 
-    import trimesh
+    The packet is written in a temporary folder beside its final place and renamed into place only
+    when whole. If another writer (the server's watcher and a ``footscan review`` at once) got there
+    first, its packet is kept and this one thrown away: a finished packet, or a review written
+    into it, is never deleted.
+    """
+    import secrets
+    import shutil
 
     from .server import read_json
 
     spec = spec or load_spec()
     made = meta["insole"]["made"]
     out = packet_dir(data_dir, folder.name, made)
-    if out.exists():
-        shutil.rmtree(out)  # an earlier, unfinished attempt (no review.json): start clean
-    snap = out / "files"
-    snap.mkdir(parents=True)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    work = out.parent / f".{out.name}.part-{secrets.token_hex(4)}"
+    try:
+        _write_packet(data_dir, folder, meta, made, spec, work, out, read_json)
+        try:
+            work.rename(out)
+        except OSError:
+            if (out / "review.json").is_file():
+                return out  # another writer finished first: keep theirs
+            shutil.rmtree(out)  # a folder without review.json was never a finished packet
+            work.rename(out)
+        return out
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+
+
+def _write_packet(data_dir, folder, meta, made, spec, work, out, read_json) -> None:
+    """The packet's contents, into ``work``; ``out`` is where it will live (the paths it lists)."""
+    import shutil
+
+    import trimesh
+
+    ins = folder / "insole"
+    before = _identity(ins)
+    snap_w = work / "files"
+    snap_w.mkdir(parents=True)
     for name in SNAPSHOT:
-        if (folder / "insole" / name).is_file():
-            shutil.copy2(folder / "insole" / name, snap / name)
-    report = json.loads((snap / "insole.json").read_text())
+        if (ins / name).is_file():
+            shutil.copy2(ins / name, snap_w / name)
+    report = json.loads((snap_w / "insole.json").read_text())
     now = (read_json(folder / "capture.json").get("insole") or {})
-    if now.get("made") != made or any(now.get(k) != report.get(k) for k in SAME_BUILD):
-        shutil.rmtree(out)
+    if (_identity(ins) != before or now.get("made") != made
+            or any(now.get(k) != report.get(k) for k in SAME_BUILD)):
         raise Superseded(f"{folder.name}: the insole was rebuilt while its packet was being written")
+    snap = out / "files"  # where the copies will be once the packet is in place
 
     other = _other_foot(data_dir, folder, meta)
     other_info = other_pts = other_note = None
@@ -342,15 +381,15 @@ def build_packet(data_dir: Path, folder: Path, meta: dict, spec: dict | None = N
         except Exception as e:  # noqa: BLE001 - the other foot's broken files mustn't stop this foot's packet
             other_note = f"the other foot's insole ({other[0].name}) couldn't be read ({type(e).__name__})"
 
-    mesh = trimesh.load(snap / "insole.stl", force="mesh")
+    mesh = trimesh.load(snap_w / "insole.stl", force="mesh")
     pts = _points(mesh)
-    write_png(out / "top.png", top_view(mesh, pts))
-    write_png(out / "side.png", side_view(mesh, pts))
+    write_png(work / "top.png", top_view(mesh, pts))
+    write_png(work / "side.png", side_view(mesh, pts))
     if other_pts is not None:
-        write_png(out / "pair.png", pair_view(pts[0], meta["foot"], other_pts))
+        write_png(work / "pair.png", pair_view(pts[0], meta["foot"], other_pts))
 
-    results = checks(snap, meta, report, mesh, spec, other_info)
-    has_pair = (out / "pair.png").is_file()
+    results = checks(snap_w, meta, report, mesh, spec, other_info)
+    has_pair = (work / "pair.png").is_file()
     packet = dict(
         capture=folder.name, foot=meta.get("foot"), scan_kind=meta.get("scan_kind"), made=made,
         synthetic=bool(report.get("synthetic")), spec=spec,
@@ -362,14 +401,13 @@ def build_packet(data_dir: Path, folder: Path, meta: dict, spec: dict | None = N
         other_foot=other_info, other_note=other_note,
         checks=results, flags=[c["name"] for c in results if not c["ok"]],
         look_checks=[dict(name=n, question=q) for n, q in LOOK_CHECKS if n != "pair" or has_pair],
-        files=dict(studio_insole=str(folder / "insole"), **{n: str(snap / n) for n in SNAPSHOT if (snap / n).is_file()},
+        files=dict(studio_insole=str(folder / "insole"), **{n: str(snap / n) for n in SNAPSHOT if (snap_w / n).is_file()},
                    top=str(out / "top.png"), side=str(out / "side.png"),
                    pair=str(out / "pair.png") if has_pair else None),
         written=time.strftime("%Y-%m-%dT%H:%M:%S%z"),
     )
-    (out / "packet.md").write_text(packet_markdown(packet))
-    (out / "review.json").write_text(json.dumps(packet, indent=2))  # last: its presence means the packet is whole
-    return out
+    (work / "packet.md").write_text(packet_markdown(packet))
+    (work / "review.json").write_text(json.dumps(packet, indent=2))
 
 
 def packet_markdown(p: dict) -> str:
@@ -431,13 +469,22 @@ def run_once(data_dir: Path, spec: dict | None = None, log=print) -> list[Path]:
 
 def watch(data_dir: Path, interval_s: float = 20.0, spec_path: Path | None = None, on_new=None,
           stop=None, log=print) -> None:
-    """Poll for new insoles every ``interval_s`` and write their packets; ``on_new(packet_dir)`` after each.
-    ``stop``: a threading.Event that ends the loop. Nothing in one round (a mistyped review-spec.json,
-    an unreadable capture) ends the loop: it is logged and the next round tries again."""
+    """Poll for new insoles every ``interval_s`` and write their packets.
+
+    ``on_new(packet_dir)`` is called once for every packet still waiting for an answer, whoever wrote
+    it (this loop, the server's, or an earlier run), so a reviewer started after the server still
+    gets the packets the server made. ``stop``: a threading.Event that ends the loop. Nothing in one
+    round (a mistyped review-spec.json, an unreadable capture) ends the loop: it is logged and the
+    next round tries again."""
+    handed: set[Path] = set()
     while stop is None or not stop.is_set():
         try:
-            for out in run_once(data_dir, load_spec(spec_path), log=log):
-                if on_new is not None:
+            run_once(data_dir, load_spec(spec_path), log=log)
+            if on_new is not None:
+                for out in unreviewed(data_dir):
+                    if out in handed:
+                        continue
+                    handed.add(out)
                     try:
                         on_new(out)
                     except Exception as e:  # noqa: BLE001

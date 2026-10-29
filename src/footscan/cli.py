@@ -268,10 +268,9 @@ def cmd_review(args) -> int:
         if todo:
             print("To review them, ask Claude Code: /review-insole")
         return 0
-    spec = review.load_spec(Path(args.spec) if args.spec else None)
     on_new = None
     if args.exec:
-        # e.g. --exec 'claude -p "/review-insole {packet}"': {packet} is the new packet's folder, put in
+        # e.g. --exec 'claude -p "/review-insole {packet}"': {packet} is a waiting packet's folder, put in
         # after splitting, so a path with spaces or backslashes stays one argument. Split the shell's way
         # on every system (Windows' non-POSIX split would keep the quotes inside the prompt).
         def on_new(packet):
@@ -283,12 +282,12 @@ def cmd_review(args) -> int:
         except KeyboardInterrupt:
             pass
         return 0
-    made = review.run_once(data, spec)
-    for p in made:
-        if on_new:
-            on_new(p)
+    made = review.run_once(data, review.load_spec(Path(args.spec) if args.spec else None))
     if not made:
         print("every current insole already has a review packet")
+    if on_new:
+        for p in review.unreviewed(data):  # every packet still waiting, not only the ones just written
+            on_new(p)
     return 0
 
 
@@ -305,6 +304,10 @@ def cmd_service(args) -> int:
         print(f"footscan service: {err}", file=sys.stderr)
         return 1
     sys.stdout.write(r["content"])  # stdout is the file itself, so it can be redirected into place
+    exe = service.footscan_exe(system, root)
+    if system == service.this_system() and not exe.is_file():
+        print(f"\n# warning: {exe} doesn't exist yet: make the .venv in this checkout first (docs/ALWAYS-ON.md step 1)",
+              file=sys.stderr)
     print(f"\n# footscan service for {system}" + (f": save the text above as {r['path']}" if r["path"] else ""),
           file=sys.stderr)
     for i, step in enumerate(r["steps"], 1):
@@ -405,7 +408,7 @@ def main(argv=None) -> int:
     rv.add_argument("--list", action="store_true", help="only list packets nobody has answered yet")
     rv.add_argument("--watch", action="store_true", help="keep looking for new insoles")
     rv.add_argument("--interval", type=float, default=20.0, help="seconds between looks (--watch)")
-    rv.add_argument("--exec", help="command to run after each new packet; {packet} is its folder")
+    rv.add_argument("--exec", help="command to run once for each packet waiting for a review; {packet} is its folder")
     rv.set_defaults(func=cmd_review)
 
     sc = sub.add_parser("service", help="print the start-at-boot file for an always-on computer (installs nothing)")

@@ -174,6 +174,60 @@ def test_a_packet_never_mixes_two_builds(data):
         review.build_packet(data, folder, meta, SPEC)
 
 
+def test_a_rebuild_swapped_in_while_copying_drops_the_packet(data, monkeypatch):
+    """The studio renames a whole new insole/ folder into place: if that happens between copying
+    insole.json and the STL, the packet would mix two builds, so it is dropped instead."""
+    _only(data, "R275")
+    [(folder, meta)] = review.pending(data)
+    ins, real_copy, done = folder / "insole", shutil.copy2, []
+
+    def copy_then_swap(src, dst, **kw):
+        out = real_copy(src, dst, **kw)
+        if not done:  # after the first file: a rebuild lands (same numbers, new files)
+            done.append(1)
+            shutil.copytree(ins, folder / "insole.new")
+            ins.rename(folder / "insole.old")
+            (folder / "insole.new").rename(ins)
+        return out
+
+    monkeypatch.setattr(shutil, "copy2", copy_then_swap)
+    with pytest.raises(review.Superseded):
+        review.build_packet(data, folder, meta, SPEC)
+    assert not list((data / "reviews" / "R275").iterdir())  # no packet, no half-written folder
+
+
+def test_a_second_writer_never_deletes_a_finished_packet_or_its_review(data):
+    """The server's watcher and a footscan review run at once: the packet that finished first stays."""
+    _only(data, "R275")
+    [(folder, meta)] = review.pending(data)
+    p = review.build_packet(data, folder, meta, SPEC)
+    (p / "claude-review.md").write_text("Verdict: READY TO SLICE\n")
+    assert review.build_packet(data, folder, meta, SPEC) == p
+    assert (p / "claude-review.md").read_text() == "Verdict: READY TO SLICE\n"
+    assert [q.name for q in p.parent.iterdir()] == [p.name]  # no temporary folders left
+
+
+def test_the_reviewer_is_handed_packets_someone_else_wrote(data):
+    """The service writes the packet; a watcher started later with --exec still hands it to Claude, once."""
+    import threading
+
+    _only(data, "R275")
+    [p] = review.run_once(data, SPEC)  # as the server would
+    stop, handed = threading.Event(), []
+
+    def on_new(packet):
+        handed.append(packet)
+        if len(handed) == 1:
+            threading.Timer(0.3, stop.set).start()  # a few more rounds, to see it isn't handed twice
+
+    t = threading.Thread(target=review.watch, args=(data, 0.05, None),
+                         kwargs=dict(on_new=on_new, stop=stop, log=lambda m: None))
+    t.start()
+    t.join(60)
+    stop.set()
+    assert handed == [p]
+
+
 def test_a_packet_reads_its_own_copies_of_the_files(data):
     _only(data, "R275")
     [p] = review.run_once(data, SPEC)
@@ -298,6 +352,11 @@ def test_the_windows_service_opens_the_port_on_private_networks_only(tmp_path):
 def test_the_windows_service_refuses_a_data_folder_with_spaces(tmp_path):
     with pytest.raises(ValueError, match="without spaces"):
         service.render("windows", tmp_path / "footscan", tmp_path / "my data")
+
+
+def test_the_macos_steps_make_the_folders_launchd_needs(tmp_path):
+    r = service.render("macos", tmp_path / "footscan", tmp_path / "feet")
+    assert r["steps"][0] == f'mkdir -p ~/Library/LaunchAgents "{tmp_path / "feet"}"'
 
 
 def test_the_save_step_repeats_the_choices_made(tmp_path):

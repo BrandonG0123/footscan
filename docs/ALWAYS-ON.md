@@ -123,8 +123,8 @@ Without the server's `--review` (or on another computer), make the packets by
 hand: `footscan review`. `footscan review --list` shows what's waiting.
 
 **Fully automatic (not tried yet).** In a terminal where Claude Code is signed
-in (not as the service, which has no sign-in), this hands each new packet to a
-headless Claude session as it appears:
+in (not as the service, which has no sign-in), this hands every packet still
+waiting for an answer, whoever wrote it, to a headless Claude session, once each:
 
 ```bash
 .venv/bin/footscan review --watch --exec 'claude -p "/review-insole {packet}" --permission-mode acceptEdits'
