@@ -653,3 +653,19 @@ def sole_up_capture(mesh, yaw_deg: float = 63.0):
     m.apply_transform(np.block([[imported.UP["y"].T, np.zeros((3, 1))], [np.zeros((1, 3)), np.ones((1, 1))]]))
     m.apply_scale(0.001)
     return m
+
+
+def bend_toes(mesh, deg: float, x_from: float = 185.0, z_at: float = 0.0, blend: float = 12.0):
+    """SYNTHETIC toes bent off the line of the sole, as a relaxed foot's toes hang in a sole scan: ``mesh``
+    (foot coordinates, x from heel to toes, z up) with everything past ``x_from`` turned ``deg`` degrees
+    about the line across the foot at x = ``x_from``, height ``z_at`` (positive: the tips up, off the
+    floor). The turn grows over ``blend`` mm round that line, so the surface bends without tearing."""
+    import trimesh
+
+    V = np.array(mesh.vertices, dtype=float)
+    t = np.clip((V[:, 0] - (x_from - blend / 2)) / blend, 0.0, 1.0)
+    a = np.radians(deg) * t * t * (3 - 2 * t)
+    x, z = V[:, 0] - x_from, V[:, 2] - z_at
+    c, s = np.cos(a), np.sin(a)
+    V[:, 0], V[:, 2] = x_from + c * x - s * z, z_at + s * x + c * z
+    return trimesh.Trimesh(V, mesh.faces, process=False)

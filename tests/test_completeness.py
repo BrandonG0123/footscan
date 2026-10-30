@@ -35,6 +35,17 @@ def test_a_scan_without_its_toes_is_caught(foot, shape):
     assert len(found) == 1 and found[0].startswith("THE TOES ARE MISSING") and "Scan again" in found[0]
 
 
+@pytest.mark.parametrize("deg", [20, 35])
+@pytest.mark.parametrize("shape", ["shaped", "curved"])
+def test_toes_cut_off_are_still_caught_after_the_front_is_laid_flat(shape, deg):
+    """The front 25 mm gone and what's left of the toes hanging up: laying them flat must not round the end off.
+    (The real legs-flat scan 2190 lost its "toes missing" warning when its toes were laid flat, 29 Oct.)"""
+    mesh = synth.shaped_foot("right") if shape == "shaped" else synth.curved_foot("right")
+    m, info = _measured(synth.bend_toes(synth.cut_ends(mesh, x_to=225.0), deg))
+    assert "toes_laid_flat" in info
+    assert any(p.startswith("THE TOES ARE MISSING") for p in completeness.problems(m))
+
+
 @pytest.mark.parametrize("foot", ["right", "left"])
 def test_a_scan_with_the_heel_cut_off_is_caught(foot):
     """The back 30 mm of the heel gone, the cut closed over."""
