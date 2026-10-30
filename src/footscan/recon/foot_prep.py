@@ -37,7 +37,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from . import imported, plantar
+from . import completeness, imported, plantar
 
 LEG_TRIM_MM = 70.0          # keep the foot, drop the leg above about ankle height
 FOOTPRINT_BAND_MM = 12.0
@@ -1117,6 +1117,8 @@ def insole_from_object_capture(mesh, foot: str, up: str = "y", params=None, kind
 
         params = replace(params or insole.InsoleParams(), toes_flat_from=SOLE_UP_TOES_FLAT_FROM)
     ins = insole.from_scan(placed, foot, params)
+    if kind in completeness.CHECKED_KINDS:
+        info["completeness"] = completeness.measure(placed)  # are the toes and the heel there? (see plausibility)
     ins.report["prep"] = info
     ins.report["warnings"] = plausibility(info, ins.report, foot) + ins.report["warnings"]
     return ins, placed
@@ -1204,6 +1206,8 @@ def plausibility(info: dict, report: dict, foot: str | None = None) -> list[str]
                        "than the other. Standing, both sides rest on the floor, so the insole would fill under the "
                        "raised side: a wedge (posting), which a first fit must not have. Don't print this insole. "
                        "Scan again with the ankle held at a right angle and the sole facing straight up.")
+    if "completeness" in info:
+        out += completeness.problems(info["completeness"])
     for k in ("two_feet_warning", "two_feet_note", "heel_warning", "pieces_warning", "shallow_warning"):
         if k in info:
             out.append(info[k])

@@ -156,6 +156,7 @@ struct ScanDetailView: View {
     private func studioState(_ rec: ScanRecord?) -> StepState {
         if library.work[scan.folder] == .sending { return .working }
         if rec?.studioCaptureID != nil { return .done }
+        if rec?.retake != nil { return .failed }
         return .todo
     }
 
@@ -167,6 +168,7 @@ struct ScanDetailView: View {
             let when = rec?.sentAt.map { " \($0.formatted(.relative(presentation: .named)))" } ?? ""
             return "Sent to \(rec?.studioHost ?? "the studio")\(when)"
         }
+        if rec?.retake != nil { return "Not kept: part of the foot is missing. Scan this foot again." }
         if studio.client == nil { return "Not connected to a studio" }
         if rec?.subject.needsScale == true && rec?.loadKg == nil { return "Add the scale reading, then send" }
         if scan.hasOBJ { return "Ready to send" }
@@ -175,7 +177,17 @@ struct ScanDetailView: View {
 
     @ViewBuilder private func studioActions(_ rec: ScanRecord?) -> some View {
         if let rec, library.work[scan.folder] == nil {
-            if studio.client == nil {
+            if let missing = rec.retake {
+                // the studio refused it: say why, and offer no way to send it again
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(missing, id: \.self) { line in
+                        Label(line, systemImage: "exclamationmark.triangle.fill")
+                            .font(.footnote).foregroundStyle(Color.fsWarn)
+                    }
+                    Text("Start a new \(rec.subject.label.lowercased()) scan from the home screen.")
+                        .font(.footnote).foregroundStyle(Color.fsMuted)
+                }
+            } else if studio.client == nil {
                 Button("Connect") { showStudio = true }.buttonStyle(.bordered)
             } else if scan.hasOBJ {
                 VStack(alignment: .leading, spacing: 8) {

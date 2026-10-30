@@ -117,15 +117,24 @@ struct StudioClient {
     let key: String
 
     enum Failure: LocalizedError {
-        case refused(String), unreachable(host: String)
+        /// `incomplete`: the studio found part of the foot missing (toes, heel) and didn't keep the scan;
+        /// each line says what's missing and how to scan again.
+        case refused(String), unreachable(host: String), incomplete([String])
         var errorDescription: String? {
             switch self {
             case .refused(let why): "The studio said no: \(why)"
+            case .incomplete(let why): "Scan again: the studio didn't keep this scan. \(why.joined(separator: " "))"
             case .unreachable(let host):
                 "The studio at \(host) isn't answering. Check Footscan is running on your Mac and both are on the same Wi-Fi. If your Mac's Wi-Fi address has changed, reconnect by scanning its code again."
             }
         }
         var isUnreachable: Bool { if case .unreachable = self { true } else { false } }
+
+        /// What a refusal (an answer outside 200-299) means, from the studio's JSON answer.
+        static func from(status: Int, json: [String: Any]) -> Failure {
+            if let missing = json["incomplete"] as? [String], !missing.isEmpty { return .incomplete(missing) }
+            return .refused(json["error"] as? String ?? "HTTP \(status)")
+        }
     }
 
     private func session(timeout: TimeInterval = 20) -> URLSession {
@@ -160,9 +169,7 @@ struct StudioClient {
         }
         let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
         let code = (response as? HTTPURLResponse)?.statusCode ?? 0
-        guard (200..<300).contains(code) else {
-            throw Failure.refused(json["error"] as? String ?? "HTTP \(code)")
-        }
+        guard (200..<300).contains(code) else { throw Failure.from(status: code, json: json) }
         return json
     }
 

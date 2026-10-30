@@ -44,6 +44,39 @@ struct ConnectCodes {
     }
 }
 
+// MARK: - the studio refusing an incomplete scan
+
+@Suite("Incomplete scans")
+struct IncompleteScans {
+    @Test func aScanMissingPartOfTheFootIsToldApartFromOtherRefusals() throws {
+        let missing = ["THE TOES ARE MISSING: … Scan again with the toes relaxed and flat."]
+        let failure = StudioClient.Failure.from(status: 422, json: ["error": "The studio didn't keep this scan", "incomplete": missing])
+        guard case .incomplete(let why) = failure else { Issue.record("not read as incomplete: \(failure)"); return }
+        #expect(why == missing)
+        #expect(failure.errorDescription?.hasPrefix("Scan again") == true)
+        // any other refusal is still a plain one, with the studio's own words
+        guard case .refused(let other) = StudioClient.Failure.from(status: 400, json: ["error": "bad capture id"]) else {
+            Issue.record("a plain refusal was misread"); return
+        }
+        #expect(other == "bad capture id")
+        guard case .refused("HTTP 500") = StudioClient.Failure.from(status: 500, json: [:]) else {
+            Issue.record("an answer without JSON should name its status"); return
+        }
+    }
+
+    @Test func whatsMissingIsKeptWithTheScan() throws {
+        let dir = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString, directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let scan = Scan(folder: dir)
+        var rec = ScanRecord(subject: .leftSole, created: Date(), device: "test", systemVersion: "0", appVersion: "0")
+        #expect(rec.retake == nil)
+        rec.retake = ["THE HEEL IS CUT OFF: … Scan again, taking the phone round behind the heel."]
+        scan.save(rec)
+        #expect(scan.record?.retake == rec.retake && scan.record?.studioCaptureID == nil)
+    }
+}
+
 // MARK: - scans on the phone
 
 @Suite("Scan list")
