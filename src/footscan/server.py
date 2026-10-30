@@ -164,6 +164,14 @@ class IncompleteScan(Exception):
     def __init__(self, problems: list[str]):
         super().__init__("The studio didn't keep this scan, because part of the foot is missing. " + " ".join(problems))
         self.problems = problems
+        from .recon import completeness
+
+        # one entry per kind of problem: shorter than both feet's scans is two lines, but one set of steps
+        self.advice = []
+        for p in problems:
+            a = completeness.retake_advice(p)
+            if a["code"] == "other" or a["code"] not in {b["code"] for b in self.advice}:
+                self.advice.append(a)
 
 
 def now_iso() -> str:
@@ -517,7 +525,10 @@ def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check
             except ScreenedOut as e:
                 self.send_json({"error": str(e), "blocked": e.blocked}, HTTPStatus.UNPROCESSABLE_ENTITY)
             except IncompleteScan as e:
-                self.send_json({"error": str(e), "incomplete": e.problems}, HTTPStatus.UNPROCESSABLE_ENTITY)
+                # "incomplete": what was found, the studio's own words; "retake": what to change next time, in
+                # steps (completeness.retake_advice), for the phone to show before the next scan
+                self.send_json({"error": str(e), "incomplete": e.problems, "retake": e.advice},
+                               HTTPStatus.UNPROCESSABLE_ENTITY)
             except (ValueError, json.JSONDecodeError) as e:
                 self.send_json({"error": f"invalid input: {e}"}, HTTPStatus.BAD_REQUEST)
             except FileNotFoundError:

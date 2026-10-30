@@ -144,8 +144,9 @@ final class ScanLibrary {
             record.studioAccuracy = sent.accuracy
             scan.save(record)
             UINotificationFeedbackGenerator().notificationOccurred(.success)
-        } catch StudioClient.Failure.incomplete(let missing) {
+        } catch StudioClient.Failure.incomplete(let missing, let advice) {
             record.retake = missing
+            record.retakeAdvice = advice.isEmpty ? nil : advice
             scan.save(record)
             UINotificationFeedbackGenerator().notificationOccurred(.error)
         } catch {

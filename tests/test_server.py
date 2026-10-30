@@ -934,6 +934,8 @@ def test_a_sole_scan_without_its_toes_is_refused_and_not_kept(servers):
     r = json.loads(raw)
     assert r["incomplete"] and r["incomplete"][0].startswith("THE TOES ARE MISSING")
     assert r["error"].startswith("The studio didn't keep this scan") and "Scan again" in r["error"]
+    # and what to change next time, one entry per line found, for the phone to show before the retake
+    assert [a["code"] for a in r["retake"]] == ["toes_missing"] and r["retake"][0]["steps"]
     assert not (data / "captures" / cid).exists()
     assert cid not in [c["capture_id"] for c in body(call(f"{op}/api/captures"))]
 
@@ -946,6 +948,18 @@ def test_a_whole_sole_scan_is_kept_with_its_measures(servers):
     assert st == 200, raw
     c = json.loads((data / "captures" / cid / "capture.json").read_text())["completeness"]
     assert c["problems"] == [] and c["measures"]["length_mm"] == pytest.approx(250.0, abs=3.0)
+
+
+def test_a_refusal_gives_one_set_of_steps_per_kind_of_problem():
+    """Shorter than both feet's scans is two lines but one thing to change: the phone shows its steps once."""
+    from footscan.server import IncompleteScan
+
+    lines = ["THIS FOOT IS 20 MM SHORTER than an earlier scan of the same foot (L1): ...",
+             "THIS FOOT IS 18 MM SHORTER than your right foot's scan (R1): ...",
+             "THE TOES ARE MISSING: ...", "SOMETHING NEW: a. Scan again.", "SOMETHING ELSE: b. Scan again."]
+    e = IncompleteScan(lines)
+    assert e.problems == lines
+    assert [a["code"] for a in e.advice] == ["shorter_than_other", "toes_missing", "other", "other"]
 
 
 def test_a_sole_scan_much_shorter_than_the_other_foot_is_refused(servers):

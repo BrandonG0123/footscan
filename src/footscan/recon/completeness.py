@@ -195,5 +195,72 @@ def from_prep(info: dict) -> list[str]:
     if sides and abs(sides["plus_x"] - sides["minus_x"]) > foot_prep.BALL_ROLL_WARN_MM:
         out.append(f"THE FOREFOOT WAS ROLLED ONTO ONE EDGE: one side of the ball of the foot is "
                    f"{abs(sides['plus_x'] - sides['minus_x']):.0f} mm higher than the other, so the insole would put "
-                   "a wedge under it. Scan again with the ankle held at a right angle and the sole facing straight up.")
+                   "a wedge under it. Scan again with the ball of the foot level: a book laid across it touches both "
+                   "sides.")
     return out
+
+
+# What to change on the next scan, for each refusal above (and the preparation's, from_prep): its headline (the
+# capitalised start of the line, which every refusal of that kind shares), a short name for it, a title the phone
+# can show in a sentence, and the steps, in the order to do them. The refusal itself says what was found and
+# how much; these say only what to do. Steps are about the scan, never the foot's shape.
+RETAKE_STEPS = (
+    ("THE TOES ARE MISSING", "toes_missing", "The toes were cut off", [
+        "Let the toes relax and lie straight: wiggle them, then let go. Don't pull them back.",
+        "Before you tap Start, make sure the box reaches past the tips of the toes.",
+        "On the second lap, go slowly round the toes, close in.",
+    ]),
+    ("THE HEEL IS CUT OFF", "heel_cut_off", "The back of the heel was cut off", [
+        "Before you tap Start, make sure the box reaches past the back of the heel.",
+        "Take the phone right round behind the heel, low enough to see its back.",
+    ]),
+    ("THE HEEL IS MISSING", "heel_missing", "The underside of the heel wasn't scanned", [
+        "Keep the box over the whole sole, from the toes to the back of the heel, with a hand's width of the leg.",
+        "On each lap, look at the heel as well as the toes: the heel pad is part of the sole.",
+    ]),
+    ("THIS ISN'T ONE WHOLE FOOT", "not_one_foot", "More than this foot was in the scan", [
+        "Move the other foot well out of the way: a forearm's width between the feet.",
+        "Drag the box's edges in so it holds only this foot and a hand's width of the leg.",
+    ]),
+    ("THIS FOOT IS", "shorter_than_other", "This foot came out shorter than your other scan", [
+        "Let the toes relax and lie straight, not curled.",
+        "Before you tap Start, make sure the box reaches past the tips of the toes and the back of the heel.",
+        "Go all the way round until the ring is full, then a second lap, closer, over the toes and the heel.",
+    ]),
+    ("THE FRONT OF THE FOOT RISES", "toes_curled", "The toes were curled up", [
+        "Relax the ankle: don't point the foot.",
+        "Wiggle the toes and let them go, so they lie straight along the sole.",
+    ]),
+    ("PART OF THE FOOT IS MISSING: both feet", "feet_touching", "The other foot hid one side of this one", [
+        "Move the other foot well out of the way: a forearm's width between the feet.",
+        "Drag the box's edges in so it holds only this foot and a hand's width of the leg.",
+    ]),
+    ("PART OF THE FOOT IS MISSING", "torn", "Part of the foot wasn't scanned", [
+        "Keep the whole foot inside the box.",
+        "Go all the way round until the ring is full, then a second lap, closer.",
+    ]),
+    ("THE FOREFOOT WAS ROLLED ONTO ONE EDGE", "forefoot_rolled", "The ball of the foot wasn't level", [
+        "Relax the ankle at a right angle: don't point the foot.",
+        "Before you tap Start, lay a book (anything flat and stiff) across the ball of the foot. The big-toe "
+        "side and the little-toe side should both touch it.",
+        "If one side doesn't, turn the foot gently until it does. Then take the book away and keep still.",
+    ]),
+    ("THE STUDIO COULDN'T FIND THE WHOLE FOOT", "foot_not_found", "The studio couldn't find the whole foot", [
+        "Keep the whole foot inside the box, with a hand's width of the leg.",
+        "Go all the way round until the ring is full.",
+    ]),
+)
+
+
+def retake_advice(problem: str) -> dict:
+    """One refusal line (``problems``, ``from_prep``, ``against_others``, or the server's own) -> what to change
+    on the next scan: {"code", "title", "steps"}, from ``RETAKE_STEPS``. The first headline the line starts
+    with wins (the longer ones come first where two share a start). A line no headline matches (a refusal
+    added without steps here) keeps its own words: its headline as the title, and its "Scan again ..." ending
+    as the one step."""
+    for head, code, title, steps in RETAKE_STEPS:
+        if problem.startswith(head):
+            return dict(code=code, title=title, steps=list(steps))
+    head, _, rest = problem.partition(":")
+    again = rest[rest.find("Scan again"):].strip() if "Scan again" in rest else "Scan again."
+    return dict(code="other", title=head.strip().capitalize(), steps=[again])
