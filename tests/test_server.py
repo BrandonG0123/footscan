@@ -1007,9 +1007,45 @@ def test_a_refused_model_sent_to_a_capture_that_had_one_leaves_the_earlier_model
                       {"Content-Type": "application/octet-stream"})
     assert st == 422 and json.loads(raw)["incomplete"], raw
     assert {f: (folder / f).read_bytes() for f in model} == before
-    assert not (folder / ".before-upload").exists()
+    assert not [f for f in folder.iterdir() if f.name.startswith(".upload-")]
     assert json.loads((folder / "capture.json").read_text()) == meta_before
     assert (folder / "insole").is_dir() and meta_before.get("insole")
+
+
+def test_a_refused_model_sent_to_a_capture_with_photos_but_no_model_keeps_the_capture(servers):
+    """Only a capture made just for the upload (nothing in it but its capture.json) is removed when the model
+    is refused: one holding photos, picks or a reconstruction keeps them."""
+    op, _, data = servers
+    cid = _new_sole_capture(op, "right")
+    folder = data / "captures" / cid
+    (folder / "frame_0001.jpg").write_bytes(b"photo")
+    st, raw, _ = call(f"{op}/api/captures/{cid}/mesh?ext=obj&up=y", "PUT", _sole_up_obj("right", x_to=200.0),
+                      {"Content-Type": "application/octet-stream"})
+    assert st == 422, raw
+    assert (folder / "frame_0001.jpg").read_bytes() == b"photo" and not (folder / "mesh.ply").exists()
+
+
+def test_a_replacement_whose_check_breaks_leaves_the_earlier_model(servers, monkeypatch):
+    """Anything going wrong while the new model is checked (here the check itself raising) leaves the earlier
+    model where it was: the new one is only moved in once it's kept."""
+    from footscan import server
+
+    op, _, data = servers
+    cid = _new_sole_capture(op, "right")
+    assert call(f"{op}/api/captures/{cid}/mesh?ext=obj&up=y", "PUT", _sole_up_obj("right"),
+                {"Content-Type": "application/octet-stream"})[0] == 200
+    folder = data / "captures" / cid
+    before = {f: (folder / f).read_bytes() for f in ("mesh.ply", "original.obj", "viewer.bin", "capture.json")}
+
+    def broken(*a, **k):
+        raise ValueError("the check broke")
+
+    monkeypatch.setattr(server, "check_completeness", broken)
+    st, _, _ = call(f"{op}/api/captures/{cid}/mesh?ext=obj&up=y", "PUT", _sole_up_obj("left"),
+                    {"Content-Type": "application/octet-stream"})
+    assert st == 400
+    assert {f: (folder / f).read_bytes() for f in before} == before
+    assert not [f for f in folder.iterdir() if f.name.startswith(".upload-")]
 
 
 def test_two_refused_replacements_at_once_still_leave_the_earlier_model(servers, monkeypatch):

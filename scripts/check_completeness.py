@@ -1,9 +1,10 @@
 """Would the studio's completeness check (recon/completeness.py) refuse the sole scans already kept?
 
 Reads every imported sole scan in the studio's captures folder, prepares it as Make insole does, and
-prints its outline length, how square each end is, and what the check would say: the toes, the heel,
-what the preparation found missing, and the length against the newest other scan of each foot taken
-before it. Read-only: nothing in the captures folder is changed (the studio itself saves the measures
+prints its outline length, how square each end is, and what the check would say if the scans arrived
+now, one after another, oldest first: the toes, the heel, what the preparation found missing, and the
+length against the newest other scan of each foot taken before it that would have been kept. (The studio
+itself compares with scans kept before the check on their own faults only, so for those its answer can differ.) Read-only: nothing in the captures folder is changed (the studio itself saves the measures
 the first time it compares with a scan). Results are for the scans named, never for feet in general.
 
   .venv/bin/python scripts/check_completeness.py [data/captures] [--json reports/completeness.json]
@@ -42,7 +43,7 @@ def main(argv=None) -> int:
             continue
         own = completeness.problems(m) + completeness.from_prep(info)
         newest = {}
-        for r in rows:  # earlier scans the studio would have kept (a refused one is deleted), newest last
+        for r in rows:  # earlier scans kept had each arrived in turn with the check on (refused ones deleted)
             if "measures" in r and not r["problems"]:
                 newest[r["foot"]] = dict(foot=r["foot"], same_foot=r["foot"] == meta["foot"],
                                          capture_id=r["capture_id"], length_mm=r["measures"]["length_mm"])

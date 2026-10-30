@@ -89,7 +89,7 @@ def _end_share(poly, end: int, width: float) -> float:
     return best / width
 
 
-def measure(placed) -> dict:
+def measure(placed, kind: str | None = None) -> dict:
     """A prepared foot (toes toward +y) -> the outline's length and width, and how square each end is.
 
     ``toe_end`` and ``heel_end``: see ``_end_share``. ``ball_at``: where the foot is widest, as a share
@@ -113,7 +113,7 @@ def measure(placed) -> dict:
         toe_end=round(_end_share(poly, +1, W), 2), heel_end=round(_end_share(poly, -1, W_heel), 2),
         ball_at=round(float((ys[int(np.argmax(widths))] - y0) / L), 2),
         toe_tip_above_floor_mm=round(float(front[:, 2].min()), 1) if len(front) else None,
-        measured_as=foot_prep.prep_version(),  # see server.other_scans: measures taken another way are taken again
+        measured_as=foot_prep.prep_version(kind),  # see server.other_scans: measures taken another way are taken again
     )
 
 
@@ -181,7 +181,7 @@ def from_prep(info: dict) -> list[str]:
     if "toes_warning" in info:
         out.append(info["toes_warning"])
     if info.get("open_edges_near_floor_mm", 0.0) > foot_prep.OPEN_EDGE_WARN_MM:
-        if "two_feet_note" in info:
+        if info.get("two_feet", {}).get("touching"):
             # cut apart from the other foot (foot_prep._one_foot): the side they touched along was never scanned
             out.append(f"PART OF THE FOOT IS MISSING: both feet were in the scan, touching, so the side of this one "
                        f"that lay against the other wasn't scanned ({info['open_edges_near_floor_mm']:.0f} mm of "

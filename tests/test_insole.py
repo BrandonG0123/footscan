@@ -874,7 +874,7 @@ def test_a_legs_flat_scan_with_both_feet_in_it_keeps_the_asked_for_foot(foot, ga
 def test_a_legs_flat_scan_of_both_feet_apart_with_little_leg_is_stood_up_along_the_leg(foot):
     """Two feet 30 mm apart are two pieces. With only 100 mm of each leg in the box, the pair is wider than
     it is long, so the leg's direction is read from one piece: read from both, it ran across the legs and
-    the foot was stood up on its side (a 233 x 157 mm footprint)."""
+    the foot was stood up on its side (SYNTHETIC, this case: a 233 x 157 mm footprint)."""
     from footscan.recon import foot_prep
 
     ins, placed = foot_prep.insole_from_object_capture(_legs_flat_scan(standing=_both_feet(30.0, leg_mm=100.0)),
@@ -891,7 +891,7 @@ def test_an_insole_is_still_made_when_the_missing_toes_check_breaks(monkeypatch)
     the insole is made, with a warning to look at the outline's ends."""
     from footscan.recon import completeness, foot_prep
 
-    def broken(placed):
+    def broken(placed, kind=None):
         raise ValueError("empty heel band")
 
     monkeypatch.setattr(completeness, "measure", broken)
@@ -902,7 +902,7 @@ def test_an_insole_is_still_made_when_the_missing_toes_check_breaks(monkeypatch)
 def test_a_legs_flat_scan_of_one_foot_with_a_coarse_shin_is_not_cut():
     """A simplified model's shin can be a few big triangles (here an 8-sided cylinder): their centres leave
     strips across the one leg with no centre in them, which must not be read as the gap between two shins.
-    Read that way, this foot was cut in half (48 mm wide; the bug Codex found in review)."""
+    Read that way, this foot was cut in half (SYNTHETIC, this case: 48 mm wide; the bug Codex found in review)."""
     import manifold3d as m3
     import trimesh
 
@@ -915,6 +915,16 @@ def test_a_legs_flat_scan_of_one_foot_with_a_coarse_shin_is_not_cut():
     ins, _ = foot_prep.insole_from_object_capture(_legs_flat_scan(standing=standing), "right", kind="sole_hanging")
     assert "two_feet" not in ins.report["prep"]
     assert ins.report["prep"]["footprint_mm"]["width"] > 85.0
+
+
+@pytest.mark.parametrize("gap_mm", [-4.0, 15.0])
+def test_a_legs_flat_scan_of_both_feet_says_whether_they_touched(gap_mm):
+    """Joined into one piece, the cut between them went through surface (that side of the foot was never
+    scanned); apart, it went through none."""
+    from footscan.recon import foot_prep
+
+    _, info = foot_prep.prepare_sole_hanging(_legs_flat_scan(standing=_both_feet(gap_mm)), foot="right")
+    assert info["two_feet"]["touching"] == (gap_mm < 0)
 
 
 def test_a_legs_flat_scan_of_one_foot_is_not_cut():

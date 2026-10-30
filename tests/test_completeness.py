@@ -100,5 +100,12 @@ def test_a_forefoot_rolled_onto_one_edge_is_refused_on_arrival():
 
 
 def test_a_scan_torn_where_two_touching_feet_were_cut_apart_says_to_keep_the_other_foot_out():
-    found = completeness.from_prep(dict(open_edges_near_floor_mm=153.0, two_feet_note="both feet were in the scan"))
+    found = completeness.from_prep(dict(open_edges_near_floor_mm=153.0, two_feet=dict(touching=True)))
     assert len(found) == 1 and "other foot out of the box" in found[0]
+
+
+def test_a_torn_scan_of_two_feet_that_were_apart_gets_the_usual_retake_advice():
+    """Apart, the cut between them went through no surface: a tear is something else missing (toes, heel)."""
+    found = completeness.from_prep(dict(open_edges_near_floor_mm=153.0, two_feet=dict(touching=False),
+                                        two_feet_note="both feet were in the scan: the right one was kept"))
+    assert len(found) == 1 and "covering the whole foot" in found[0] and "other foot" not in found[0]

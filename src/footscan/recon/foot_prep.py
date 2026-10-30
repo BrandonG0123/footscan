@@ -453,13 +453,17 @@ def insole_silhouette_mm() -> float:
 LAY_TOES_FLAT = True         # sole scans: lay toes that hang up flat (_lay_toes_flat); False reads them as scanned
 
 
-def prep_version() -> str:
-    """How a sole scan is prepared, in a few words: saved with what's measured or made from it (the
-    completeness measures, an insole), so what was made another way can be told apart and made again.
-    Change it whenever a change to the preparation changes a sole scan's shape or size."""
-    # 2026-10-30: legs-flat scans read the leg's direction from one piece and look for the gap between shins
-    # by where triangles reach, not their centres
-    return "2026-10-30: toes laid flat" if LAY_TOES_FLAT else "2026-10-30: toes as scanned"
+def prep_version(kind: str | None = None) -> str:
+    """How a sole scan of this ``kind`` is prepared, in a few words: saved with what's measured or made from it
+    (the completeness measures, an insole), so what was made another way can be told apart and made again.
+    Change it whenever a change to the preparation changes a sole scan's shape or size, for the kinds it
+    changes (so the others aren't made again for nothing)."""
+    v = "2026-10-29: toes laid flat" if LAY_TOES_FLAT else "2026-10-29: toes as scanned"
+    if kind == "sole_hanging":
+        # 2026-10-30: the leg's direction read from one piece; the gap between shins found by where triangles
+        # reach, not their centres
+        v += "; 2026-10-30: one leg read alone"
+    return v
 
 TOES_PROFILE_STEP_MM = 2.0   # the underside's lowest point is read in steps this long, heel to toe
 TOES_BELOW_MM = 60.0         # ...from everything below this (the foot, not the shin)
@@ -856,7 +860,8 @@ def prepare_sole_hanging(mesh, up: str = "y", trim_mm: float | None = LEG_TRIM_M
     if not pieces:
         raise FootPrepError("almost nothing left once the bed is taken away: is the foot in the scan?")
     keep = pieces[0][0]
-    if len(pieces) > 1 and pieces[1][1] >= TWO_LEGS_SHARE * pieces[0][1]:
+    apart = len(pieces) > 1 and pieces[1][1] >= TWO_LEGS_SHARE * pieces[0][1]  # both legs, a piece each: not touching
+    if apart:
         keep = keep | pieces[1][0]
     biggest = pieces[0][0][keep]  # the biggest piece's faces, among those kept
     m.update_faces(keep)
@@ -895,6 +900,8 @@ def prepare_sole_hanging(mesh, up: str = "y", trim_mm: float | None = LEG_TRIM_M
     m.update_faces(m.triangles_center[:, 2] < SOLE_UP_KEEP_MM)
     m.remove_unreferenced_vertices()
     m = _one_foot(m, foot, info)
+    if "two_feet" in info:
+        info["two_feet"]["touching"] = not apart  # joined into one piece: the cut went through surface
     return _finish_unloaded(m, info, track, trim_mm)
 
 
@@ -942,6 +949,7 @@ def _one_foot(m, foot: str | None, info):
         n = len(hist)
         first = np.clip(np.searchsorted(edges, y_lo[band], side="right") - 1, 0, n - 1)
         last = np.clip(np.searchsorted(edges, y_hi[band], side="left") - 1, 0, n - 1)
+        last = np.maximum(last, first)  # a triangle flat across y, on a bin's edge, still covers that bin
         crossed = np.zeros(n + 1)
         np.add.at(crossed, first, 1.0)
         np.add.at(crossed, last + 1, -1.0)
@@ -1296,7 +1304,7 @@ def insole_from_object_capture(mesh, foot: str, up: str = "y", params=None, kind
         # are the toes and the heel there? (see plausibility). The arrival check keeps a scan this measure
         # breaks on (its own failure never blocks a scan), so here too it must not stop the insole.
         try:
-            info["completeness"] = completeness.measure(placed)
+            info["completeness"] = completeness.measure(placed, kind)
         except Exception as e:  # noqa: BLE001 - reported as a warning instead
             info["completeness_error"] = f"{type(e).__name__}: {e}"
     ins.report["prep"] = info
