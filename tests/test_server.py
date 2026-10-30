@@ -991,6 +991,180 @@ def test_a_scan_kept_before_the_check_is_measured_when_compared_and_an_incomplet
     assert server.other_scans(data / "captures", dict(capture_id="new", foot="left")) == []
 
 
+def test_a_refused_model_sent_to_a_capture_that_had_one_leaves_the_earlier_model_and_its_insole(servers):
+    """Replacing a kept scan's model with one missing its toes is refused, and only the new model is dropped:
+    the capture, its model and the insole made from it are as they were (a new capture is still removed)."""
+    op, _, data = servers
+    cid = _new_sole_capture(op, "right")
+    assert call(f"{op}/api/captures/{cid}/mesh?ext=obj&up=y", "PUT", _sole_up_obj("right"),
+                {"Content-Type": "application/octet-stream"})[0] == 200
+    assert call(f"{op}/api/captures/{cid}/insole", "POST", {})[0] == 200
+    folder = data / "captures" / cid
+    model = ("mesh.ply", "original.obj", "viewer.bin")  # viewer.bin: what the landmark viewer draws
+    before = {f: (folder / f).read_bytes() for f in model}
+    meta_before = json.loads((folder / "capture.json").read_text())
+    st, raw, _ = call(f"{op}/api/captures/{cid}/mesh?ext=obj&up=y", "PUT", _sole_up_obj("right", x_to=200.0),
+                      {"Content-Type": "application/octet-stream"})
+    assert st == 422 and json.loads(raw)["incomplete"], raw
+    assert {f: (folder / f).read_bytes() for f in model} == before
+    assert not [f for f in folder.iterdir() if f.name.startswith(".upload-")]
+    assert json.loads((folder / "capture.json").read_text()) == meta_before
+    assert (folder / "insole").is_dir() and meta_before.get("insole")
+
+
+def test_a_refused_model_sent_to_a_capture_with_photos_but_no_model_keeps_the_capture(servers):
+    """Only a capture made just for the upload (nothing in it but its capture.json) is removed when the model
+    is refused: one holding photos, picks or a reconstruction keeps them."""
+    op, _, data = servers
+    cid = _new_sole_capture(op, "right")
+    folder = data / "captures" / cid
+    (folder / "frame_0001.jpg").write_bytes(b"photo")
+    st, raw, _ = call(f"{op}/api/captures/{cid}/mesh?ext=obj&up=y", "PUT", _sole_up_obj("right", x_to=200.0),
+                      {"Content-Type": "application/octet-stream"})
+    assert st == 422, raw
+    assert (folder / "frame_0001.jpg").read_bytes() == b"photo" and not (folder / "mesh.ply").exists()
+
+
+def test_a_replacement_whose_check_breaks_leaves_the_earlier_model(servers, monkeypatch):
+    """Anything going wrong while the new model is checked (here the check itself raising) leaves the earlier
+    model where it was: the new one is only moved in once it's kept."""
+    from footscan import server
+
+    op, _, data = servers
+    cid = _new_sole_capture(op, "right")
+    assert call(f"{op}/api/captures/{cid}/mesh?ext=obj&up=y", "PUT", _sole_up_obj("right"),
+                {"Content-Type": "application/octet-stream"})[0] == 200
+    folder = data / "captures" / cid
+    before = {f: (folder / f).read_bytes() for f in ("mesh.ply", "original.obj", "viewer.bin", "capture.json")}
+
+    def broken(*a, **k):
+        raise ValueError("the check broke")
+
+    monkeypatch.setattr(server, "check_completeness", broken)
+    st, _, _ = call(f"{op}/api/captures/{cid}/mesh?ext=obj&up=y", "PUT", _sole_up_obj("left"),
+                    {"Content-Type": "application/octet-stream"})
+    assert st == 400
+    assert {f: (folder / f).read_bytes() for f in before} == before
+    assert not [f for f in folder.iterdir() if f.name.startswith(".upload-")]
+
+
+def test_a_leftover_upload_folder_doesnt_stop_a_refused_new_capture_being_removed(servers):
+    """A side folder left by an upload that died midway is cleared by the next upload, so a capture made just
+    for a refused model is still removed (and the leftover copy of a foot's shape doesn't stay on disk)."""
+    op, _, data = servers
+    cid = _new_sole_capture(op, "right")
+    folder = data / "captures" / cid
+    (folder / ".upload-dead0000").mkdir()
+    (folder / ".upload-dead0000" / "mesh.ply").write_bytes(b"left over")
+    st, raw, _ = call(f"{op}/api/captures/{cid}/mesh?ext=obj&up=y", "PUT", _sole_up_obj("right", x_to=200.0),
+                      {"Content-Type": "application/octet-stream"})
+    assert st == 422, raw
+    assert not folder.exists()
+
+
+def test_what_another_request_saves_in_capture_json_during_an_upload_is_kept(servers, monkeypatch):
+    """The upload re-reads capture.json before writing it, so calipers (or frames) saved while the new model
+    was being checked aren't overwritten."""
+    from footscan import server
+
+    op, _, data = servers
+    cid = _new_sole_capture(op, "right")
+    meta_file = data / "captures" / cid / "capture.json"
+    check = server.check_completeness
+
+    def meanwhile(*a, **k):
+        m = json.loads(meta_file.read_text())
+        m["calipers"] = {"note": "saved during the upload"}
+        meta_file.write_text(json.dumps(m))
+        return check(*a, **k)
+
+    monkeypatch.setattr(server, "check_completeness", meanwhile)
+    assert call(f"{op}/api/captures/{cid}/mesh?ext=obj&up=y", "PUT", _sole_up_obj("right"),
+                {"Content-Type": "application/octet-stream"})[0] == 200
+    saved = json.loads(meta_file.read_text())
+    assert saved["calipers"] == {"note": "saved during the upload"} and saved["completeness"]["problems"] == []
+
+
+def test_measures_of_a_model_replaced_while_it_was_measured_are_not_saved(servers, monkeypatch):
+    """other_scans measures another capture without its lock: if a new model comes in meanwhile, what it
+    measured belongs to the old one, so it isn't saved over the new model's."""
+    from footscan import server
+
+    op, _, data = servers
+    old = _new_sole_capture(op, "right")
+    assert call(f"{op}/api/captures/{old}/mesh?ext=obj&up=y", "PUT", _sole_up_obj("right"),
+                {"Content-Type": "application/octet-stream"})[0] == 200
+    folder = data / "captures" / old
+    meta = json.loads((folder / "capture.json").read_text())
+    meta.pop("completeness")
+    (folder / "capture.json").write_text(json.dumps(meta))
+    measure = server.scan_measures
+
+    def replaced_meanwhile(f, m):
+        out = measure(f, m)
+        (f / "mesh.ply").write_bytes((f / "mesh.ply").read_bytes() + b"\n")  # a new model arrives
+        return out
+
+    monkeypatch.setattr(server, "scan_measures", replaced_meanwhile)
+    server.other_scans(data / "captures", dict(capture_id="new", foot="left"))
+    assert "completeness" not in json.loads((folder / "capture.json").read_text())
+
+
+def test_two_refused_replacements_at_once_still_leave_the_earlier_model(servers, monkeypatch):
+    """Two models sent to the same capture at the same moment, both refused: they take turns, so neither sets
+    aside the other's copy of the earlier model, and the earlier model is there afterwards."""
+    import time
+    from concurrent.futures import ThreadPoolExecutor
+
+    from footscan import server
+
+    op, _, data = servers
+    cid = _new_sole_capture(op, "right")
+    assert call(f"{op}/api/captures/{cid}/mesh?ext=obj&up=y", "PUT", _sole_up_obj("right"),
+                {"Content-Type": "application/octet-stream"})[0] == 200
+    folder = data / "captures" / cid
+    mesh_before = (folder / "mesh.ply").read_bytes()
+    check = server.check_completeness
+
+    def slow_check(*a, **k):  # hold each upload between setting the old model aside and putting it back
+        time.sleep(1.0)
+        return check(*a, **k)
+
+    monkeypatch.setattr(server, "check_completeness", slow_check)
+    cut = _sole_up_obj("right", x_to=200.0)
+    with ThreadPoolExecutor(2) as pool:
+        results = list(pool.map(lambda _: call(f"{op}/api/captures/{cid}/mesh?ext=obj&up=y", "PUT", cut,
+                                               {"Content-Type": "application/octet-stream"}), range(2)))
+    assert [r[0] for r in results] == [422, 422], results
+    assert (folder / "mesh.ply").read_bytes() == mesh_before
+
+
+def test_a_kept_scan_that_cant_be_measured_is_tried_once_not_on_every_upload(servers, monkeypatch):
+    """A kept sole scan whose measuring fails is left out of the comparison, and the failure is saved, so the
+    next upload doesn't prepare it all over again inside the request."""
+    op, _, data = servers
+    old = _new_sole_capture(op, "right")
+    assert call(f"{op}/api/captures/{old}/mesh?ext=obj&up=y", "PUT", _sole_up_obj("right"),
+                {"Content-Type": "application/octet-stream"})[0] == 200
+    meta_file = data / "captures" / old / "capture.json"
+    meta = json.loads(meta_file.read_text())
+    meta.pop("completeness")  # as if kept before this check existed
+    meta_file.write_text(json.dumps(meta))
+    from footscan import server
+
+    tries = []
+
+    def broken(folder, m):
+        tries.append(folder)
+        raise ValueError("no outline")
+
+    monkeypatch.setattr(server, "scan_measures", broken)
+    for _ in range(3):
+        assert server.other_scans(data / "captures", dict(capture_id="new", foot="left")) == []
+    assert len(tries) == 1
+    assert "couldn't be measured" in json.loads(meta_file.read_text())["completeness"]["error"]
+
+
 def test_a_scan_measured_the_old_way_is_measured_again_before_its_length_is_compared(servers):
     """Measures saved before the way of measuring changed (sole scans' toes now laid flat first) aren't
     compared with a new scan's: the scan is measured again and the new measures saved."""

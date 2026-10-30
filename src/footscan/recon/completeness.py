@@ -89,7 +89,7 @@ def _end_share(poly, end: int, width: float) -> float:
     return best / width
 
 
-def measure(placed) -> dict:
+def measure(placed, kind: str | None = None) -> dict:
     """A prepared foot (toes toward +y) -> the outline's length and width, and how square each end is.
 
     ``toe_end`` and ``heel_end``: see ``_end_share``. ``ball_at``: where the foot is widest, as a share
@@ -113,7 +113,7 @@ def measure(placed) -> dict:
         toe_end=round(_end_share(poly, +1, W), 2), heel_end=round(_end_share(poly, -1, W_heel), 2),
         ball_at=round(float((ys[int(np.argmax(widths))] - y0) / L), 2),
         toe_tip_above_floor_mm=round(float(front[:, 2].min()), 1) if len(front) else None,
-        measured_as=foot_prep.prep_version(),  # see server.other_scans: measures taken another way are taken again
+        measured_as=foot_prep.prep_version(kind),  # see server.other_scans: measures taken another way are taken again
     )
 
 
@@ -166,10 +166,11 @@ def against_others(m: dict, others: list[dict]) -> list[str]:
 
 
 def from_prep(info: dict) -> list[str]:
-    """What the preparation (foot_prep) already found missing, worded for a retake: the heel's underside
-    (the back of the scan far above the floor), open edges near the floor (a torn-off part), and a front
-    too steep to be toes hanging up (left as scanned, so short). Make insole warns about the same
-    (foot_prep.plausibility); on arrival they refuse the scan."""
+    """What the preparation (foot_prep) already found missing or wrong, worded for a retake: the heel's
+    underside (the back of the scan far above the floor), open edges near the floor (a torn-off part), a
+    front too steep to be toes hanging up (left as scanned, so short), and a forefoot rolled onto one edge
+    (the insole would fill under the raised side: a wedge, which a first fit must not have). Make insole
+    warns about the same (foot_prep.plausibility); on arrival they refuse the scan."""
     from . import foot_prep
 
     out = []
@@ -180,7 +181,19 @@ def from_prep(info: dict) -> list[str]:
     if "toes_warning" in info:
         out.append(info["toes_warning"])
     if info.get("open_edges_near_floor_mm", 0.0) > foot_prep.OPEN_EDGE_WARN_MM:
-        out.append(f"PART OF THE FOOT IS MISSING: the scan is torn open near the floor "
-                   f"({info['open_edges_near_floor_mm']:.0f} mm of open edges), where the toes, the heel or a side "
-                   "should be. Scan again, covering the whole foot.")
+        if info.get("two_feet", {}).get("touching"):
+            # cut apart from the other foot (foot_prep._one_foot): the side they touched along was never scanned
+            out.append(f"PART OF THE FOOT IS MISSING: both feet were in the scan, touching, so the side of this one "
+                       f"that lay against the other wasn't scanned ({info['open_edges_near_floor_mm']:.0f} mm of "
+                       "open edges near the floor once they were cut apart). Scan again with the other foot out of "
+                       "the box.")
+        else:
+            out.append(f"PART OF THE FOOT IS MISSING: the scan is torn open near the floor "
+                       f"({info['open_edges_near_floor_mm']:.0f} mm of open edges), where the toes, the heel or a side "
+                       "should be. Scan again, covering the whole foot.")
+    sides = info.get("ball_sides_above_floor_mm")
+    if sides and abs(sides["plus_x"] - sides["minus_x"]) > foot_prep.BALL_ROLL_WARN_MM:
+        out.append(f"THE FOREFOOT WAS ROLLED ONTO ONE EDGE: one side of the ball of the foot is "
+                   f"{abs(sides['plus_x'] - sides['minus_x']):.0f} mm higher than the other, so the insole would put "
+                   "a wedge under it. Scan again with the ankle held at a right angle and the sole facing straight up.")
     return out

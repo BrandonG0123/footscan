@@ -330,12 +330,22 @@ def load_studio_key(path: Path) -> str:
     return key
 
 
+# One lock per capture, by its id: a model upload and an insole build on the same capture take turns, and
+# so does other_scans saving measures into another capture's capture.json.
+_capture_locks: dict[str, threading.Lock] = {}
+_capture_locks_guard = threading.Lock()
+
+
+def capture_lock(capture_id: str) -> threading.Lock:
+    with _capture_locks_guard:
+        return _capture_locks.setdefault(capture_id, threading.Lock())
+
+
 def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check=is_loopback,
                  studio_key: str | None = None, secure_cookie: bool = False,
                  submissions_per_hour: int = SUBMISSIONS_PER_HOUR, allow_indexing: bool = True,
                  public: bool = False, cert_fingerprint: str | None = None):
     runner = recon_jobs.ReconRunner()
-    insole_locks: dict[str, threading.Lock] = {}
     captures_dir = data_dir / "captures"
     submissions_dir = data_dir / "submissions"
     limiter = RateLimiter(submissions_per_hour)
@@ -621,7 +631,7 @@ def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check
                 shoe_id = opts.get("shoe") or None
                 if shoe_id is not None and length is not None:
                     raise BadRequest("give the shoe's insole or a length, not both")
-                with insole_locks.setdefault(d.name, threading.Lock()):
+                with capture_lock(d.name):
                     meta = read_json(d / "capture.json")
                     foot = meta.get("foot")
                     if foot not in FEET:
@@ -964,33 +974,57 @@ def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check
                 up = (query_param(self.path, "up") or "y").lower()
                 if up not in UP_AXES:
                     raise BadRequest(f"up must be one of {sorted(UP_AXES)}")
-                raw = d / f"original.{ext}"
-                raw.write_bytes(self.read_body(MAX_MESH_BYTES))
-                try:
-                    stats = import_mesh(raw, d / "mesh.ply")
-                except Exception as e:  # noqa: BLE001 - any parse failure is the file's fault
-                    raw.unlink(missing_ok=True)
-                    raise BadRequest(f"couldn't read that 3D file: {e}") from None
-                stats["up"] = up
-                meta = read_json(d / "capture.json")
-                meta.update(status="complete", mesh=stats, frame_files=[])
-                # A sole scan missing its toes or heel is refused here, whoever sends it (the phone, Import 3D):
-                # nothing is kept, and the answer says what to scan again.
-                check = check_completeness(captures_dir, d, meta)
-                if check and check.get("problems"):
-                    shutil.rmtree(d, ignore_errors=True)
-                    raise IncompleteScan(check["problems"])
-                if check:
-                    meta["completeness"] = check
-                # an insole made from the old model no longer matches: remove it
-                meta.pop("insole", None)
-                shutil.rmtree(d / "insole", ignore_errors=True)
-                # The calibration object made by another app (e.g. the iPhone
-                # test app): score it now, against the object's true shape.
-                if meta.get("condition") == "calibration":
-                    meta["accuracy"] = score_imported(d, up)
-                write_json(d / "capture.json", meta)
-                return self.send_json({"ok": True, "mesh": stats, "accuracy": meta.get("accuracy")})
+                body = self.read_body(MAX_MESH_BYTES)
+                # one model change (or insole build) per capture at a time
+                with capture_lock(d.name):
+                    # The new model is read and checked in a folder of its own, and moved in only once it's
+                    # kept: a bad or refused replacement never touches the model that was there, or what was
+                    # made from it, whatever goes wrong on the way.
+                    for old in d.glob(".upload-*"):  # left by a request that died midway (none runs now)
+                        shutil.rmtree(old, ignore_errors=True)
+                    shutil.rmtree(d / ".before-upload", ignore_errors=True)  # the same, from an earlier version
+                    staged = d / f".upload-{secrets.token_hex(4)}"
+                    staged.mkdir()
+                    try:
+                        raw = staged / f"original.{ext}"
+                        raw.write_bytes(body)
+                        try:
+                            stats = import_mesh(raw, staged / "mesh.ply")
+                        except Exception as e:  # noqa: BLE001 - any parse failure is the file's fault
+                            raise BadRequest(f"couldn't read that 3D file: {e}") from None
+                        stats["up"] = up
+                        meta = read_json(d / "capture.json")
+                        meta.update(status="complete", mesh=stats, frame_files=[])
+                        # A sole scan missing its toes or heel is refused here, whoever sends it (the phone,
+                        # Import 3D): the answer says what to scan again. A capture made just for this
+                        # upload (nothing in it but its capture.json) is removed; any other keeps what it had.
+                        check = check_completeness(captures_dir, staged, meta)
+                        if check and check.get("problems"):
+                            if not [f for f in d.iterdir() if f.name != "capture.json" and f != staged]:
+                                shutil.rmtree(d, ignore_errors=True)
+                            raise IncompleteScan(check["problems"])
+                        new = {f.name for f in staged.iterdir()}
+                        for f in staged.iterdir():  # kept: the new model takes the old one's place
+                            f.replace(d / f.name)
+                        for f in d.iterdir():
+                            if f.is_file() and is_model_file(f.name) and f.name not in new:
+                                f.unlink()  # e.g. original.obj, replaced by an original.usdz
+                    finally:
+                        shutil.rmtree(staged, ignore_errors=True)
+                    # re-read: calipers or frames may have been saved meanwhile (they don't take the lock)
+                    meta = read_json(d / "capture.json")
+                    meta.update(status="complete", mesh=stats, frame_files=[])
+                    if check:
+                        meta["completeness"] = check
+                    # an insole made from the old model no longer matches: remove it
+                    meta.pop("insole", None)
+                    shutil.rmtree(d / "insole", ignore_errors=True)
+                    # The calibration object made by another app (e.g. the iPhone
+                    # test app): score it now, against the object's true shape.
+                    if meta.get("condition") == "calibration":
+                        meta["accuracy"] = score_imported(d, up)
+                    write_json(d / "capture.json", meta)
+                    return self.send_json({"ok": True, "mesh": stats, "accuracy": meta.get("accuracy")})
             if p[1:] == ["accuracy"] and method == "GET":
                 f = d / "accuracy.json"
                 if not f.is_file():
@@ -1029,6 +1063,11 @@ def query_param(path: str, name: str) -> str | None:
     from urllib.parse import parse_qs, urlsplit
 
     return (parse_qs(urlsplit(path).query).get(name) or [None])[0]
+
+
+def is_model_file(name: str) -> bool:
+    """A file an imported model's upload writes (import_mesh): the file as sent, its PLY, the viewer's copy."""
+    return name in ("mesh.ply", "viewer.bin") or name.startswith("original.")
 
 
 def import_mesh(src: Path, dst: Path) -> dict:
@@ -1088,12 +1127,12 @@ def _shoe_changed(folder: Path, ins: dict) -> bool:
 
 
 def _prepared_another_way(meta: dict, ins: dict) -> bool:
-    """Was this sole scan's insole made by a preparation that has changed since (foot_prep.prep_version())?
+    """Was this sole scan's insole made by a preparation that has changed since (foot_prep.prep_version(kind))?
     Made before 29 Oct 2026, its toes, if they hung up, weren't laid flat, and its outline can be short."""
     from .recon import completeness, foot_prep
 
     return (meta.get("method") == "imported_mesh" and meta.get("scan_kind") in completeness.CHECKED_KINDS
-            and ins.get("prep") != foot_prep.prep_version())
+            and ins.get("prep") != foot_prep.prep_version(meta.get("scan_kind")))
 
 
 def insole_is_stale(folder: Path, meta: dict) -> bool:
@@ -1211,7 +1250,7 @@ def make_insole(folder: Path, meta: dict, length_mm: float | None = None, shoe: 
     r = ins.report
     return dict(made=now_iso(), foot=foot, length_mm=r["length_mm"], width_mm=r["width_mm"], height_mm=r["height_mm"],
                 max_fill_mm=r["max_fill_mm"], sole=r["sole"], bed=r["bed_fit"], warnings=r["warnings"],
-                files=sorted(INSOLE_FILES), source=stamp, prep=foot_prep.prep_version(), shoe_length_mm=length_mm,
+                files=sorted(INSOLE_FILES), source=stamp, prep=foot_prep.prep_version(meta.get("scan_kind")), shoe_length_mm=length_mm,
                 shoe=dict(shoe_info, fit=r.get("shoe_fit")) if shoe_info else None)
 
 
@@ -1251,14 +1290,14 @@ def scan_measures(folder: Path, meta: dict) -> tuple[dict, dict]:
     from .recon import completeness
 
     placed, info = _prepare_imported(folder, meta)
-    return completeness.measure(placed), info
+    return completeness.measure(placed, meta.get("scan_kind")), info
 
 
 def other_scans(captures_dir: Path, meta: dict) -> list[dict]:
     """The newest kept sole scan of each foot, other than this capture, for completeness.against_others.
 
     Scans kept from before this check have no measures yet, and ones prepared another way (their
-    ``measured_as`` isn't foot_prep.prep_version()) have stale ones: they're measured now and the measures
+    ``measured_as`` isn't foot_prep.prep_version(kind)) have stale ones: they're measured now and the measures
     saved with them. One the check finds incomplete itself is passed over for the next newest (compared
     with a scan that's short itself, a short scan would pass)."""
     from .recon import completeness, foot_prep
@@ -1271,17 +1310,34 @@ def other_scans(captures_dir: Path, meta: dict) -> list[dict]:
         if m.get("status") != "complete" or not (folder / "mesh.ply").is_file():
             continue
         c = m.get("completeness")
-        if not c or "measures" not in c or c["measures"].get("measured_as") != foot_prep.prep_version():
+        version = foot_prep.prep_version(m.get("scan_kind"))
+        if c and "error" in c and c.get("measured_as") == version:
+            continue  # couldn't be measured this way before: not tried again on every upload
+        if not c or "measures" not in c or c["measures"].get("measured_as") != version:
+            model = source_stamp(folder / "mesh.ply")
             try:
                 measures, info = scan_measures(folder, m)
-            except Exception:  # noqa: BLE001 - a scan that can't be measured just isn't compared with
-                continue
-            c = dict(measures=measures, problems=completeness.problems(measures) + completeness.from_prep(info),
-                     checked=now_iso())
-            full = read_json(folder / "capture.json")
-            full["completeness"] = c
-            write_json(folder / "capture.json", full)
-        if c.get("problems"):
+            except (FileNotFoundError, MemoryError):
+                continue  # may pass (a file being replaced, a busy machine): tried again next time
+            except Exception as e:  # noqa: BLE001 - a scan that can't be measured just isn't compared with
+                c = dict(error=f"couldn't be measured ({type(e).__name__}: {e})", measured_as=version,
+                         checked=now_iso())
+            else:
+                c = dict(measures=measures, problems=completeness.problems(measures) + completeness.from_prep(info),
+                         checked=now_iso())
+            # saved under that capture's own lock, re-read inside it, so an insole build or a model upload
+            # there doesn't lose its write or this one; if it's busy, it's measured again next time
+            # (and only if its model is still the one just measured: a new one may have come in meanwhile)
+            lock = capture_lock(m["capture_id"])
+            if lock.acquire(blocking=False):
+                try:
+                    if source_stamp(folder / "mesh.ply") == model:
+                        full = read_json(folder / "capture.json")
+                        full["completeness"] = c
+                        write_json(folder / "capture.json", full)
+                finally:
+                    lock.release()
+        if "error" in c or c.get("problems"):
             continue
         newest[m["foot"]] = dict(foot=m["foot"], same_foot=m["foot"] == meta["foot"], capture_id=m["capture_id"],
                                  length_mm=c["measures"]["length_mm"])
@@ -1305,7 +1361,8 @@ def check_completeness(captures_dir: Path, folder: Path, meta: dict) -> dict | N
         return dict(problems=[f"THE STUDIO COULDN'T FIND THE WHOLE FOOT: {e} Scan again with the whole foot in view."],
                     checked=now_iso())
     except Exception as e:  # noqa: BLE001 - our own failure never blocks a scan
-        return dict(error=f"the completeness check couldn't run ({type(e).__name__}: {e})", checked=now_iso())
+        return dict(error=f"the completeness check couldn't run ({type(e).__name__}: {e})",
+                    measured_as=foot_prep.prep_version(meta.get("scan_kind")), checked=now_iso())
     problems = (completeness.problems(measures) + completeness.from_prep(info)
                 + completeness.against_others(measures, other_scans(captures_dir, meta)))
     return dict(measures=measures, problems=problems, checked=now_iso())

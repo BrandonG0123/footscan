@@ -831,11 +831,12 @@ def test_a_legs_flat_scan_is_stood_up_from_the_leg_and_reads_the_arch(foot, bed)
     assert not [w for w in r["warnings"] if "ARCH IS ON THE OUTSIDE" in w or "DOESN'T LOOK" in w]
 
 
-def _both_feet(gap_mm: float):
+def _both_feet(gap_mm: float, leg_mm: float = 400.0):
     """SYNTHETIC both feet standing side by side (foot coordinates: x forward, y toward the person's left):
     the right foot as synth.curved_foot, the left one ``gap_mm`` to its left at the ball (negative: they
-    overlap, joined into one solid, as Object Capture joins feet that touch). Each has its leg, 400 mm of
-    it: the scan's long axis runs along the legs, as with real legs on a bed."""
+    overlap, joined into one solid, as Object Capture joins feet that touch). Each has its leg, ``leg_mm``
+    of it: at 400 mm the scan's long axis runs along the legs, as with real legs on a bed; a box drawn to a
+    hand's width of leg holds 100-150 mm."""
     import manifold3d as m3
     import trimesh
 
@@ -845,7 +846,7 @@ def _both_feet(gap_mm: float):
     def solid(t):
         return m3.Manifold(m3.Mesh(np.asarray(t.vertices, dtype=np.float32), np.asarray(t.faces, dtype=np.uint32)))
 
-    legs = [m3.Manifold.cylinder(400.0, 28.0, 28.0, 64).translate((45.0, y, 40.0)) for y in (45.0, 145.0 + gap_mm)]
+    legs = [m3.Manifold.cylinder(leg_mm, 28.0, 28.0, 64).translate((45.0, y, 40.0)) for y in (45.0, 145.0 + gap_mm)]
     both = (solid(right) + solid(left) + legs[0] + legs[1]).to_mesh()
     return trimesh.Trimesh(np.asarray(both.vert_properties)[:, :3], np.asarray(both.tri_verts), process=True)
 
@@ -867,6 +868,63 @@ def test_a_legs_flat_scan_with_both_feet_in_it_keeps_the_asked_for_foot(foot, ga
     assert r["prep"]["footprint_mm"]["width"] < 110
     assert not [w for w in r["warnings"] if "ARCH IS ON THE OUTSIDE" in w or "DOESN'T LOOK" in w]
     assert any(w.startswith("both feet were in the scan") for w in r["warnings"])
+
+
+@pytest.mark.parametrize("foot", ["right", "left"])
+def test_a_legs_flat_scan_of_both_feet_apart_with_little_leg_is_stood_up_along_the_leg(foot):
+    """Two feet 30 mm apart are two pieces. With only 100 mm of each leg in the box, the pair is wider than
+    it is long, so the leg's direction is read from one piece: read from both, it ran across the legs and
+    the foot was stood up on its side (SYNTHETIC, this case: a 233 x 157 mm footprint)."""
+    from footscan.recon import foot_prep
+
+    ins, placed = foot_prep.insole_from_object_capture(_legs_flat_scan(standing=_both_feet(30.0, leg_mm=100.0)),
+                                                       foot, kind="sole_hanging")
+    r = ins.report
+    fp = r["prep"]["footprint_mm"]
+    assert 230.0 < fp["length"] < 265.0 and fp["width"] < 115.0, fp
+    assert (r["max_fill_at_mm"]["y"] > 0) == (foot == "right")
+    assert not [w for w in r["warnings"] if "DOESN'T LOOK" in w or "HEEL MAY BE MISSING" in w]
+
+
+def test_an_insole_is_still_made_when_the_missing_toes_check_breaks(monkeypatch):
+    """The arrival check keeps a scan its measure breaks on, so Make insole mustn't fail on it either:
+    the insole is made, with a warning to look at the outline's ends."""
+    from footscan.recon import completeness, foot_prep
+
+    def broken(placed, kind=None):
+        raise ValueError("empty heel band")
+
+    monkeypatch.setattr(completeness, "measure", broken)
+    ins, _ = foot_prep.insole_from_object_capture(_sole_up_scan("right"), "right", kind="sole_up")
+    assert any("couldn't run (ValueError: empty heel band)" in w for w in ins.report["warnings"])
+
+
+def test_a_legs_flat_scan_of_one_foot_with_a_coarse_shin_is_not_cut():
+    """A simplified model's shin can be a few big triangles (here an 8-sided cylinder): their centres leave
+    strips across the one leg with no centre in them, which must not be read as the gap between two shins.
+    Read that way, this foot was cut in half (SYNTHETIC, this case: 48 mm wide; the bug Codex found in review)."""
+    import manifold3d as m3
+    import trimesh
+
+    from footscan.recon import foot_prep
+
+    right = synth.curved_foot("right", leg=False)
+    foot = m3.Manifold(m3.Mesh(np.asarray(right.vertices, dtype=np.float32), np.asarray(right.faces, dtype=np.uint32)))
+    one = (foot + m3.Manifold.cylinder(150.0, 28.0, 28.0, 8).translate((45.0, 45.0, 40.0))).to_mesh()
+    standing = trimesh.Trimesh(np.asarray(one.vert_properties)[:, :3], np.asarray(one.tri_verts), process=True)
+    ins, _ = foot_prep.insole_from_object_capture(_legs_flat_scan(standing=standing), "right", kind="sole_hanging")
+    assert "two_feet" not in ins.report["prep"]
+    assert ins.report["prep"]["footprint_mm"]["width"] > 85.0
+
+
+@pytest.mark.parametrize("gap_mm", [-4.0, 15.0])
+def test_a_legs_flat_scan_of_both_feet_says_whether_they_touched(gap_mm):
+    """Joined into one piece, the cut between them went through surface (that side of the foot was never
+    scanned); apart, it went through none."""
+    from footscan.recon import foot_prep
+
+    _, info = foot_prep.prepare_sole_hanging(_legs_flat_scan(standing=_both_feet(gap_mm)), foot="right")
+    assert info["two_feet"]["touching"] == (gap_mm < 0)
 
 
 def test_a_legs_flat_scan_of_one_foot_is_not_cut():

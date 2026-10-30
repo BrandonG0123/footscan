@@ -76,7 +76,7 @@ def measure_scan(folder: Path, meta: dict) -> tuple[dict, object]:
     t0 = time.time()
     ins, placed = foot_prep.insole_from_object_capture(mesh, meta["foot"], up, kind=kind)
     info = ins.report["prep"]
-    m = info.get("completeness") or completeness.measure(placed)
+    m = info.get("completeness") or completeness.measure(placed, kind)
     sides = info.get("ball_sides_above_floor_mm")
     return dict(
         outline_length_mm=m["length_mm"], outline_width_mm=m["width_mm"],
