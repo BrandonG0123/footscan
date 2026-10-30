@@ -1214,7 +1214,7 @@ def _prepare_imported(folder: Path, meta: dict):
     up = (meta.get("mesh") or {}).get("up", "y")
     mesh = load_geometry(folder / "mesh.ply")
     prep = foot_prep.PREPARE[kind]
-    return prep(mesh, up, foot=meta["foot"]) if kind == "impression" else prep(mesh, up)
+    return prep(mesh, up, foot=meta["foot"])
 
 
 def prepared_scan(folder: Path, meta: dict):

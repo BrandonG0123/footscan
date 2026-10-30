@@ -689,12 +689,13 @@ def test_the_forefoot_edge_is_bevelled_for_a_shoes_toe_box(right):
     assert _top(right, 170.0, edge_y + p.edge_bevel_mm + 1.5) == pytest.approx(p.base_mm, abs=0.35)
 
 
-def _legs_flat_scan(foot="right", bed=True, yaw=63.0):
-    """SYNTHETIC legs-flat scan: the curved foot, face down, legs straight along the bed (toward -x), the
-    foot just past the bed's end, sole facing back (+x); the bed under the shin; as the app hands it over."""
+def _legs_flat_scan(foot="right", bed=True, yaw=63.0, standing=None):
+    """SYNTHETIC legs-flat scan: the curved foot (or ``standing``, in the same frame), face down, legs straight
+    along the bed (toward -x), the foot just past the bed's end, sole facing back (+x); the bed under the shin;
+    as the app hands it over."""
     import trimesh
 
-    m = synth.curved_foot(foot)
+    m = synth.curved_foot(foot) if standing is None else standing
     W = np.eye(4)
     W[:3, :3] = np.c_[[0, 0, -1.0], [0, -1.0, 0], [-1.0, 0, 0]]  # standing -> lying: up -> -x, front -> down
     m.apply_transform(W)
@@ -733,6 +734,86 @@ def test_a_legs_flat_scan_is_stood_up_from_the_leg_and_reads_the_arch(foot, bed)
     assert (r["max_fill_at_mm"]["y"] > 0) == (foot == "right")
     assert placed.vertices[:, 2].max() <= foot_prep.LEG_TRIM_MM + 1.5  # cut by triangle centres: corners poke a little above
     assert not [w for w in r["warnings"] if "ARCH IS ON THE OUTSIDE" in w or "DOESN'T LOOK" in w]
+
+
+def _both_feet(gap_mm: float):
+    """SYNTHETIC both feet standing side by side (foot coordinates: x forward, y toward the person's left):
+    the right foot as synth.curved_foot, the left one ``gap_mm`` to its left at the ball (negative: they
+    overlap, joined into one solid, as Object Capture joins feet that touch). Each has its leg, 400 mm of
+    it: the scan's long axis runs along the legs, as with real legs on a bed."""
+    import manifold3d as m3
+    import trimesh
+
+    right, left = synth.curved_foot("right"), synth.curved_foot("left")
+    left.apply_translation([0.0, 100.0 + gap_mm, 0.0])  # each foot is 100 mm wide at the ball
+
+    def solid(t):
+        return m3.Manifold(m3.Mesh(np.asarray(t.vertices, dtype=np.float32), np.asarray(t.faces, dtype=np.uint32)))
+
+    legs = [m3.Manifold.cylinder(400.0, 28.0, 28.0, 64).translate((45.0, y, 40.0)) for y in (45.0, 145.0 + gap_mm)]
+    both = (solid(right) + solid(left) + legs[0] + legs[1]).to_mesh()
+    return trimesh.Trimesh(np.asarray(both.vert_properties)[:, :3], np.asarray(both.tri_verts), process=True)
+
+
+@pytest.mark.parametrize("foot", ["right", "left"])
+@pytest.mark.parametrize("gap_mm", [-4.0, 15.0])
+def test_a_legs_flat_scan_with_both_feet_in_it_keeps_the_asked_for_foot(foot, gap_mm):
+    """Both legs lie on the bed, so a loose box takes in both feet (as in the first real legs-flat scan,
+    LIDAR_nwb_relaxed_L_20261027-151815-2190: 221 x 217 mm on the floor). Touching (joined into one piece)
+    or apart, the feet are cut apart between the shins and the asked-for one is kept: its arch on its
+    inner side, a foot-shaped footprint, and a note saying both feet were there."""
+    from footscan.recon import foot_prep
+
+    ins, placed = foot_prep.insole_from_object_capture(_legs_flat_scan(standing=_both_feet(gap_mm)), foot,
+                                                       kind="sole_hanging")
+    r = ins.report
+    assert r["prep"]["two_feet"]["kept"] == foot
+    assert (r["max_fill_at_mm"]["y"] > 0) == (foot == "right")  # inner side
+    assert r["prep"]["footprint_mm"]["width"] < 110
+    assert not [w for w in r["warnings"] if "ARCH IS ON THE OUTSIDE" in w or "DOESN'T LOOK" in w]
+    assert any(w.startswith("both feet were in the scan") for w in r["warnings"])
+
+
+def test_a_legs_flat_scan_of_one_foot_is_not_cut():
+    from footscan.recon import foot_prep
+
+    _, info = foot_prep.prepare_sole_hanging(_legs_flat_scan("left"), foot="left")
+    assert "two_feet" not in info
+
+
+def _rolled_forefoot_scan(deg: float):
+    """SYNTHETIC sole-up scan of a right foot whose forefoot is rolled onto its outer edge (inner side up) by
+    ``deg``, about that edge (y = -5), the roll building across the midfoot (x 110-140) and holding under the
+    ball and toes."""
+    import trimesh
+
+    m = synth.refined(synth.shaped_foot("right", leg=True))
+    V = m.vertices.copy()
+    a = np.radians(deg) * np.clip((V[:, 0] - 110.0) / 30.0, 0, 1)
+    dy, dz = V[:, 1] + 5.0, V[:, 2]
+    V[:, 1], V[:, 2] = -5.0 + dy * np.cos(a) - dz * np.sin(a), dy * np.sin(a) + dz * np.cos(a)
+    m = trimesh.Trimesh(V, m.faces, process=False)
+    m.apply_transform(trimesh.transformations.rotation_matrix(np.radians(25), [0, 1, 0], [0, 45, 0]))
+    m.apply_transform(np.diag([1.0, -1, -1, 1]))
+    return _as_object_capture(m)
+
+
+def test_a_forefoot_rolled_further_than_the_floor_can_level_is_flagged():
+    """Relaxed, the left foot of the first real sole-up pair rolled onto its outer edge: after the floor was
+    set, one side of its ball sat 8.6 mm above the other (the right foot: 1.2 mm), and the insole would have
+    filled under it, a wedge. A forefoot turned 15 degrees is flagged; 5 degrees, which the tripod floor
+    levels, isn't."""
+    from footscan.recon import foot_prep
+
+    rolled, _ = foot_prep.insole_from_object_capture(_rolled_forefoot_scan(15.0), "right", kind="sole_up")
+    sides = rolled.report["prep"]["ball_sides_above_floor_mm"]
+    assert abs(sides["plus_x"] - sides["minus_x"]) > foot_prep.BALL_ROLL_WARN_MM
+    assert any(w.startswith("THE FOREFOOT WAS ROLLED") for w in rolled.report["warnings"])
+
+    slight, _ = foot_prep.insole_from_object_capture(_rolled_forefoot_scan(5.0), "right", kind="sole_up")
+    sides = slight.report["prep"]["ball_sides_above_floor_mm"]
+    assert abs(sides["plus_x"] - sides["minus_x"]) < 1.0
+    assert not any(w.startswith("THE FOREFOOT WAS ROLLED") for w in slight.report["warnings"])
 
 
 def test_a_scan_whose_heel_is_off_the_floor_is_flagged():
