@@ -3,7 +3,9 @@
     footscan measure scans/*.json -o data/raw/scan_trials.csv
     footscan repeatability data/raw/*.csv -o reports/phase0.md \
         [--target ahi=0.02 --device-condition swb] [--scans-per-device 3]
-    footscan serve [--host 0.0.0.0 --https]
+    footscan serve [--host 0.0.0.0 --https] [--review]
+    footscan review [--list | --watch]                    (checks + pictures for each new insole)
+    footscan service [--system macos|linux|windows]       (start-at-boot file for an always-on computer)
     footscan calib-object -o calibration-object.stl
     footscan reconstruct data/captures/<id> [--calibration-object] [--calipers calipers.json]
     footscan export-measures -o data/raw/scan_trials.csv     (landmark picks -> repeatability input)
@@ -232,10 +234,84 @@ def cmd_export_measures(args) -> int:
 
 
 def cmd_serve(args) -> int:
-    from .server import serve
+    from .server import DATA_DIR, serve
 
+    if args.review:
+        import threading
+
+        from . import review
+
+        # Review packets for new insoles, alongside the studio (a daemon thread: it ends with the server)
+        data = (Path(args.data) if args.data else DATA_DIR).resolve()
+        threading.Thread(target=review.watch, args=(data,), kwargs=dict(log=lambda m: print(m, flush=True)),
+                         daemon=True, name="review-packets").start()
     serve(args.host, args.port, args.https, args.public, data_dir=Path(args.data) if args.data else None,
           allow_indexing=True if args.allow_indexing else None)
+    return 0
+
+
+def cmd_review(args) -> int:
+    import shlex
+    import subprocess
+
+    from . import review
+    from .server import DATA_DIR
+
+    data = (Path(args.data) if args.data else DATA_DIR).resolve()
+    if args.list:
+        todo = review.unreviewed(data)
+        waiting = review.pending(data)
+        if waiting:
+            print(f"{len(waiting)} insole(s) have no review packet yet: run footscan review")
+        for p in todo:
+            print(f"insole waiting for review: {p / 'packet.md'}")
+        if todo:
+            print("To review them, ask Claude Code: /review-insole")
+        return 0
+    on_new = None
+    if args.exec:
+        # e.g. --exec 'claude -p "/review-insole {packet}"': {packet} is a waiting packet's folder, put in
+        # after splitting, so a path with spaces or backslashes stays one argument. Split the shell's way
+        # on every system (Windows' non-POSIX split would keep the quotes inside the prompt).
+        def on_new(packet):
+            cmd = [a.replace("{packet}", str(packet)) for a in shlex.split(args.exec)]
+            subprocess.run(cmd, cwd=Path(__file__).resolve().parents[2], check=False)
+    if args.watch:
+        try:
+            review.watch(data, args.interval, Path(args.spec) if args.spec else None, on_new=on_new)
+        except KeyboardInterrupt:
+            pass
+        return 0
+    made = review.run_once(data, review.load_spec(Path(args.spec) if args.spec else None))
+    if not made:
+        print("every current insole already has a review packet")
+    if on_new:
+        for p in review.unreviewed(data):  # every packet still waiting, not only the ones just written
+            on_new(p)
+    return 0
+
+
+def cmd_service(args) -> int:
+    from . import service
+    from .server import DATA_DIR
+
+    system = args.system or service.this_system()
+    root = Path(__file__).resolve().parents[2]
+    try:
+        r = service.render(system, root, Path(args.data).resolve() if args.data else DATA_DIR, args.port,
+                           review=not args.no_review)
+    except ValueError as err:
+        print(f"footscan service: {err}", file=sys.stderr)
+        return 1
+    sys.stdout.write(r["content"])  # stdout is the file itself, so it can be redirected into place
+    exe = service.footscan_exe(system, root)
+    if system == service.this_system() and not exe.is_file():
+        print(f"\n# warning: {exe} doesn't exist yet: make the .venv in this checkout first (docs/ALWAYS-ON.md step 1)",
+              file=sys.stderr)
+    print(f"\n# footscan service for {system}" + (f": save the text above as {r['path']}" if r["path"] else ""),
+          file=sys.stderr)
+    for i, step in enumerate(r["steps"], 1):
+        print(f"#  {i}. {step}", file=sys.stderr)
     return 0
 
 
@@ -321,7 +397,26 @@ def main(argv=None) -> int:
                                    "out of your real library")
     sv.add_argument("--allow-indexing", action="store_true",
                     help="let search engines index the site (with --public it is hidden from them by default)")
+    sv.add_argument("--review", action="store_true",
+                    help="also write a review packet (checks + pictures) for each new insole: footscan review")
     sv.set_defaults(func=cmd_serve)
+
+    rv = sub.add_parser("review", help="review packets for new insoles: plain checks + pictures, for a person or "
+                                       "Claude Code to look over before slicing (docs/ALWAYS-ON.md)")
+    rv.add_argument("--data", help="data folder (default: data/)")
+    rv.add_argument("--spec", help="the shoe to check against (default: review-spec.json)")
+    rv.add_argument("--list", action="store_true", help="only list packets nobody has answered yet")
+    rv.add_argument("--watch", action="store_true", help="keep looking for new insoles")
+    rv.add_argument("--interval", type=float, default=20.0, help="seconds between looks (--watch)")
+    rv.add_argument("--exec", help="command to run once for each packet waiting for a review; {packet} is its folder")
+    rv.set_defaults(func=cmd_review)
+
+    sc = sub.add_parser("service", help="print the start-at-boot file for an always-on computer (installs nothing)")
+    sc.add_argument("--system", choices=["macos", "linux", "windows"], help="default: this computer's")
+    sc.add_argument("--data", help="data folder (default: data/)")
+    sc.add_argument("--port", type=int, default=8765)
+    sc.add_argument("--no-review", action="store_true", help="leave out --review")
+    sc.set_defaults(func=cmd_service)
 
     args = ap.parse_args(argv)
     return args.func(args)

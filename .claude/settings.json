@@ -1,0 +1,14 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cd \"$CLAUDE_PROJECT_DIR\" 2>/dev/null || exit 0; for f in .venv/bin/footscan .venv/Scripts/footscan.exe; do if [ -x \"$f\" ]; then \"$f\" review --list 2>/dev/null; break; fi; done; exit 0"
+          }
+        ]
+      }
+    ]
+  }
+}
