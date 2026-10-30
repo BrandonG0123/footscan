@@ -57,7 +57,7 @@ final class ScanLibrary {
     func finish(_ scan: Scan, settings: AppSettings, studio: StudioConnection) async {
         if !scan.hasModel { await build(scan) } else if !scan.hasOBJ { await convert(scan) }
         guard scan.hasOBJ, settings.autoSend, studio.client != nil, let rec = scan.record,
-              rec.studioCaptureID == nil, !rec.subject.needsScale || rec.loadKg != nil else { return }
+              rec.studioCaptureID == nil, rec.retake == nil, !rec.subject.needsScale || rec.loadKg != nil else { return }
         await send(scan, studio: studio)
     }
 
@@ -73,7 +73,7 @@ final class ScanLibrary {
             // checked before every upload: switching "send automatically" off stops the queue
             guard settings.autoSend else { break }
             guard studio.client != nil, work[scan.folder] == nil, scan.hasOBJ, let rec = scan.record,
-                  rec.studioCaptureID == nil, !rec.subject.needsScale || rec.loadKg != nil else { continue }
+                  rec.studioCaptureID == nil, rec.retake == nil, !rec.subject.needsScale || rec.loadKg != nil else { continue }
             await send(scan, studio: studio)
             // the studio isn't answering: don't try every other scan against it too
             if unreachable.contains(scan.folder) { break }
@@ -128,7 +128,8 @@ final class ScanLibrary {
     }
 
     func send(_ scan: Scan, studio: StudioConnection, loadKg: Double? = nil) async {
-        guard let client = studio.client, var record = scan.record, work[scan.folder] == nil else { return }
+        // a scan the studio found incomplete would only be refused again
+        guard let client = studio.client, var record = scan.record, record.retake == nil, work[scan.folder] == nil else { return }
         if let loadKg { record.loadKg = loadKg; scan.save(record) }
         problems[scan.folder] = nil
         unreachable.remove(scan.folder)
@@ -143,6 +144,10 @@ final class ScanLibrary {
             record.studioAccuracy = sent.accuracy
             scan.save(record)
             UINotificationFeedbackGenerator().notificationOccurred(.success)
+        } catch StudioClient.Failure.incomplete(let missing) {
+            record.retake = missing
+            scan.save(record)
+            UINotificationFeedbackGenerator().notificationOccurred(.error)
         } catch {
             problems[scan.folder] = error.localizedDescription
             if (error as? StudioClient.Failure)?.isUnreachable == true { unreachable.insert(scan.folder) }
