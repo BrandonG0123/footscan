@@ -964,22 +964,46 @@ def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check
                 up = (query_param(self.path, "up") or "y").lower()
                 if up not in UP_AXES:
                     raise BadRequest(f"up must be one of {sorted(UP_AXES)}")
+                body = self.read_body(MAX_MESH_BYTES)
+                # A model already here (this upload replaces it) is set aside, and put back if the new one
+                # can't be read or is refused: a bad replacement never costs the scan that was there.
+                before = d / ".before-upload"
+                shutil.rmtree(before, ignore_errors=True)
+                earlier = [f for f in d.iterdir() if f.is_file() and (f.name == "mesh.ply" or f.name.startswith("original."))]
+                if earlier:
+                    before.mkdir()
+                    for f in earlier:
+                        f.rename(before / f.name)
+
+                def put_back():
+                    for f in d.iterdir():
+                        if f.is_file() and (f.name == "mesh.ply" or f.name.startswith("original.")):
+                            f.unlink()
+                    for f in earlier:
+                        (before / f.name).rename(d / f.name)
+                    shutil.rmtree(before, ignore_errors=True)
+
                 raw = d / f"original.{ext}"
-                raw.write_bytes(self.read_body(MAX_MESH_BYTES))
+                raw.write_bytes(body)
                 try:
                     stats = import_mesh(raw, d / "mesh.ply")
                 except Exception as e:  # noqa: BLE001 - any parse failure is the file's fault
-                    raw.unlink(missing_ok=True)
+                    put_back()
                     raise BadRequest(f"couldn't read that 3D file: {e}") from None
                 stats["up"] = up
                 meta = read_json(d / "capture.json")
                 meta.update(status="complete", mesh=stats, frame_files=[])
                 # A sole scan missing its toes or heel is refused here, whoever sends it (the phone, Import 3D):
-                # nothing is kept, and the answer says what to scan again.
+                # the answer says what to scan again. A new capture is removed; one that already had a model
+                # keeps that model and everything made from it.
                 check = check_completeness(captures_dir, d, meta)
                 if check and check.get("problems"):
-                    shutil.rmtree(d, ignore_errors=True)
+                    if earlier:
+                        put_back()
+                    else:
+                        shutil.rmtree(d, ignore_errors=True)
                     raise IncompleteScan(check["problems"])
+                shutil.rmtree(before, ignore_errors=True)
                 if check:
                     meta["completeness"] = check
                 # an insole made from the old model no longer matches: remove it
@@ -1271,17 +1295,21 @@ def other_scans(captures_dir: Path, meta: dict) -> list[dict]:
         if m.get("status") != "complete" or not (folder / "mesh.ply").is_file():
             continue
         c = m.get("completeness")
+        if c and "error" in c and c.get("measured_as") == foot_prep.prep_version():
+            continue  # couldn't be measured this way before: not tried again on every upload
         if not c or "measures" not in c or c["measures"].get("measured_as") != foot_prep.prep_version():
             try:
                 measures, info = scan_measures(folder, m)
-            except Exception:  # noqa: BLE001 - a scan that can't be measured just isn't compared with
-                continue
-            c = dict(measures=measures, problems=completeness.problems(measures) + completeness.from_prep(info),
-                     checked=now_iso())
+            except Exception as e:  # noqa: BLE001 - a scan that can't be measured just isn't compared with
+                c = dict(error=f"couldn't be measured ({type(e).__name__}: {e})",
+                         measured_as=foot_prep.prep_version(), checked=now_iso())
+            else:
+                c = dict(measures=measures, problems=completeness.problems(measures) + completeness.from_prep(info),
+                         checked=now_iso())
             full = read_json(folder / "capture.json")
             full["completeness"] = c
             write_json(folder / "capture.json", full)
-        if c.get("problems"):
+        if "error" in c or c.get("problems"):
             continue
         newest[m["foot"]] = dict(foot=m["foot"], same_foot=m["foot"] == meta["foot"], capture_id=m["capture_id"],
                                  length_mm=c["measures"]["length_mm"])
@@ -1305,7 +1333,8 @@ def check_completeness(captures_dir: Path, folder: Path, meta: dict) -> dict | N
         return dict(problems=[f"THE STUDIO COULDN'T FIND THE WHOLE FOOT: {e} Scan again with the whole foot in view."],
                     checked=now_iso())
     except Exception as e:  # noqa: BLE001 - our own failure never blocks a scan
-        return dict(error=f"the completeness check couldn't run ({type(e).__name__}: {e})", checked=now_iso())
+        return dict(error=f"the completeness check couldn't run ({type(e).__name__}: {e})",
+                    measured_as=foot_prep.prep_version(), checked=now_iso())
     problems = (completeness.problems(measures) + completeness.from_prep(info)
                 + completeness.against_others(measures, other_scans(captures_dir, meta)))
     return dict(measures=measures, problems=problems, checked=now_iso())

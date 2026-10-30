@@ -89,3 +89,16 @@ def test_a_scan_that_isnt_one_foot_is_caught_when_its_ends_look_whole():
     # far too short to be an adult foot
     assert completeness.problems(dict(length_mm=150.0, width_mm=60.0, toe_end=0.3, heel_end=0.4))[0].startswith(
         "THIS ISN'T ONE WHOLE FOOT")
+
+
+def test_a_forefoot_rolled_onto_one_edge_is_refused_on_arrival():
+    """The insole would fill under the raised side of the ball: a wedge, which a first fit must not have.
+    Over 5 mm between the two sides is refused; the 1.2 mm of the first real right sole-up scan is not."""
+    assert completeness.from_prep(dict(ball_sides_above_floor_mm=dict(minus_x=0.2, plus_x=1.4))) == []
+    found = completeness.from_prep(dict(ball_sides_above_floor_mm=dict(minus_x=0.0, plus_x=8.6)))
+    assert len(found) == 1 and found[0].startswith("THE FOREFOOT WAS ROLLED") and "9 mm" in found[0]
+
+
+def test_a_scan_torn_where_two_touching_feet_were_cut_apart_says_to_keep_the_other_foot_out():
+    found = completeness.from_prep(dict(open_edges_near_floor_mm=153.0, two_feet_note="both feet were in the scan"))
+    assert len(found) == 1 and "other foot out of the box" in found[0]

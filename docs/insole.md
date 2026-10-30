@@ -119,10 +119,13 @@ Two more, for the sole scans:
   of the ball of the foot sits more than 5 mm above the other. Standing,
   both rest on the floor, so the insole would fill under the raised side: a
   wedge. The first real left sole-up scan had 8.6 mm (its right pair 1.2 mm).
+  A sole scan this rolled is also refused when it arrives (see below).
 - A legs-flat scan with **both feet** in it keeps only the chosen foot: the
   two are cut apart down the gap between the shins, and the result says so.
   Where the feet touched, the inner side is missing, which the torn-scan
-  warning reports.
+  warning reports. When they touched, that tear means the scan is refused
+  on arrival (the side that lay against the other foot was never scanned);
+  only feet that were apart in the scan get through to Make insole.
 
 A sole-up scan is turned over (the phone knows which way was up), cut
 below the bed and rested on its heel and ball: the floor is the face of
@@ -158,7 +161,9 @@ A sole scan (*sole* or *legs flat*) that's missing a whole end of the foot
 never gets as far as Make insole: the studio checks it the moment it arrives
 (`src/footscan/recon/completeness.py`, called from the model upload, so the
 iPhone app and Import 3D both go through it), keeps nothing, and answers with
-what's missing and how to scan again. The phone shows that on the scan's
+what's missing and how to scan again. (A new model sent to a capture that
+already had one leaves the earlier model, and what was made from it, as it
+was.) The phone shows that on the scan's
 page, marks the scan *Scan again*, and never sends it again (not even with
 "send automatically" on). What refuses a scan:
 
@@ -173,6 +178,9 @@ page, marks the scan *Scan again*, and never sends it again (not even with
 - **The heel is missing** or **the scan is torn near the floor**: the two
   older checks below (the back of the scan far above the floor; open edges
   near the floor), which only warned before.
+- **The forefoot was rolled onto one edge** (more than 5 mm between the two
+  sides of the ball once the floor is set): the insole would put a wedge
+  under the raised side, and a first fit has no posting.
 - **Much shorter than another scan**: more than 12 mm shorter than the
   newest kept sole scan of the other foot, or of the same foot. Object
   Capture closes a gap it never saw with a guessed surface, and an end that

@@ -991,6 +991,53 @@ def test_a_scan_kept_before_the_check_is_measured_when_compared_and_an_incomplet
     assert server.other_scans(data / "captures", dict(capture_id="new", foot="left")) == []
 
 
+def test_a_refused_model_sent_to_a_capture_that_had_one_leaves_the_earlier_model_and_its_insole(servers):
+    """Replacing a kept scan's model with one missing its toes is refused, and only the new model is dropped:
+    the capture, its model and the insole made from it are as they were (a new capture is still removed)."""
+    op, _, data = servers
+    cid = _new_sole_capture(op, "right")
+    assert call(f"{op}/api/captures/{cid}/mesh?ext=obj&up=y", "PUT", _sole_up_obj("right"),
+                {"Content-Type": "application/octet-stream"})[0] == 200
+    assert call(f"{op}/api/captures/{cid}/insole", "POST", {})[0] == 200
+    folder = data / "captures" / cid
+    mesh_before, original_before = (folder / "mesh.ply").read_bytes(), (folder / "original.obj").read_bytes()
+    meta_before = json.loads((folder / "capture.json").read_text())
+    st, raw, _ = call(f"{op}/api/captures/{cid}/mesh?ext=obj&up=y", "PUT", _sole_up_obj("right", x_to=200.0),
+                      {"Content-Type": "application/octet-stream"})
+    assert st == 422 and json.loads(raw)["incomplete"], raw
+    assert (folder / "mesh.ply").read_bytes() == mesh_before
+    assert (folder / "original.obj").read_bytes() == original_before
+    assert not (folder / ".before-upload").exists()
+    assert json.loads((folder / "capture.json").read_text()) == meta_before
+    assert (folder / "insole").is_dir() and meta_before.get("insole")
+
+
+def test_a_kept_scan_that_cant_be_measured_is_tried_once_not_on_every_upload(servers, monkeypatch):
+    """A kept sole scan whose measuring fails is left out of the comparison, and the failure is saved, so the
+    next upload doesn't prepare it all over again inside the request."""
+    op, _, data = servers
+    old = _new_sole_capture(op, "right")
+    assert call(f"{op}/api/captures/{old}/mesh?ext=obj&up=y", "PUT", _sole_up_obj("right"),
+                {"Content-Type": "application/octet-stream"})[0] == 200
+    meta_file = data / "captures" / old / "capture.json"
+    meta = json.loads(meta_file.read_text())
+    meta.pop("completeness")  # as if kept before this check existed
+    meta_file.write_text(json.dumps(meta))
+    from footscan import server
+
+    tries = []
+
+    def broken(folder, m):
+        tries.append(folder)
+        raise ValueError("no outline")
+
+    monkeypatch.setattr(server, "scan_measures", broken)
+    for _ in range(3):
+        assert server.other_scans(data / "captures", dict(capture_id="new", foot="left")) == []
+    assert len(tries) == 1
+    assert "couldn't be measured" in json.loads(meta_file.read_text())["completeness"]["error"]
+
+
 def test_a_scan_measured_the_old_way_is_measured_again_before_its_length_is_compared(servers):
     """Measures saved before the way of measuring changed (sole scans' toes now laid flat first) aren't
     compared with a new scan's: the scan is measured again and the new measures saved."""

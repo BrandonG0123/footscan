@@ -42,8 +42,8 @@ def main(argv=None) -> int:
             continue
         own = completeness.problems(m) + completeness.from_prep(info)
         newest = {}
-        for r in rows:  # earlier scans that passed on their own, newest last
-            if "measures" in r and not r["own_problems"]:
+        for r in rows:  # earlier scans the studio would have kept (a refused one is deleted), newest last
+            if "measures" in r and not r["problems"]:
                 newest[r["foot"]] = dict(foot=r["foot"], same_foot=r["foot"] == meta["foot"],
                                          capture_id=r["capture_id"], length_mm=r["measures"]["length_mm"])
         row.update(measures=m, own_problems=own,

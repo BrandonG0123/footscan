@@ -856,15 +856,18 @@ def prepare_sole_hanging(mesh, up: str = "y", trim_mm: float | None = LEG_TRIM_M
     keep = pieces[0][0]
     if len(pieces) > 1 and pieces[1][1] >= TWO_LEGS_SHARE * pieces[0][1]:
         keep = keep | pieces[1][0]
+    biggest = pieces[0][0][keep]  # the biggest piece's faces, among those kept
     m.update_faces(keep)
     m.remove_unreferenced_vertices()
     if len(m.faces) < 100:
         raise FootPrepError("almost nothing left once the bed is taken away: is the foot in the scan?")
 
     # 2. the leg's direction (level): the long axis seen from above, of the surface by area (not of the
-    # points: a finely meshed foot would outweigh a coarsely meshed leg)
+    # points: a finely meshed foot would outweigh a coarsely meshed leg). Read from the biggest piece only:
+    # with both legs kept as two pieces and not much leg in the box, the two side by side are wider than
+    # they are long, and their joint long axis would run across the legs instead of along them.
     V = np.asarray(m.vertices)
-    w = m.area_faces
+    w = np.where(biggest, m.area_faces, 0.0)
     mid = np.average(m.triangles_center[:, :2], axis=0, weights=w)
     axis = np.linalg.eigh(np.cov((m.triangles_center[:, :2] - mid).T, aweights=w))[1][:, 1]
     xy = V[:, :2] - mid
@@ -908,8 +911,9 @@ def _one_foot(m, foot: str | None, info):
     Seen from the front, a person's left is on their left, which in this
     frame is +y (x forward, z up). Going up the scan in 25 mm bands from
     ``SHINS_FROM_MM``, the first band whose surface, summed across (y, in
-    5 mm steps), has an empty strip at least ``SHINS_GAP_MM`` wide with a
-    good share of surface on each side holds two shins. The scan is cut in
+    5 mm steps), has an empty strip at least ``SHINS_GAP_MM`` wide (no
+    triangle crosses it) with a good share of surface on each side holds
+    two shins. The scan is cut in
     two down the middle of that strip, top to bottom, and the side of
     ``foot`` is kept. Lower down, the feet may touch and be joined; the cut
     separates them there too, along the same line. The cut leaves an open
@@ -919,17 +923,27 @@ def _one_foot(m, foot: str | None, info):
     One leg (no such strip), or no ``foot`` given: the scan as it was.
     """
     C, A = m.triangles_center, m.area_faces
-    for z0 in np.arange(SHINS_FROM_MM, C[:, 2].max(), SHINS_BAND_MM):
-        band = (C[:, 2] >= z0) & (C[:, 2] < z0 + SHINS_BAND_MM)
+    T = m.vertices[m.faces]  # each triangle's corners
+    z_lo, z_hi = T[:, :, 2].min(axis=1), T[:, :, 2].max(axis=1)
+    y_lo, y_hi = T[:, :, 1].min(axis=1), T[:, :, 1].max(axis=1)
+    for z0 in np.arange(SHINS_FROM_MM, z_hi.max(), SHINS_BAND_MM):
+        band = (z_hi >= z0) & (z_lo < z0 + SHINS_BAND_MM)  # every triangle reaching into the band
         if A[band].sum() <= 0:
             continue
-        y = C[band, 1]
-        edges = np.arange(y.min(), y.max() + 5.0, 5.0)
+        edges = np.arange(y_lo[band].min(), y_hi[band].max() + 5.0, 5.0)
         if len(edges) < 3:
             continue
-        hist, edges = np.histogram(y, bins=edges, weights=A[band])
+        hist, edges = np.histogram(C[band, 1], bins=edges, weights=A[band])
         cum = np.cumsum(hist) / hist.sum()
-        empty = hist <= 0
+        # A strip is empty only if no triangle crosses it, not just if no triangle's centre lies in it: a
+        # coarse model's shin is a few wide triangles whose centres leave gaps across the one leg.
+        n = len(hist)
+        first = np.clip(np.searchsorted(edges, y_lo[band], side="right") - 1, 0, n - 1)
+        last = np.clip(np.searchsorted(edges, y_hi[band], side="left") - 1, 0, n - 1)
+        crossed = np.zeros(n + 1)
+        np.add.at(crossed, first, 1.0)
+        np.add.at(crossed, last + 1, -1.0)
+        empty = np.cumsum(crossed)[:n] <= 0
         i = 0
         while i < len(hist):
             if not empty[i]:
@@ -1277,7 +1291,12 @@ def insole_from_object_capture(mesh, foot: str, up: str = "y", params=None, kind
         params = replace(params or insole.InsoleParams(), toes_flat_from=SOLE_UP_TOES_FLAT_FROM)
     ins = insole.from_scan(placed, foot, params)
     if kind in completeness.CHECKED_KINDS:
-        info["completeness"] = completeness.measure(placed)  # are the toes and the heel there? (see plausibility)
+        # are the toes and the heel there? (see plausibility). The arrival check keeps a scan this measure
+        # breaks on (its own failure never blocks a scan), so here too it must not stop the insole.
+        try:
+            info["completeness"] = completeness.measure(placed)
+        except Exception as e:  # noqa: BLE001 - reported as a warning instead
+            info["completeness_error"] = f"{type(e).__name__}: {e}"
     ins.report["prep"] = info
     ins.report["warnings"] = plausibility(info, ins.report, foot) + ins.report["warnings"]
     return ins, placed
@@ -1367,6 +1386,9 @@ def plausibility(info: dict, report: dict, foot: str | None = None) -> list[str]
                        "Scan again with the ankle held at a right angle and the sole facing straight up.")
     if "completeness" in info:
         out += completeness.problems(info["completeness"])
+    if "completeness_error" in info:
+        out.append(f"the check for missing toes or heel couldn't run ({info['completeness_error']}): look at both "
+                   "ends of the outline before printing.")
     for k in ("two_feet_warning", "two_feet_note", "toes_warning", "heel_warning", "pieces_warning", "shallow_warning"):
         if k in info:
             out.append(info[k])
