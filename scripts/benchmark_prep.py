@@ -106,29 +106,37 @@ def damage(m, rng, noise=0.0, grain=2.0, wavy=0.0, jitter=0.0, holes=0, junk=0):
 
 
 TOES_BEND_FROM, TOES_BEND_BLEND = 185.0, 12.0  # synth.bend_toes' hinge (x, foot coordinates) and blend, mm
+TIPS_BEND_FROM = 220.0  # a second bend, nearer the tips (the toes' own joints), for toes that curl as well
 
 
-def _bent(foot, toes_up):
-    """The synthetic foot, its toes bent up ``toes_up`` degrees (synth.bend_toes) if any. Split to 2 mm
-    triangles first, so the bend is smooth (it adds points, not shape)."""
+def _bent(foot, toes_up, tips_up=0.0):
+    """The synthetic foot, its toes bent up ``toes_up`` degrees (synth.bend_toes) if any, and their tips a
+    further ``tips_up`` degrees from ``TIPS_BEND_FROM`` (bent first, so the toes' bend carries it). Split to
+    2 mm triangles first, so the bend is smooth (it adds points, not shape)."""
     m = synth.curved_foot(foot)
-    return synth.bend_toes(synth.refined(m), toes_up, x_from=TOES_BEND_FROM, blend=TOES_BEND_BLEND) if toes_up else m
+    if not toes_up and not tips_up:
+        return m
+    m = synth.refined(m)
+    if tips_up:
+        m = synth.bend_toes(m, tips_up, x_from=TIPS_BEND_FROM, blend=TOES_BEND_BLEND)
+    return synth.bend_toes(m, toes_up, x_from=TOES_BEND_FROM, blend=TOES_BEND_BLEND) if toes_up else m
 
 
-def _truth(foot, toes_up):
+def _truth(foot, toes_up, tips_up=0.0):
     """The true sole height at x, y; with the toes bent, only behind the bend (NaN past it: the toes are
     laid flat by the preparation, which isn't a rigid move, so there they can't be mapped back exactly)."""
-    if not toes_up:
+    if not toes_up and not tips_up:
         return lambda x, y: synth.curved_sole(x, y, foot)
-    behind = TOES_BEND_FROM - TOES_BEND_BLEND / 2 - EDGE_MM
+    behind = (TOES_BEND_FROM if toes_up else TIPS_BEND_FROM) - TOES_BEND_BLEND / 2 - EDGE_MM
     return lambda x, y: np.where(np.asarray(x) < behind, synth.curved_sole(x, y, foot), np.nan)
 
 
-def sole_up_case(foot, rng, tip=25.0, roll=0.0, yaw=63.0, gravity_tilt=0.0, bed=True, toes_up=0.0, **dmg):
+def sole_up_case(foot, rng, tip=25.0, roll=0.0, yaw=63.0, gravity_tilt=0.0, bed=True, toes_up=0.0, tips_up=0.0,
+                 **dmg):
     """Lying face down, knee bent: the foot (with leg) turned sole-up, tipped by its relaxed ankle."""
     import trimesh
 
-    m = damage(_bent(foot, toes_up), rng, **dmg)
+    m = damage(_bent(foot, toes_up, tips_up), rng, **dmg)
     P = np.diag([1.0, -1, -1, 1]) @ _rot(roll, [1, 0, 0], [0, 45, 0]) @ _rot(tip, [0, 1, 0], [0, 45, 0])
     m.apply_transform(P)
     if bed:
@@ -138,14 +146,14 @@ def sole_up_case(foot, rng, tip=25.0, roll=0.0, yaw=63.0, gravity_tilt=0.0, bed=
     S = to_object_capture(yaw, gravity_tilt)
     m.apply_transform(S)
     # synthetic foot coordinates <- scan as handed over; the true sole there is curved_sole, floor z = 0
-    return m, np.linalg.inv(S @ P), _truth(foot, toes_up), 0.0
+    return m, np.linalg.inv(S @ P), _truth(foot, toes_up, tips_up), 0.0
 
 
-def legs_flat_case(foot, rng, yaw=63.0, gravity_tilt=0.0, bed=True, toes_up=0.0, **dmg):
+def legs_flat_case(foot, rng, yaw=63.0, gravity_tilt=0.0, bed=True, toes_up=0.0, tips_up=0.0, **dmg):
     """Face down, legs straight, the foot just past the end of the bed: the sole faces back."""
     import trimesh
 
-    m = damage(_bent(foot, toes_up), rng, **dmg)
+    m = damage(_bent(foot, toes_up, tips_up), rng, **dmg)
     W = np.eye(4)
     W[:3, :3] = np.c_[[0, 0, -1.0], [0, -1.0, 0], [-1.0, 0, 0]]  # standing -> lying: up -> -x, front -> down
     m.apply_transform(W)
@@ -157,7 +165,7 @@ def legs_flat_case(foot, rng, yaw=63.0, gravity_tilt=0.0, bed=True, toes_up=0.0,
         m = trimesh.util.concatenate([m, b])
     S = to_object_capture(yaw, gravity_tilt)
     m.apply_transform(S)
-    return m, np.linalg.inv(S @ W), _truth(foot, toes_up), 0.0
+    return m, np.linalg.inv(S @ W), _truth(foot, toes_up, tips_up), 0.0
 
 
 def print_case(foot, rng, depth=30.0, yaw=63.0, gravity_tilt=0.0, **dmg):
@@ -188,12 +196,15 @@ CASES = [
     ("toes bent up 20", "sole_up", sole_up_case, dict(toes_up=20.0)),
     ("toes bent up 35", "sole_up", sole_up_case, dict(toes_up=35.0)),
     ("toes bent up 35 + speckle 0.6", "sole_up", sole_up_case, dict(toes_up=35.0, noise=0.6)),
+    ("toes up 20, tips 30 more", "sole_up", sole_up_case, dict(toes_up=20.0, tips_up=30.0)),
+    ("toes up 30, tips 40 more", "sole_up", sole_up_case, dict(toes_up=30.0, tips_up=40.0)),
     ("clean", "sole_hanging", legs_flat_case, {}),
     ("no bed in the scan", "sole_hanging", legs_flat_case, dict(bed=False)),
     ("phone level off 4", "sole_hanging", legs_flat_case, dict(gravity_tilt=4.0)),
     ("speckle 0.6", "sole_hanging", legs_flat_case, dict(noise=0.6)),
     ("jitter 0.5", "sole_hanging", legs_flat_case, dict(jitter=0.5)),
     ("toes bent up 35", "sole_hanging", legs_flat_case, dict(toes_up=35.0)),
+    ("toes up 20, tips 30 more", "sole_hanging", legs_flat_case, dict(toes_up=20.0, tips_up=30.0)),
     ("clean", "impression", print_case, {}),
     ("shallow 18", "impression", print_case, dict(depth=18.0)),
     ("deep 45", "impression", print_case, dict(depth=45.0)),

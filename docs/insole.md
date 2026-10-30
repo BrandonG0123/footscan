@@ -144,7 +144,13 @@ measurement). Laid flat, the same foot reads -4.1 to +6.6 mm at 35 degrees.
 The table of runs is beside `TOES_JOINT_UP_MM` in `foot_prep.py`; the
 decision is recorded as `toes_laid_flat` (angle, pivot, joint, length before
 and after). A front rising more than 60 degrees isn't laid flat and gets a
-warning. With the toes hung up, the floor's heel and ball are also placed
+warning. Toes that curl as well as bend (their tips still rising after
+that) are laid flat again from where the first joint left them on the
+floor, up to three joints in all, as a toe has (`TOES_JOINTS`). SYNTHETIC
+(scripts/benchmark_prep.py, curved_foot, sole up, right foot), toes bent up
+20 degrees and their tips 30 more: 7.9 mm short with one joint, 5.3 mm with
+up to three. Curls that start near the tip or are much steeper still read
+short with no warning (docs/benchmark.md). With the toes hung up, the floor's heel and ball are also placed
 along the whole underside, toes included: along the contact areas alone,
 which end at the ball, the "ball" was the arch and tipped the floor
 (SYNTHETIC, toes bent up 20 degrees: 1.6 degrees across the left foot).
