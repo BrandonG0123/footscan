@@ -61,8 +61,9 @@ The insole is the shape of the bottom of the foot, so the app's first
 scans are the two that show it:
 
 - **Right / Left sole**: lie face down, bend the knee so the sole faces the
-  ceiling, foot relaxed; someone else scans over the sole and down the
-  sides. Nothing presses on the foot, so the arch is as high as it is
+  ceiling, ankle relaxed with the ball of the foot level; someone else scans
+  over the sole and down the sides, two laps. What goes wrong and how to
+  avoid it: [scanning-guide.md](scanning-guide.md). Nothing presses on the foot, so the arch is as high as it is
   unloaded (the generator's 20 mm arch cap still applies). Available today,
   no equipment.
 - **Right / Left sole, legs flat**: the same, but lying with both legs flat
@@ -113,15 +114,103 @@ Two loud warnings say when not to print:
   Object Capture closes a model's bottom by itself, so that underside is
   probably guessed. The arch shape can't be trusted.
 
+Two more, for the sole scans:
+- **THE FOREFOOT WAS ROLLED ONTO ONE EDGE**: once the floor is set, one side
+  of the ball of the foot sits more than 5 mm above the other. Standing,
+  both rest on the floor, so the insole would fill under the raised side: a
+  wedge. The first real left sole-up scan had 8.6 mm (its right pair 1.2 mm).
+- A legs-flat scan with **both feet** in it keeps only the chosen foot: the
+  two are cut apart down the gap between the shins, and the result says so.
+  Where the feet touched, the inner side is missing, which the torn-scan
+  warning reports.
+
 A sole-up scan is turned over (the phone knows which way was up), cut
 below the bed and rested on its heel and ball: the floor is the face of
 the scan's convex hull right under its centre, so a foot tipped by its own
-relaxed ankle lands flat. A foam print is cut out of the box (below the
+relaxed ankle lands flat. Relaxed in the air, the toes hang up off the
+line of the sole (gravity pulls them toward the top of the foot); standing,
+they lie flat. Hung up, they look shorter from above and their tips can rise
+past the 30 mm the outline is read at, so the outline comes out short
+(SYNTHETIC, the 250 mm test foot with its toes bent up 35 degrees: 14.6-20.6
+mm short, depending on where they bend). So a sole scan's toes are laid flat
+first (`_lay_toes_flat`): from the last point past the ball still on the
+floor, the toes' angle is read off the underside, and the front of the foot
+is turned down by it round a 10 mm joint just behind that point (toes bend at
+their joints, not at the skin; 10 mm is a judgment, to be set from a ruler
+measurement). Laid flat, the same foot reads -4.1 to +6.6 mm at 35 degrees.
+The table of runs is beside `TOES_JOINT_UP_MM` in `foot_prep.py`; the
+decision is recorded as `toes_laid_flat` (angle, pivot, joint, length before
+and after). A front rising more than 60 degrees isn't laid flat and gets a
+warning. With the toes hung up, the floor's heel and ball are also placed
+along the whole underside, toes included: along the contact areas alone,
+which end at the ball, the "ball" was the arch and tipped the floor
+(SYNTHETIC, toes bent up 20 degrees: 1.6 degrees across the left foot).
+A foam print is cut out of the box (below the
 foam's flat top, inside its outline, facing up), its triangles turned to
 face down the way the sole did, and rested the same way; the heel is its
 narrower end. Both add warnings if less than 60% of the sole was scanned,
 if the arch comes out on the outer side ("is this really the right foot?")
 or, for a print, if the two ends are almost the same width.
+
+### Refused on arrival: a sole scan missing its toes or heel
+
+A sole scan (*sole* or *legs flat*) that's missing a whole end of the foot
+never gets as far as Make insole: the studio checks it the moment it arrives
+(`src/footscan/recon/completeness.py`, called from the model upload, so the
+iPhone app and Import 3D both go through it), keeps nothing, and answers with
+what's missing and how to scan again. The phone shows that on the scan's
+page, marks the scan *Scan again*, and never sends it again (not even with
+"send automatically" on). What refuses a scan:
+
+- **The toes are missing**: seen from above (the insole outline), a foot
+  rounds off to its toes. 5 mm in from the front, the outline is only a third
+  as wide as the ball of the foot on the synthetic test feet (0.33); cut off
+  25-50 mm short, it's square, 0.62-0.84 (15 mm short, 0.54: left to the
+  length check below). Over 0.6 is refused.
+- **The heel is cut off**: the same at the back, against the heel's own
+  width (0.47 whole on the test feet, 0.66-0.80 cut 8-30 mm short). Over 0.65
+  is refused.
+- **The heel is missing** or **the scan is torn near the floor**: the two
+  older checks below (the back of the scan far above the floor; open edges
+  near the floor), which only warned before.
+- **Much shorter than another scan**: more than 12 mm shorter than the
+  newest kept sole scan of the other foot, or of the same foot. Object
+  Capture closes a gap it never saw with a guessed surface, and an end that
+  curled or was cut off only a little doesn't look square, but it does make
+  the foot short. The case that started this: the left sole-up scan
+  `LIDAR_nwb_relaxed_L_20261027-151404-89df` made a 227.0 x 86.3 mm
+  outline against 246.4 x 102.3 mm for the right foot's scan that afternoon,
+  and passed every check before this one.
+- **Not one whole foot**: the outline's length or width/length is outside an
+  adult foot's (180-330 mm, 0.28-0.50), e.g. both feet caught together.
+- **The studio couldn't prepare it at all** (no foot found on the floor).
+
+The end-shape thresholds were set on SYNTHETIC scans (tests/synth.py's
+`shaped_foot` and `curved_foot` with an end cut off and closed over, as
+sole-up scans in metres, Y up), not on real feet; the numbers above are from
+those runs.
+
+First run on real scans (`scripts/check_completeness.py` on the studio's
+captures, 2026-10-28): the right sole-up scan
+`LIDAR_nwb_relaxed_R_20261027-151404-2349` is kept (244.1 x 89.6 mm, toe end
+0.23, heel end 0.48). The left sole-up scan 89df and its duplicate 537f
+(228.2 x 79.8 mm, toe end 0.46, heel end 0.59, toe tip 17.8 mm up) are
+refused, by the length check: 16 mm shorter than 2349. Their ends weren't
+square enough for the shape checks. The legs-flat scan
+`LIDAR_nwb_relaxed_L_20261027-151815-2190`, which caught both feet merged,
+read 264.9 x 254.3 mm and was kept by that first version; the *not one whole
+foot* check was added for it. Four real scans: the thresholds aren't proven
+by them.
+Those lengths predate laying hung-up toes flat (29 Oct): 89df's toe tip was
+17.8 mm up, so it may read longer now; not yet rerun. Saved measures from
+before are measured again before a length comparison, and a sole scan's
+insole made before then shows as out of date until it's made again
+(`foot_prep.prep_version()`).
+
+A standing foot and a foam print aren't checked. Make insole on a
+scan kept before this check still lists the same problems as warnings. To see
+what the check makes of the scans already in the studio, without changing
+them: `.venv/bin/python scripts/check_completeness.py`.
 
 Before either is rested, scan noise is measured and, if there is any, blurred
 out (over about 4 mm), and on a noisy scan the floor is set from smooth fits

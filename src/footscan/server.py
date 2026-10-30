@@ -158,6 +158,14 @@ class ScreenedOut(Exception):
         self.blocked = blocked
 
 
+class IncompleteScan(Exception):
+    """A foot scan with part of the foot missing (recon/completeness.py): refused, with what to do instead."""
+
+    def __init__(self, problems: list[str]):
+        super().__init__("The studio didn't keep this scan, because part of the foot is missing. " + " ".join(problems))
+        self.problems = problems
+
+
 def now_iso() -> str:
     return dt.datetime.now().isoformat(timespec="seconds")
 
@@ -498,6 +506,8 @@ def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check
                 self.send_json({"error": "survey incomplete or invalid", "fields": e.errors}, HTTPStatus.BAD_REQUEST)
             except ScreenedOut as e:
                 self.send_json({"error": str(e), "blocked": e.blocked}, HTTPStatus.UNPROCESSABLE_ENTITY)
+            except IncompleteScan as e:
+                self.send_json({"error": str(e), "incomplete": e.problems}, HTTPStatus.UNPROCESSABLE_ENTITY)
             except (ValueError, json.JSONDecodeError) as e:
                 self.send_json({"error": f"invalid input: {e}"}, HTTPStatus.BAD_REQUEST)
             except FileNotFoundError:
@@ -964,6 +974,14 @@ def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check
                 stats["up"] = up
                 meta = read_json(d / "capture.json")
                 meta.update(status="complete", mesh=stats, frame_files=[])
+                # A sole scan missing its toes or heel is refused here, whoever sends it (the phone, Import 3D):
+                # nothing is kept, and the answer says what to scan again.
+                check = check_completeness(captures_dir, d, meta)
+                if check and check.get("problems"):
+                    shutil.rmtree(d, ignore_errors=True)
+                    raise IncompleteScan(check["problems"])
+                if check:
+                    meta["completeness"] = check
                 # an insole made from the old model no longer matches: remove it
                 meta.pop("insole", None)
                 shutil.rmtree(d / "insole", ignore_errors=True)
@@ -1069,11 +1087,21 @@ def _shoe_changed(folder: Path, ins: dict) -> bool:
     return source_stamp(insole_source(sf, read_json(sf / "capture.json"))) != shoe.get("source")
 
 
+def _prepared_another_way(meta: dict, ins: dict) -> bool:
+    """Was this sole scan's insole made by a preparation that has changed since (foot_prep.prep_version())?
+    Made before 29 Oct 2026, its toes, if they hung up, weren't laid flat, and its outline can be short."""
+    from .recon import completeness, foot_prep
+
+    return (meta.get("method") == "imported_mesh" and meta.get("scan_kind") in completeness.CHECKED_KINDS
+            and ins.get("prep") != foot_prep.prep_version())
+
+
 def insole_is_stale(folder: Path, meta: dict) -> bool:
-    """Was this capture's model (or the shoe's it was fitted to) replaced or rebuilt after its insole was made?"""
+    """Was this capture's model (or the shoe's it was fitted to) replaced or rebuilt after its insole was made,
+    or the way a sole scan is prepared changed?"""
     ins = meta.get("insole") or {}
     return bool(ins) and "error" not in ins and (ins.get("source") != source_stamp(insole_source(folder, meta))
-                                                 or _shoe_changed(folder, ins))
+                                                 or _shoe_changed(folder, ins) or _prepared_another_way(meta, ins))
 
 
 def insole_downloadable(folder: Path, meta: dict) -> bool:
@@ -1081,7 +1109,7 @@ def insole_downloadable(folder: Path, meta: dict) -> bool:
     ins = meta.get("insole") or {}
     current = source_stamp(insole_source(folder, meta))
     return (bool(ins) and "error" not in ins and current is not None and ins.get("source") == current
-            and not _shoe_changed(folder, ins))
+            and not _shoe_changed(folder, ins) and not _prepared_another_way(meta, ins))
 
 
 def parse_shoe_length(value) -> float | None:
@@ -1183,24 +1211,104 @@ def make_insole(folder: Path, meta: dict, length_mm: float | None = None, shoe: 
     r = ins.report
     return dict(made=now_iso(), foot=foot, length_mm=r["length_mm"], width_mm=r["width_mm"], height_mm=r["height_mm"],
                 max_fill_mm=r["max_fill_mm"], sole=r["sole"], bed=r["bed_fit"], warnings=r["warnings"],
-                files=sorted(INSOLE_FILES), source=stamp, shoe_length_mm=length_mm,
+                files=sorted(INSOLE_FILES), source=stamp, prep=foot_prep.prep_version(), shoe_length_mm=length_mm,
                 shoe=dict(shoe_info, fit=r.get("shoe_fit")) if shoe_info else None)
+
+
+def _prepare_imported(folder: Path, meta: dict):
+    """An imported model prepared as Make insole prepares it: (mat-frame mesh, the preparation's decisions)."""
+    from .recon import foot_prep
+    from .recon.imported import load_geometry
+
+    kind = meta.get("scan_kind") or "foot"
+    up = (meta.get("mesh") or {}).get("up", "y")
+    mesh = load_geometry(folder / "mesh.ply")
+    prep = foot_prep.PREPARE[kind]
+    return prep(mesh, up, foot=meta["foot"])
 
 
 def prepared_scan(folder: Path, meta: dict):
     """A capture's 3D model prepared as Make insole prepares it (mat frame), or None if it has none."""
-    from .recon import foot_prep
     from .recon.imported import load_geometry
 
     if meta.get("method") == "imported_mesh" and (folder / "mesh.ply").is_file():
-        kind = meta.get("scan_kind") or "foot"
-        up = (meta.get("mesh") or {}).get("up", "y")
-        mesh = load_geometry(folder / "mesh.ply")
-        prep = foot_prep.PREPARE[kind]
-        return (prep(mesh, up, foot=meta["foot"]) if kind == "impression" else prep(mesh, up))[0]
+        return _prepare_imported(folder, meta)[0]
     if (folder / "recon" / "mesh.ply").is_file():
         return load_geometry(folder / "recon" / "mesh.ply")  # a photo reconstruction is already on the mat
     return None
+
+
+def _checked(meta: dict) -> bool:
+    """Is this a capture the completeness check reads: an imported sole scan of one foot?"""
+    from .recon import completeness
+
+    return (meta.get("method") == "imported_mesh" and meta.get("foot") in FEET
+            and meta.get("scan_kind") in completeness.CHECKED_KINDS)
+
+
+def scan_measures(folder: Path, meta: dict) -> tuple[dict, dict]:
+    """A sole scan's outline and end shapes (completeness.measure), with the preparation's decisions."""
+    from .recon import completeness
+
+    placed, info = _prepare_imported(folder, meta)
+    return completeness.measure(placed), info
+
+
+def other_scans(captures_dir: Path, meta: dict) -> list[dict]:
+    """The newest kept sole scan of each foot, other than this capture, for completeness.against_others.
+
+    Scans kept from before this check have no measures yet, and ones prepared another way (their
+    ``measured_as`` isn't foot_prep.prep_version()) have stale ones: they're measured now and the measures
+    saved with them. One the check finds incomplete itself is passed over for the next newest (compared
+    with a scan that's short itself, a short scan would pass)."""
+    from .recon import completeness, foot_prep
+
+    newest: dict[str, dict] = {}
+    for m in list_captures(captures_dir):  # newest first
+        if m.get("capture_id") == meta.get("capture_id") or not _checked(m) or m["foot"] in newest:
+            continue
+        folder = captures_dir / m["capture_id"]
+        if m.get("status") != "complete" or not (folder / "mesh.ply").is_file():
+            continue
+        c = m.get("completeness")
+        if not c or "measures" not in c or c["measures"].get("measured_as") != foot_prep.prep_version():
+            try:
+                measures, info = scan_measures(folder, m)
+            except Exception:  # noqa: BLE001 - a scan that can't be measured just isn't compared with
+                continue
+            c = dict(measures=measures, problems=completeness.problems(measures) + completeness.from_prep(info),
+                     checked=now_iso())
+            full = read_json(folder / "capture.json")
+            full["completeness"] = c
+            write_json(folder / "capture.json", full)
+        if c.get("problems"):
+            continue
+        newest[m["foot"]] = dict(foot=m["foot"], same_foot=m["foot"] == meta["foot"], capture_id=m["capture_id"],
+                                 length_mm=c["measures"]["length_mm"])
+    return list(newest.values())
+
+
+def check_completeness(captures_dir: Path, folder: Path, meta: dict) -> dict | None:
+    """Is the whole foot in a sole scan that has just arrived? None for the kinds that aren't checked.
+
+    Returns {"measures", "problems", "checked"}. Any problem (plain words, each ending with what to do)
+    means the scan is refused. A scan whose preparation fails can't make an insole either: refused too.
+    If the check itself breaks, it says so under "error" and refuses nothing (Make insole then reports
+    the scan's trouble in full)."""
+    from .recon import completeness, foot_prep
+
+    if not _checked(meta):
+        return None
+    try:
+        measures, info = scan_measures(folder, meta)
+    except foot_prep.FootPrepError as e:
+        return dict(problems=[f"THE STUDIO COULDN'T FIND THE WHOLE FOOT: {e} Scan again with the whole foot in view."],
+                    checked=now_iso())
+    except Exception as e:  # noqa: BLE001 - our own failure never blocks a scan
+        return dict(error=f"the completeness check couldn't run ({type(e).__name__}: {e})", checked=now_iso())
+    problems = (completeness.problems(measures) + completeness.from_prep(info)
+                + completeness.against_others(measures, other_scans(captures_dir, meta)))
+    return dict(measures=measures, problems=problems, checked=now_iso())
 
 
 def compare_captures(captures_dir: Path, a: str, b: str) -> dict:

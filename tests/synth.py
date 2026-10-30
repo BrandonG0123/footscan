@@ -620,3 +620,52 @@ def shoe_insole(length: float = 270.0, ball: float = 104.0, heel: float = 66.0, 
     m.apply_transform(np.block([[imported.UP["y"].T, np.zeros((3, 1))], [np.zeros((1, 3)), np.ones((1, 1))]]))
     m.apply_scale(0.001)
     return m
+
+
+def cut_ends(mesh, x_from: float = -1e3, x_to: float = 1e3):
+    """SYNTHETIC incomplete scan: ``mesh`` (foot coordinates, x from heel to toes) with everything behind
+    ``x_from`` and past ``x_to`` cut away, and the cut closed flat, as Object Capture closes over a part
+    of the foot it never saw (the toes, the back of the heel). Closed: nothing is torn."""
+    import manifold3d as m3
+    import trimesh
+
+    M = m3.Manifold(m3.Mesh(vert_properties=np.asarray(mesh.vertices, np.float32),
+                            tri_verts=np.asarray(mesh.faces, np.uint32)))
+    keep = m3.Manifold.cube((x_to - x_from, 2e3, 2e3)).translate((x_from, -1e3, -1e3))
+    mm = (M ^ keep).to_mesh()
+    return trimesh.Trimesh(np.asarray(mm.vert_properties)[:, :3], np.asarray(mm.tri_verts), process=True)
+
+
+def sole_up_capture(mesh, yaw_deg: float = 63.0):
+    """SYNTHETIC sole-up scan as the iPhone app hands it over: ``mesh`` (foot coordinates, z up, leg over
+    the heel) split to 2 mm triangles, tipped 25 degrees (a relaxed foot), turned sole up, then turned
+    ``yaw_deg``, Y up, in metres."""
+    import trimesh
+
+    from footscan.recon import imported
+
+    m = refined(mesh)
+    m.apply_transform(trimesh.transformations.rotation_matrix(np.radians(25), [0, 1, 0], [0, 45, 0]))
+    m.apply_transform(np.diag([1.0, -1, -1, 1]))  # sole up, leg hanging down
+    T = trimesh.transformations.rotation_matrix(np.radians(yaw_deg), [0, 0, 1])
+    T[:3, 3] = [40, -25, 7]
+    m.apply_transform(T)
+    m.apply_transform(np.block([[imported.UP["y"].T, np.zeros((3, 1))], [np.zeros((1, 3)), np.ones((1, 1))]]))
+    m.apply_scale(0.001)
+    return m
+
+
+def bend_toes(mesh, deg: float, x_from: float = 185.0, z_at: float = 0.0, blend: float = 12.0):
+    """SYNTHETIC toes bent off the line of the sole, as a relaxed foot's toes hang in a sole scan: ``mesh``
+    (foot coordinates, x from heel to toes, z up) with everything past ``x_from`` turned ``deg`` degrees
+    about the line across the foot at x = ``x_from``, height ``z_at`` (positive: the tips up, off the
+    floor). The turn grows over ``blend`` mm round that line, so the surface bends without tearing."""
+    import trimesh
+
+    V = np.array(mesh.vertices, dtype=float)
+    t = np.clip((V[:, 0] - (x_from - blend / 2)) / blend, 0.0, 1.0)
+    a = np.radians(deg) * t * t * (3 - 2 * t)
+    x, z = V[:, 0] - x_from, V[:, 2] - z_at
+    c, s = np.cos(a), np.sin(a)
+    V[:, 0], V[:, 2] = x_from + c * x - s * z, z_at + s * x + c * z
+    return trimesh.Trimesh(V, mesh.faces, process=False)

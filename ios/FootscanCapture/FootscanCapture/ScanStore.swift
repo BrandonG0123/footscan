@@ -152,6 +152,9 @@ struct ScanRecord: Codable {
     var studioHost: String?
     var sentAt: Date?
     var studioAccuracy: StudioAccuracy?
+    /// Set when the studio refused the scan because part of the foot is missing (toes, heel): what's
+    /// missing and how to scan again, one line each. Such a scan is never sent again: take a new one.
+    var retake: [String]?
     var units = "metres, Y up (Apple Object Capture's own frame). The studio's Import 3D converts to millimetres."
     var note = "Footscan LiDAR test capture. Not a medical device."
 }

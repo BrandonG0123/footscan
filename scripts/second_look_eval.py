@@ -123,7 +123,12 @@ def picture(placed) -> bytes:
 # --------------------------------------------------------------------------- cases
 def damaged(scan, cut) -> object:
     """``scan`` without the faces whose prepared (mat-frame) position ``cut(x, y, z, length)`` selects."""
-    placed, info = foot_prep.prepare_sole_up(scan, "y")
+    # the cut maps the scan with to_mat, which holds everywhere only for a rigid preparation: toes as scanned
+    lay, foot_prep.LAY_TOES_FLAT = foot_prep.LAY_TOES_FLAT, False
+    try:
+        placed, info = foot_prep.prepare_sole_up(scan, "y")
+    finally:
+        foot_prep.LAY_TOES_FLAT = lay
     T = np.asarray(info["to_mat"])
     C = np.c_[scan.triangles_center, np.ones(len(scan.faces))] @ T.T
     V = placed.vertices
