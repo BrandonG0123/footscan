@@ -1,6 +1,7 @@
 // "Get ready", before the first scan of each kind. Tick each thing as it's
 // done; after that kind has been scanned once, this is skipped (and stays
-// one tap away as Tips, without the ticking).
+// one tap away as Tips, without the ticking). After the studio refused a
+// scan, Scan again opens it too, with what to change this time on top.
 import RealityKit
 import SwiftUI
 
@@ -17,20 +18,31 @@ extension Subject {
         }
     }
 
+    /// The checks to make just before tapping Start, shown under the camera while the box is set: the things
+    /// that, missed, got real scans refused (docs/scanning-guide.md). Short: they share the screen with it.
+    var startChecks: String? {
+        switch scanKind {
+        case "sole_up": "Check: ball of the foot level, toes relaxed, the box past the toe tips and the heel."
+        case "sole_hanging": "Check: the other foot well away, ball of the foot level, toes relaxed."
+        case "impression": "Check: the whole foam box inside the box."
+        default: nil
+        }
+    }
+
     /// What to have ready before scanning this: (symbol, title, detail).
     var checklist: [(String, String, String)] {
         switch self {
         case .rightSole, .leftSole: [
             ("bed.double.fill", "Lie face down", "On a bed or sofa, chin on your hands."),
             ("arrow.up", "Bend this knee, sole up", "Lower leg straight up, sole to the ceiling, ankle relaxed. Don't point the foot or pull the toes back; let the toes lie straight, not curled."),
-            ("ruler.fill", "The ball of the foot level", "Before scanning, your helper looks along the sole from the toes: the big-toe side and the little-toe side of the ball should be at the same height. If the big-toe side is higher, turn the foot a little outward until they match."),
+            ("ruler.fill", "The ball of the foot level", "Your helper lays a book (anything flat and stiff) across the ball of the foot: the big-toe side and the little-toe side should both touch it. If one doesn't, turn the foot gently until it does, then take the book away."),
             ("shoeprints.fill", "Bare foot or a thin sock", "Nothing loose or thick."),
             ("person.2.fill", "A helper scans, two laps", "They circle the foot slowly, phone pointing down at the sole, until the ring is full; then a second lap, closer, over the toes and the back of the heel. You keep still."),
         ]
         case .rightSoleFlat, .leftSoleFlat: [
             ("bed.double.fill", "Lie face down, legs straight", "Feet just past the end of the bed: ankles at the edge, feet hanging relaxed."),
             ("arrow.left.and.right", "The other foot out of the way", "Move the other leg well to the side, a forearm's width between the feet, so only this foot is in the scan."),
-            ("ruler.fill", "The ball of the foot level", "Your helper looks along the sole from the toes: the big-toe side and the little-toe side of the ball at the same height. If the big-toe side is higher, turn the foot a little outward until they match."),
+            ("ruler.fill", "The ball of the foot level", "Your helper holds a book (anything flat and stiff) across the ball of the foot: the big-toe side and the little-toe side should both touch it. If one doesn't, turn the foot gently until it does, then take the book away."),
             ("shoeprints.fill", "Bare foot or a thin sock", "Nothing loose or thick."),
             ("person.2.fill", "A helper scans from behind", "Slowly from the inner side, round behind the foot, to the outer side. Then again a little higher, and lower."),
             ("leaf.fill", "Stay relaxed", "Your legs rest on the bed, so the foot can stay still. Breathe slowly."),
@@ -69,6 +81,8 @@ struct PrepSheet: View {
     let subject: Subject
     /// First time: everything must be ticked. Later (Tips): just a reminder.
     var mustTick: Bool
+    /// Scanning again after the studio refused the last one: what to change, shown first.
+    var retake: [RetakeAdvice] = []
     var onStart: () -> Void
     @Environment(\.dismiss) private var dismiss
     @State private var ticked = Set<Int>()
@@ -85,11 +99,15 @@ struct PrepSheet: View {
                             .background(Color.fsBrand, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
                             .scaleEffect(x: subject.isLeft ? -1 : 1)
                         VStack(alignment: .leading, spacing: 2) {
-                            Text(mustTick ? "Before your first scan" : "Tips").font(.subheadline.weight(.semibold)).foregroundStyle(Color.fsMuted)
+                            Text(mustTick ? "Before your first scan" : retake.isEmpty ? "Tips" : "Scan again").font(.subheadline.weight(.semibold)).foregroundStyle(Color.fsMuted)
                             Text(subject.label).font(.system(.title2, design: .rounded, weight: .bold))
                         }
                     }
                     .padding(.bottom, 4)
+                    if !retake.isEmpty {
+                        RetakeSteps(advice: retake, heading: "Change this time")
+                            .card(padding: 16)
+                    }
                     if subject.scanKind == "sole_up" || subject.scanKind == "sole_hanging" {
                         SoleScanAnimation(left: subject.isLeft, pose: subject.scanKind == "sole_up" ? .kneeBent : .legsFlat)
                             .padding(.bottom, 6)
@@ -149,5 +167,35 @@ struct PrepSheet: View {
         .buttonStyle(PressableStyle())
         .disabled(!mustTick)
         .accessibilityAddTraits(ticked.contains(i) ? [.isSelected] : [])
+    }
+}
+
+/// What to change on the next scan, after the studio refused one: each problem's title, then its steps, numbered.
+struct RetakeSteps: View {
+    let advice: [RetakeAdvice]
+    var heading: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            if let heading { Text(heading).font(.headline).foregroundStyle(Color.fsInk) }
+            ForEach(advice, id: \.self) { a in
+                VStack(alignment: .leading, spacing: 8) {
+                    Label(a.title, systemImage: "exclamationmark.triangle.fill")
+                        .font(.subheadline.weight(.semibold)).foregroundStyle(Color.fsWarn)
+                    ForEach(Array(a.steps.enumerated()), id: \.offset) { i, step in
+                        HStack(alignment: .firstTextBaseline, spacing: 10) {
+                            Text("\(i + 1)").font(.caption.weight(.bold).monospacedDigit())
+                                .foregroundStyle(Color.fsBrandInk)
+                                .frame(width: 20, height: 20)
+                                .background(Color.fsBrand, in: Circle())
+                            Text(step).font(.subheadline).foregroundStyle(Color.fsInk)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        .accessibilityElement(children: .combine)
+                    }
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }

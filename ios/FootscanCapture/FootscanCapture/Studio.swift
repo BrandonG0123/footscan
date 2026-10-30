@@ -118,12 +118,13 @@ struct StudioClient {
 
     enum Failure: LocalizedError {
         /// `incomplete`: the studio found part of the foot missing (toes, heel) and didn't keep the scan;
-        /// each line says what's missing and how to scan again.
-        case refused(String), unreachable(host: String), incomplete([String])
+        /// each line says what's missing and how to scan again, and `advice` what to change, step by step
+        /// (empty from a studio that doesn't send it).
+        case refused(String), unreachable(host: String), incomplete([String], advice: [RetakeAdvice])
         var errorDescription: String? {
             switch self {
             case .refused(let why): "The studio said no: \(why)"
-            case .incomplete(let why): "Scan again: the studio didn't keep this scan. \(why.joined(separator: " "))"
+            case .incomplete(let why, _): "Scan again: the studio didn't keep this scan. \(why.joined(separator: " "))"
             case .unreachable(let host):
                 "The studio at \(host) isn't answering. Check Footscan is running on your Mac and both are on the same Wi-Fi. If your Mac's Wi-Fi address has changed, reconnect by scanning its code again."
             }
@@ -132,7 +133,12 @@ struct StudioClient {
 
         /// What a refusal (an answer outside 200-299) means, from the studio's JSON answer.
         static func from(status: Int, json: [String: Any]) -> Failure {
-            if let missing = json["incomplete"] as? [String], !missing.isEmpty { return .incomplete(missing) }
+            if let missing = json["incomplete"] as? [String], !missing.isEmpty {
+                let advice = json["retake"].flatMap { JSONSerialization.isValidJSONObject($0) ? $0 : nil }
+                    .flatMap { try? JSONSerialization.data(withJSONObject: $0) }
+                    .flatMap { try? JSONDecoder().decode([RetakeAdvice].self, from: $0) }
+                return .incomplete(missing, advice: advice ?? [])
+            }
             return .refused(json["error"] as? String ?? "HTTP \(status)")
         }
     }

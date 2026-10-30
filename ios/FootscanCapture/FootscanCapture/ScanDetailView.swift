@@ -5,6 +5,8 @@ import SwiftUI
 
 struct ScanDetailView: View {
     let scan: Scan
+    /// Start a new scan of the same kind, with what to change shown first (the studio refused this one).
+    var onScanAgain: ((Scan) -> Void)?
     @Environment(ScanLibrary.self) private var library
     @Environment(StudioConnection.self) private var studio
     @Environment(AppSettings.self) private var settings
@@ -168,7 +170,7 @@ struct ScanDetailView: View {
             let when = rec?.sentAt.map { " \($0.formatted(.relative(presentation: .named)))" } ?? ""
             return "Sent to \(rec?.studioHost ?? "the studio")\(when)"
         }
-        if rec?.retake != nil { return "Not kept: part of the foot is missing. Scan this foot again." }
+        if rec?.retake != nil { return "Not kept: this scan won't make a good insole. Scan this foot again." }
         if studio.client == nil { return "Not connected to a studio" }
         if rec?.subject.needsScale == true && rec?.loadKg == nil { return "Add the scale reading, then send" }
         if scan.hasOBJ { return "Ready to send" }
@@ -178,14 +180,28 @@ struct ScanDetailView: View {
     @ViewBuilder private func studioActions(_ rec: ScanRecord?) -> some View {
         if let rec, library.work[scan.folder] == nil {
             if let missing = rec.retake {
-                // the studio refused it: say why, and offer no way to send it again
-                VStack(alignment: .leading, spacing: 6) {
-                    ForEach(missing, id: \.self) { line in
-                        Label(line, systemImage: "exclamationmark.triangle.fill")
-                            .font(.footnote).foregroundStyle(Color.fsWarn)
+                // the studio refused it: what to change, and a new scan one tap away; no way to send it again
+                VStack(alignment: .leading, spacing: 12) {
+                    RetakeSteps(advice: rec.nextTime, heading: "Next time")
+                    if let onScanAgain {
+                        Button { onScanAgain(scan) } label: {
+                            Label("Scan again", systemImage: "camera.viewfinder")
+                        }
+                        .buttonStyle(PrimaryButtonStyle())
+                    } else {
+                        Text("Start a new \(rec.subject.label.lowercased()) scan from the home screen.")
+                            .font(.footnote).foregroundStyle(Color.fsMuted)
                     }
-                    Text("Start a new \(rec.subject.label.lowercased()) scan from the home screen.")
-                        .font(.footnote).foregroundStyle(Color.fsMuted)
+                    // the studio's own words, with its measurements, for anyone who wants them
+                    if rec.retakeAdvice != nil {
+                        DisclosureGroup("What the studio found") {
+                            VStack(alignment: .leading, spacing: 6) {
+                                ForEach(missing, id: \.self) { Text($0).font(.footnote).foregroundStyle(Color.fsMuted) }
+                            }
+                            .padding(.top, 6)
+                        }
+                        .font(.footnote.weight(.semibold))
+                    }
                 }
             } else if studio.client == nil {
                 Button("Connect") { showStudio = true }.buttonStyle(.bordered)

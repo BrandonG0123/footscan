@@ -6,6 +6,8 @@
 //
 //   ready      -> point at the object, tap Continue
 //   detecting  -> a box appears round it; adjust, tap Start capture
+//                 (for a sole: the checks to make first, and after a
+//                 refusal, what went wrong last time)
 //   capturing  -> walk all the way round slowly; a ring fills in
 //                 (after one lap: Finish, or Another lap higher up)
 //   finishing  -> it saves the last photos
@@ -15,6 +17,8 @@ import SwiftUI
 
 struct CaptureView: View {
     let scan: Scan
+    /// Scanning again after the studio refused the last one: what went wrong then, shown until capture starts.
+    var retake: [RetakeAdvice] = []
     var onDone: (Scan) -> Void
     var onCancel: () -> Void
 
@@ -37,11 +41,11 @@ struct CaptureView: View {
                     ObjectCaptureView(session: session)
                         .clipShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
                         .overlay(alignment: .top) {
-                            Controls(session: session, subject: scan.record?.subject ?? .other, passes: $passes, allSides: $allSides,
-                                     part: .top, onCancel: cancel)
+                            Controls(session: session, subject: scan.record?.subject ?? .other, retake: retake, passes: $passes,
+                                     allSides: $allSides, part: .top, onCancel: cancel)
                         }
-                    Controls(session: session, subject: scan.record?.subject ?? .other, passes: $passes, allSides: $allSides,
-                             part: .panel, onCancel: cancel)
+                    Controls(session: session, subject: scan.record?.subject ?? .other, retake: retake, passes: $passes,
+                             allSides: $allSides, part: .panel, onCancel: cancel)
                 }
                 .task { await follow(session) }
             } else if let startError {
@@ -111,6 +115,7 @@ struct CaptureView: View {
 private struct Controls: View {
     let session: ObjectCaptureSession
     let subject: Subject
+    let retake: [RetakeAdvice]
     @Binding var passes: Int
     @Binding var allSides: Bool
     /// The cancel button, photo count and hints (over the top edge of the camera), or the panel below it.
@@ -194,6 +199,7 @@ private struct Controls: View {
                 .foregroundStyle(.white)
                 .contentTransition(.opacity)
                 .fixedSize(horizontal: false, vertical: true)
+            if stepIndex < 2 { beforeStart }
             buttons
         }
         .padding(18)
@@ -211,6 +217,22 @@ private struct Controls: View {
         .sensoryFeedback(.impact(weight: .medium), trigger: stepIndex)
     }
 
+    /// Until capture starts: what went wrong last time (after a refusal), and the checks to make before Start.
+    private var beforeStart: some View {
+        VStack(spacing: 6) {
+            ForEach(retake, id: \.self) { a in
+                Label("Last time: \(a.title.lowercased())", systemImage: "arrow.uturn.backward.circle.fill")
+                    .font(.subheadline.weight(.semibold)).foregroundStyle(Color.fsAccent)
+            }
+            if let checks = subject.startChecks {
+                Text(checks).font(.footnote).foregroundStyle(.white.opacity(0.75))
+            }
+        }
+        .multilineTextAlignment(.center)
+        .fixedSize(horizontal: false, vertical: true)
+        .transition(.opacity)
+    }
+
     private var instruction: String {
         switch session.state {
         case .initializing: "Getting the camera ready…"
@@ -223,7 +245,7 @@ private struct Controls: View {
             }
         case .detecting:
             switch subject.scanKind {
-            case "sole_up", "sole_hanging": "Drag the box's edges so it holds this foot and a hand's width of the leg, not the other foot, then Start."
+            case "sole_up", "sole_hanging": "Drag the box's edges so it holds this foot, past the toe tips and the back of the heel, and a hand's width of the leg. Not the other foot. Then Start."
             case "impression": "Drag the box's edges so it holds the whole foam box, then Start."
             default: "A box appears round it. Drag the box's edges so it holds just the object, then Start."
             }

@@ -934,6 +934,8 @@ def test_a_sole_scan_without_its_toes_is_refused_and_not_kept(servers):
     r = json.loads(raw)
     assert r["incomplete"] and r["incomplete"][0].startswith("THE TOES ARE MISSING")
     assert r["error"].startswith("The studio didn't keep this scan") and "Scan again" in r["error"]
+    # and what to change next time, one entry per line found, for the phone to show before the retake
+    assert [a["code"] for a in r["retake"]] == ["toes_missing"] and r["retake"][0]["steps"]
     assert not (data / "captures" / cid).exists()
     assert cid not in [c["capture_id"] for c in body(call(f"{op}/api/captures"))]
 
