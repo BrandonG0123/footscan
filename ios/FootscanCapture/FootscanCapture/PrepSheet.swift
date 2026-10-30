@@ -178,7 +178,7 @@ struct RetakeSteps: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             if let heading { Text(heading).font(.headline).foregroundStyle(Color.fsInk) }
-            ForEach(advice, id: \.self) { a in
+            ForEach(Array(advice.enumerated()), id: \.offset) { _, a in
                 VStack(alignment: .leading, spacing: 8) {
                     Label(a.title, systemImage: "exclamationmark.triangle.fill")
                         .font(.subheadline.weight(.semibold)).foregroundStyle(Color.fsWarn)

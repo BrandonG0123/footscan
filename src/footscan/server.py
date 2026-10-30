@@ -166,7 +166,12 @@ class IncompleteScan(Exception):
         self.problems = problems
         from .recon import completeness
 
-        self.advice = [completeness.retake_advice(p) for p in problems]
+        # one entry per kind of problem: shorter than both feet's scans is two lines, but one set of steps
+        self.advice = []
+        for p in problems:
+            a = completeness.retake_advice(p)
+            if a["code"] == "other" or a["code"] not in {b["code"] for b in self.advice}:
+                self.advice.append(a)
 
 
 def now_iso() -> str:

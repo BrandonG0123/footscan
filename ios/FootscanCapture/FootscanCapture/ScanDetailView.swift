@@ -193,7 +193,7 @@ struct ScanDetailView: View {
                             .font(.footnote).foregroundStyle(Color.fsMuted)
                     }
                     // the studio's own words, with its measurements, for anyone who wants them
-                    if rec.retakeAdvice != nil {
+                    if !missing.isEmpty {
                         DisclosureGroup("What the studio found") {
                             VStack(alignment: .leading, spacing: 6) {
                                 ForEach(missing, id: \.self) { Text($0).font(.footnote).foregroundStyle(Color.fsMuted) }

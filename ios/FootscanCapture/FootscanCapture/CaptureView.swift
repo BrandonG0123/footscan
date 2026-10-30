@@ -220,7 +220,7 @@ private struct Controls: View {
     /// Until capture starts: what went wrong last time (after a refusal), and the checks to make before Start.
     private var beforeStart: some View {
         VStack(spacing: 6) {
-            ForEach(retake, id: \.self) { a in
+            ForEach(Array(retake.enumerated()), id: \.offset) { _, a in
                 Label("Last time: \(a.title.lowercased())", systemImage: "arrow.uturn.backward.circle.fill")
                     .font(.subheadline.weight(.semibold)).foregroundStyle(Color.fsAccent)
             }
