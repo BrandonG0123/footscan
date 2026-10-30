@@ -213,7 +213,8 @@ Those lengths predate laying hung-up toes flat (29 Oct): 89df's toe tip was
 17.8 mm up, so it may read longer now; not yet rerun. Saved measures from
 before are measured again before a length comparison, and a sole scan's
 insole made before then shows as out of date until it's made again
-(`foot_prep.prep_version()`).
+(`foot_prep.prep_version(kind)`, one per scan kind: changed again on 30 Oct
+for both sole kinds, and legs-flat scans also for how one leg is read).
 
 A standing foot and a foam print aren't checked. Make insole on a
 scan kept before this check still lists the same problems as warnings. To see

@@ -457,12 +457,15 @@ def prep_version(kind: str | None = None) -> str:
     """How a sole scan of this ``kind`` is prepared, in a few words: saved with what's measured or made from it
     (the completeness measures, an insole), so what was made another way can be told apart and made again.
     Change it whenever a change to the preparation changes a sole scan's shape or size, for the kinds it
-    changes (so the others aren't made again for nothing)."""
-    v = "2026-10-29: toes laid flat" if LAY_TOES_FLAT else "2026-10-29: toes as scanned"
+    changes (so the others aren't made again for nothing), and always to a string never used before: an old
+    one would make what that earlier preparation made look current again."""
+    # 2026-10-30: steeply raised toes judged by their reach along the underside (fc4982c, which kept the 29 Oct
+    # string for sole scans of both kinds)
+    v = "2026-10-30: toes laid flat, steep ones judged" if LAY_TOES_FLAT else "2026-10-30: toes as scanned"
     if kind == "sole_hanging":
         # 2026-10-30: the leg's direction read from one piece; the gap between shins found by where triangles
         # reach, not their centres
-        v += "; 2026-10-30: one leg read alone"
+        v += "; one leg read alone"
     return v
 
 TOES_PROFILE_STEP_MM = 2.0   # the underside's lowest point is read in steps this long, heel to toe
@@ -860,8 +863,7 @@ def prepare_sole_hanging(mesh, up: str = "y", trim_mm: float | None = LEG_TRIM_M
     if not pieces:
         raise FootPrepError("almost nothing left once the bed is taken away: is the foot in the scan?")
     keep = pieces[0][0]
-    apart = len(pieces) > 1 and pieces[1][1] >= TWO_LEGS_SHARE * pieces[0][1]  # both legs, a piece each: not touching
-    if apart:
+    if len(pieces) > 1 and pieces[1][1] >= TWO_LEGS_SHARE * pieces[0][1]:
         keep = keep | pieces[1][0]
     biggest = pieces[0][0][keep]  # the biggest piece's faces, among those kept
     m.update_faces(keep)
@@ -900,8 +902,6 @@ def prepare_sole_hanging(mesh, up: str = "y", trim_mm: float | None = LEG_TRIM_M
     m.update_faces(m.triangles_center[:, 2] < SOLE_UP_KEEP_MM)
     m.remove_unreferenced_vertices()
     m = _one_foot(m, foot, info)
-    if "two_feet" in info:
-        info["two_feet"]["touching"] = not apart  # joined into one piece: the cut went through surface
     return _finish_unloaded(m, info, track, trim_mm)
 
 
@@ -966,7 +966,11 @@ def _one_foot(m, foot: str | None, info):
             if (edges[j] - edges[i] >= SHINS_GAP_MM and cum[i - 1] >= SHIN_MIN_SHARE
                     and 1.0 - cum[i - 1] >= SHIN_MIN_SHARE):
                 split = float((edges[i] + edges[j]) / 2)
-                info["two_feet"] = dict(found_mm_up=round(float(z0), 0), split_at_y_mm=round(split, 1))
+                # touching: some triangle crosses the line they're cut along (lower down, where the feet are),
+                # so the cut goes through surface and that side of each foot was never scanned
+                touching = bool(((y_lo < split) & (y_hi > split)).any())
+                info["two_feet"] = dict(found_mm_up=round(float(z0), 0), split_at_y_mm=round(split, 1),
+                                        touching=touching)
                 if foot not in ("left", "right"):
                     info["two_feet_warning"] = ("BOTH FEET ARE IN THE SCAN and it isn't said which one this is: "
                                                 "scan one foot at a time")

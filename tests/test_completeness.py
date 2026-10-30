@@ -109,3 +109,13 @@ def test_a_torn_scan_of_two_feet_that_were_apart_gets_the_usual_retake_advice():
     found = completeness.from_prep(dict(open_edges_near_floor_mm=153.0, two_feet=dict(touching=False),
                                         two_feet_note="both feet were in the scan: the right one was kept"))
     assert len(found) == 1 and "covering the whole foot" in found[0] and "other foot" not in found[0]
+
+
+@pytest.mark.parametrize("kind", ["sole_up", "sole_hanging"])
+def test_the_preparation_version_is_one_not_used_before(kind):
+    """Earlier preparations stamped these; reusing one would make what they made look current. (The 29 Oct
+    string was kept through fc4982c's change to steep toes, so it names two different preparations.)"""
+    used = {"2026-10-29: toes laid flat", "2026-10-29: toes as scanned",
+            "2026-10-30: toes laid flat", "2026-10-30: toes as scanned"}
+    assert foot_prep.prep_version(kind) not in used
+    assert foot_prep.prep_version("sole_up") != foot_prep.prep_version("sole_hanging")

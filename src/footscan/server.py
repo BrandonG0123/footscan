@@ -980,6 +980,9 @@ def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check
                     # The new model is read and checked in a folder of its own, and moved in only once it's
                     # kept: a bad or refused replacement never touches the model that was there, or what was
                     # made from it, whatever goes wrong on the way.
+                    for old in d.glob(".upload-*"):  # left by a request that died midway (none runs now)
+                        shutil.rmtree(old, ignore_errors=True)
+                    shutil.rmtree(d / ".before-upload", ignore_errors=True)  # the same, from an earlier version
                     staged = d / f".upload-{secrets.token_hex(4)}"
                     staged.mkdir()
                     try:
@@ -1000,13 +1003,17 @@ def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check
                             if not [f for f in d.iterdir() if f.name != "capture.json" and f != staged]:
                                 shutil.rmtree(d, ignore_errors=True)
                             raise IncompleteScan(check["problems"])
-                        for f in d.iterdir():  # kept: the new model takes the old one's place
-                            if f.is_file() and is_model_file(f.name) and not (staged / f.name).exists():
-                                f.unlink()  # e.g. original.obj, replaced by an original.usdz
-                        for f in staged.iterdir():
+                        new = {f.name for f in staged.iterdir()}
+                        for f in staged.iterdir():  # kept: the new model takes the old one's place
                             f.replace(d / f.name)
+                        for f in d.iterdir():
+                            if f.is_file() and is_model_file(f.name) and f.name not in new:
+                                f.unlink()  # e.g. original.obj, replaced by an original.usdz
                     finally:
                         shutil.rmtree(staged, ignore_errors=True)
+                    # re-read: calipers or frames may have been saved meanwhile (they don't take the lock)
+                    meta = read_json(d / "capture.json")
+                    meta.update(status="complete", mesh=stats, frame_files=[])
                     if check:
                         meta["completeness"] = check
                     # an insole made from the old model no longer matches: remove it
@@ -1120,7 +1127,7 @@ def _shoe_changed(folder: Path, ins: dict) -> bool:
 
 
 def _prepared_another_way(meta: dict, ins: dict) -> bool:
-    """Was this sole scan's insole made by a preparation that has changed since (foot_prep.prep_version())?
+    """Was this sole scan's insole made by a preparation that has changed since (foot_prep.prep_version(kind))?
     Made before 29 Oct 2026, its toes, if they hung up, weren't laid flat, and its outline can be short."""
     from .recon import completeness, foot_prep
 
@@ -1290,7 +1297,7 @@ def other_scans(captures_dir: Path, meta: dict) -> list[dict]:
     """The newest kept sole scan of each foot, other than this capture, for completeness.against_others.
 
     Scans kept from before this check have no measures yet, and ones prepared another way (their
-    ``measured_as`` isn't foot_prep.prep_version()) have stale ones: they're measured now and the measures
+    ``measured_as`` isn't foot_prep.prep_version(kind)) have stale ones: they're measured now and the measures
     saved with them. One the check finds incomplete itself is passed over for the next newest (compared
     with a scan that's short itself, a short scan would pass)."""
     from .recon import completeness, foot_prep
@@ -1307,9 +1314,10 @@ def other_scans(captures_dir: Path, meta: dict) -> list[dict]:
         if c and "error" in c and c.get("measured_as") == version:
             continue  # couldn't be measured this way before: not tried again on every upload
         if not c or "measures" not in c or c["measures"].get("measured_as") != version:
+            model = source_stamp(folder / "mesh.ply")
             try:
                 measures, info = scan_measures(folder, m)
-            except (OSError, MemoryError):
+            except (FileNotFoundError, MemoryError):
                 continue  # may pass (a file being replaced, a busy machine): tried again next time
             except Exception as e:  # noqa: BLE001 - a scan that can't be measured just isn't compared with
                 c = dict(error=f"couldn't be measured ({type(e).__name__}: {e})", measured_as=version,
@@ -1319,12 +1327,14 @@ def other_scans(captures_dir: Path, meta: dict) -> list[dict]:
                          checked=now_iso())
             # saved under that capture's own lock, re-read inside it, so an insole build or a model upload
             # there doesn't lose its write or this one; if it's busy, it's measured again next time
+            # (and only if its model is still the one just measured: a new one may have come in meanwhile)
             lock = capture_lock(m["capture_id"])
             if lock.acquire(blocking=False):
                 try:
-                    full = read_json(folder / "capture.json")
-                    full["completeness"] = c
-                    write_json(folder / "capture.json", full)
+                    if source_stamp(folder / "mesh.ply") == model:
+                        full = read_json(folder / "capture.json")
+                        full["completeness"] = c
+                        write_json(folder / "capture.json", full)
                 finally:
                     lock.release()
         if "error" in c or c.get("problems"):
