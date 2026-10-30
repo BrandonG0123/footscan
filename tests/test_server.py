@@ -1000,16 +1000,45 @@ def test_a_refused_model_sent_to_a_capture_that_had_one_leaves_the_earlier_model
                 {"Content-Type": "application/octet-stream"})[0] == 200
     assert call(f"{op}/api/captures/{cid}/insole", "POST", {})[0] == 200
     folder = data / "captures" / cid
-    mesh_before, original_before = (folder / "mesh.ply").read_bytes(), (folder / "original.obj").read_bytes()
+    model = ("mesh.ply", "original.obj", "viewer.bin")  # viewer.bin: what the landmark viewer draws
+    before = {f: (folder / f).read_bytes() for f in model}
     meta_before = json.loads((folder / "capture.json").read_text())
     st, raw, _ = call(f"{op}/api/captures/{cid}/mesh?ext=obj&up=y", "PUT", _sole_up_obj("right", x_to=200.0),
                       {"Content-Type": "application/octet-stream"})
     assert st == 422 and json.loads(raw)["incomplete"], raw
-    assert (folder / "mesh.ply").read_bytes() == mesh_before
-    assert (folder / "original.obj").read_bytes() == original_before
+    assert {f: (folder / f).read_bytes() for f in model} == before
     assert not (folder / ".before-upload").exists()
     assert json.loads((folder / "capture.json").read_text()) == meta_before
     assert (folder / "insole").is_dir() and meta_before.get("insole")
+
+
+def test_two_refused_replacements_at_once_still_leave_the_earlier_model(servers, monkeypatch):
+    """Two models sent to the same capture at the same moment, both refused: they take turns, so neither sets
+    aside the other's copy of the earlier model, and the earlier model is there afterwards."""
+    import time
+    from concurrent.futures import ThreadPoolExecutor
+
+    from footscan import server
+
+    op, _, data = servers
+    cid = _new_sole_capture(op, "right")
+    assert call(f"{op}/api/captures/{cid}/mesh?ext=obj&up=y", "PUT", _sole_up_obj("right"),
+                {"Content-Type": "application/octet-stream"})[0] == 200
+    folder = data / "captures" / cid
+    mesh_before = (folder / "mesh.ply").read_bytes()
+    check = server.check_completeness
+
+    def slow_check(*a, **k):  # hold each upload between setting the old model aside and putting it back
+        time.sleep(1.0)
+        return check(*a, **k)
+
+    monkeypatch.setattr(server, "check_completeness", slow_check)
+    cut = _sole_up_obj("right", x_to=200.0)
+    with ThreadPoolExecutor(2) as pool:
+        results = list(pool.map(lambda _: call(f"{op}/api/captures/{cid}/mesh?ext=obj&up=y", "PUT", cut,
+                                               {"Content-Type": "application/octet-stream"}), range(2)))
+    assert [r[0] for r in results] == [422, 422], results
+    assert (folder / "mesh.ply").read_bytes() == mesh_before
 
 
 def test_a_kept_scan_that_cant_be_measured_is_tried_once_not_on_every_upload(servers, monkeypatch):

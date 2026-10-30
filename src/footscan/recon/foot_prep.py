@@ -457,7 +457,9 @@ def prep_version() -> str:
     """How a sole scan is prepared, in a few words: saved with what's measured or made from it (the
     completeness measures, an insole), so what was made another way can be told apart and made again.
     Change it whenever a change to the preparation changes a sole scan's shape or size."""
-    return "2026-10-29: toes laid flat" if LAY_TOES_FLAT else "2026-10-29: toes as scanned"
+    # 2026-10-30: legs-flat scans read the leg's direction from one piece and look for the gap between shins
+    # by where triangles reach, not their centres
+    return "2026-10-30: toes laid flat" if LAY_TOES_FLAT else "2026-10-30: toes as scanned"
 
 TOES_PROFILE_STEP_MM = 2.0   # the underside's lowest point is read in steps this long, heel to toe
 TOES_BELOW_MM = 60.0         # ...from everything below this (the foot, not the shin)

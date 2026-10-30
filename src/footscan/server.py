@@ -965,56 +965,59 @@ def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check
                 if up not in UP_AXES:
                     raise BadRequest(f"up must be one of {sorted(UP_AXES)}")
                 body = self.read_body(MAX_MESH_BYTES)
-                # A model already here (this upload replaces it) is set aside, and put back if the new one
-                # can't be read or is refused: a bad replacement never costs the scan that was there.
-                before = d / ".before-upload"
-                shutil.rmtree(before, ignore_errors=True)
-                earlier = [f for f in d.iterdir() if f.is_file() and (f.name == "mesh.ply" or f.name.startswith("original."))]
-                if earlier:
-                    before.mkdir()
-                    for f in earlier:
-                        f.rename(before / f.name)
-
-                def put_back():
-                    for f in d.iterdir():
-                        if f.is_file() and (f.name == "mesh.ply" or f.name.startswith("original.")):
-                            f.unlink()
-                    for f in earlier:
-                        (before / f.name).rename(d / f.name)
+                # one model change (or insole build) per capture at a time: two uploads to the same
+                # capture would set each other's earlier model aside
+                with insole_locks.setdefault(d.name, threading.Lock()):
+                    # A model already here (this upload replaces it) is set aside, and put back if the new one
+                    # can't be read or is refused: a bad replacement never costs the scan that was there.
+                    before = d / ".before-upload"
                     shutil.rmtree(before, ignore_errors=True)
-
-                raw = d / f"original.{ext}"
-                raw.write_bytes(body)
-                try:
-                    stats = import_mesh(raw, d / "mesh.ply")
-                except Exception as e:  # noqa: BLE001 - any parse failure is the file's fault
-                    put_back()
-                    raise BadRequest(f"couldn't read that 3D file: {e}") from None
-                stats["up"] = up
-                meta = read_json(d / "capture.json")
-                meta.update(status="complete", mesh=stats, frame_files=[])
-                # A sole scan missing its toes or heel is refused here, whoever sends it (the phone, Import 3D):
-                # the answer says what to scan again. A new capture is removed; one that already had a model
-                # keeps that model and everything made from it.
-                check = check_completeness(captures_dir, d, meta)
-                if check and check.get("problems"):
+                    earlier = [f for f in d.iterdir() if f.is_file() and is_model_file(f.name)]
                     if earlier:
+                        before.mkdir()
+                        for f in earlier:
+                            f.rename(before / f.name)
+
+                    def put_back():
+                        for f in d.iterdir():
+                            if f.is_file() and is_model_file(f.name):
+                                f.unlink()
+                        for f in earlier:
+                            (before / f.name).rename(d / f.name)
+                        shutil.rmtree(before, ignore_errors=True)
+
+                    raw = d / f"original.{ext}"
+                    raw.write_bytes(body)
+                    try:
+                        stats = import_mesh(raw, d / "mesh.ply")
+                    except Exception as e:  # noqa: BLE001 - any parse failure is the file's fault
                         put_back()
-                    else:
-                        shutil.rmtree(d, ignore_errors=True)
-                    raise IncompleteScan(check["problems"])
-                shutil.rmtree(before, ignore_errors=True)
-                if check:
-                    meta["completeness"] = check
-                # an insole made from the old model no longer matches: remove it
-                meta.pop("insole", None)
-                shutil.rmtree(d / "insole", ignore_errors=True)
-                # The calibration object made by another app (e.g. the iPhone
-                # test app): score it now, against the object's true shape.
-                if meta.get("condition") == "calibration":
-                    meta["accuracy"] = score_imported(d, up)
-                write_json(d / "capture.json", meta)
-                return self.send_json({"ok": True, "mesh": stats, "accuracy": meta.get("accuracy")})
+                        raise BadRequest(f"couldn't read that 3D file: {e}") from None
+                    stats["up"] = up
+                    meta = read_json(d / "capture.json")
+                    meta.update(status="complete", mesh=stats, frame_files=[])
+                    # A sole scan missing its toes or heel is refused here, whoever sends it (the phone, Import 3D):
+                    # the answer says what to scan again. A new capture is removed; one that already had a model
+                    # keeps that model and everything made from it.
+                    check = check_completeness(captures_dir, d, meta)
+                    if check and check.get("problems"):
+                        if earlier:
+                            put_back()
+                        else:
+                            shutil.rmtree(d, ignore_errors=True)
+                        raise IncompleteScan(check["problems"])
+                    shutil.rmtree(before, ignore_errors=True)
+                    if check:
+                        meta["completeness"] = check
+                    # an insole made from the old model no longer matches: remove it
+                    meta.pop("insole", None)
+                    shutil.rmtree(d / "insole", ignore_errors=True)
+                    # The calibration object made by another app (e.g. the iPhone
+                    # test app): score it now, against the object's true shape.
+                    if meta.get("condition") == "calibration":
+                        meta["accuracy"] = score_imported(d, up)
+                    write_json(d / "capture.json", meta)
+                    return self.send_json({"ok": True, "mesh": stats, "accuracy": meta.get("accuracy")})
             if p[1:] == ["accuracy"] and method == "GET":
                 f = d / "accuracy.json"
                 if not f.is_file():
@@ -1053,6 +1056,11 @@ def query_param(path: str, name: str) -> str | None:
     from urllib.parse import parse_qs, urlsplit
 
     return (parse_qs(urlsplit(path).query).get(name) or [None])[0]
+
+
+def is_model_file(name: str) -> bool:
+    """A file an imported model's upload writes (import_mesh): the file as sent, its PLY, the viewer's copy."""
+    return name in ("mesh.ply", "viewer.bin") or name.startswith("original.")
 
 
 def import_mesh(src: Path, dst: Path) -> dict:
