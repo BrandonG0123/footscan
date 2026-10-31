@@ -199,6 +199,31 @@ mm cut off and the rest bent up 20 or 35 degrees, laying flat never hid the
 cut (test_completeness.py); the tips of 2190's toes still curl up 14 mm,
 which the one joint doesn't straighten.
 
+Toes that curl as well (30 Oct): the benchmark also bends the tips a second
+time, at 220 mm from the heel. Laying flat at up to three joints instead of
+one (SYNTHETIC, outline length vs true, right / left; the sole's heights and
+the floor unchanged):
+
+| case | one joint | up to three |
+|---|---|---|
+| sole up, toes up 20, tips 30 more | -7.9 / -8.0 | -5.3 / -5.3 |
+| sole up, toes up 30, tips 40 more | -13.2 / -13.2 | -7.7 / -7.8 |
+| legs flat, toes up 20, tips 30 more | -7.9 / -7.9 | -5.3 / -5.3 |
+
+Toes bent once read exactly as before. Not on a real scan yet.
+
+Still short, with no warning (SYNTHETIC, curved_foot, right, sole up,
+outline vs 250 mm): a curl that starts within about 25 mm of the tip
+(60 degrees from 225 mm: 14.9 mm short; from 230 mm: 12.0; 50 degrees from
+235 mm after 20 at 185: 10.4), too short past its bend to be told from a
+toe's rounded end, and a curl much steeper than the toes' first bend (20 at
+185 then 70 more at 215: 19.4 short; 15 at 180, 15 at 200, 70 at 222:
+23.4). Neither the tip's height nor how far the foot reaches above the
+outline's 30 mm tells these apart from toes laid flat: the curled tips stay
+below 30 mm and their lowest point is near the floor. What catches them is
+the length against the other foot's scan (12 mm, on arrival) and a ruler
+length.
+
 ## The part not measured yet: the capture
 
 The processing is not the weak link; the capture may be. The closest

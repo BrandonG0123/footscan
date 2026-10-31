@@ -461,7 +461,8 @@ def prep_version(kind: str | None = None) -> str:
     one would make what that earlier preparation made look current again."""
     # 2026-10-30: steeply raised toes judged by their reach along the underside (fc4982c, which kept the 29 Oct
     # string for sole scans of both kinds)
-    v = "2026-10-30: toes laid flat, steep ones judged" if LAY_TOES_FLAT else "2026-10-30: toes as scanned"
+    # 2026-10-30 (later): toes that curl as well as bend laid flat at up to three joints (TOES_JOINTS)
+    v = "2026-10-30: toes laid flat at up to three joints" if LAY_TOES_FLAT else "2026-10-30: toes as scanned"
     if kind == "sole_hanging":
         # 2026-10-30: the leg's direction read from one piece; the gap between shins found by where triangles
         # reach, not their centres
@@ -490,6 +491,9 @@ TOES_MAX_RAISE_DEG = 60.0    # past this it isn't toes hanging up, it's somethin
 # +0.4 to +3.5.) At 35 degrees and more, as the tips rise past the outline's height, as scanned reads 14.6-38.2
 # mm short; laid flat, -6.4 to +6.6 mm, depending on where the toes really bend.
 TOES_JOINT_UP_MM = 10.0
+# Toes bend at up to three joints (the ball's, then the toes' own two), and a relaxed toe can curl at each: the
+# step is repeated from where the last one left the toes on the floor, up to this many times.
+TOES_JOINTS = 3
 
 
 def _lay_toes_flat(placed, info):
@@ -520,30 +524,75 @@ def _lay_toes_flat(placed, info):
        closes up instead of folding under. Nothing behind the centre moves.
     5. Under ``TOES_MIN_RAISE_DEG`` nothing is changed; over
        ``TOES_MAX_RAISE_DEG`` it isn't toes hanging up (a warning says so).
+    6. Toes that curl as well as bend (their tips still rise after that):
+       the same again, from the frontmost point now back on the floor, up to
+       ``TOES_JOINTS`` joints in all. Toes already flat, or laid flat by the
+       first joint, stop there: the next one finds nothing raised.
 
     Not a rigid move: the toes move relative to the rest of the foot, so the
     recorded ``to_mat`` is exact everywhere but ahead of the joint. Returns the
     mesh (unchanged if the toes already lie flat) and records what was done
-    in ``info["toes_laid_flat"]``.
+    in ``info["toes_laid_flat"]`` (the first joint's angle and place, and each
+    joint's in ``joints``).
     """
-    V = np.asarray(placed.vertices)
-    low = V[V[:, 2] < TOES_BELOW_MM]
+    W = np.array(placed.vertices, dtype=float)
+    low = W[W[:, 2] < TOES_BELOW_MM]
     if len(low) < 100:
         return placed
-    y0, y1 = float(low[:, 1].min()), float(low[:, 1].max())
+    y0 = float(low[:, 1].min())
+    L = float(np.ptp(low[:, 1]))
+    joints, after = [], None
+    while len(joints) < TOES_JOINTS:
+        step = _lay_one_joint(W, y0, after, len(joints), info)
+        if step is None:
+            break
+        W, joint = step
+        joints.append(joint)
+        after = (joint["pivot_y"], joint["floor_z"])
+    if not joints:
+        return placed
+    out = placed.copy()
+    out.vertices = W
+    first = joints[0]
+    info["toes_laid_flat"] = dict(raised_deg=first["raised_deg"], pivot_from_heel_mm=first["pivot_from_heel_mm"],
+                                  joint_from_heel_mm=first["joint_from_heel_mm"],
+                                  length_before_mm=round(L, 1),
+                                  length_after_mm=round(float(np.ptp(W[W[:, 2] < TOES_BELOW_MM, 1])), 1),
+                                  joints=[{k: j[k] for k in ("raised_deg", "pivot_from_heel_mm", "joint_from_heel_mm")}
+                                          for j in joints])
+    return out
+
+
+def _lay_one_joint(W, y0, after, n, info):
+    """One joint of ``_lay_toes_flat``, on the vertices ``W``: steps 1-5 of its list, from the ball of the foot
+    (``after`` None) or, for a further joint (``n`` joints already laid), walking on from where the last one's
+    pivot is back on the floor (``after`` = that pivot's (y, floor height)). Returns (the vertices with the toes
+    ahead of this joint laid flat, what was done), or None if nothing ahead needs it."""
+    low = W[W[:, 2] < TOES_BELOW_MM]
+    y1 = float(low[:, 1].max())
     L = y1 - y0
     steps = np.floor((low[:, 1] - y0) / TOES_PROFILE_STEP_MM).astype(int)
     z = np.full(steps.max() + 1, np.inf)
     np.minimum.at(z, steps, low[:, 2])
     ys = y0 + (np.arange(len(z)) + 0.5) * TOES_PROFILE_STEP_MM
     have = np.isfinite(z)
-    ball_zone = have & (ys > y0 + 0.55 * L) & (ys < y0 + 0.8 * L)
-    if not ball_zone.any():
-        return placed
-    i = int(np.nonzero(ball_zone)[0][np.argmin(z[ball_zone])])
-    zb = float(z[i])
-    if zb > TOES_BALL_ON_FLOOR_MM:
-        return placed  # the ball of the foot isn't on the floor: nothing to lay the toes against
+    if after is None:
+        ball_zone = have & (ys > y0 + 0.55 * L) & (ys < y0 + 0.8 * L)
+        if not ball_zone.any():
+            return None
+        i = int(np.nonzero(ball_zone)[0][np.argmin(z[ball_zone])])
+        zb = float(z[i])
+        if zb > TOES_BALL_ON_FLOOR_MM:
+            return None  # the ball of the foot isn't on the floor: nothing to lay the toes against
+        where = "the ball of the foot"
+    else:
+        zb = after[1]
+        # the first point past the last pivot that's on the floor: the toes the last joint laid there
+        on_floor = np.nonzero(have & (ys > after[0]) & (z <= zb + TOES_ON_FLOOR_MM))[0]
+        if not len(on_floor):
+            return None
+        i = int(on_floor[0])
+        where = ("the toes' first bend", "the toes' second bend")[min(n, 2) - 1]
     while i + 1 < len(z) and (not have[i + 1] or z[i + 1] <= zb + TOES_ON_FLOOR_MM):
         i += 1
     yp = float(ys[i])
@@ -552,24 +601,25 @@ def _lay_toes_flat(placed, info):
     # the too-steep warning
     past = have & (ys > yp)
     if not past.any() or float(np.max(np.hypot(ys[past] - yp, z[past] - zb))) < TOES_MIN_LENGTH_MM:
-        return placed
+        return None
     ahead = have & (ys > yp + TOES_ANGLE_FROM_MM)
     if not ahead.any():
-        return placed
+        return None
     theta = float(np.min(np.arctan2(z[ahead] - zb, ys[ahead] - yp)))
     raise_deg = float(np.degrees(theta))
     if raise_deg < TOES_MIN_RAISE_DEG:
-        return placed
+        return None
     if raise_deg > TOES_MAX_RAISE_DEG:
-        info["toes_warning"] = (f"THE FRONT OF THE FOOT RISES {raise_deg:.0f} DEGREES past the ball of the foot, too steep "
-                                "for toes hanging up, so it was left as scanned and the insole may be short. Check the toes "
+        left = "it was left as scanned" if after is None else "the toes past it were left as they are"
+        info["toes_warning"] = (f"THE FRONT OF THE FOOT RISES {raise_deg:.0f} DEGREES past {where}, too steep "
+                                f"for toes hanging up, so {left} and the insole may be short. Check the toes "
                                 "in the 3D model; scan again with them relaxed.")
-        return placed
+        return None
     # the joint: a circle of radius r touching the floor (z = zb) and the line from the pivot at theta, its
     # centre on the angle between them, r up and r * tan(theta / 2) behind the pivot
     r = TOES_JOINT_UP_MM
     cy, cz = yp - r * np.tan(theta / 2), zb + r
-    W = np.array(placed.vertices, dtype=float)
+    W = W.copy()
     dy, dz = W[:, 1] - cy, W[:, 2] - cz
     fore = dy > 0
     # each point's direction from the centre, from straight down (0) turning forward and up: the floor's
@@ -585,13 +635,8 @@ def _lay_toes_flat(placed, info):
     rad = np.hypot(dy[fore], dz[fore])
     W[fore, 1] = cy + rad * np.sin(phi - turn)
     W[fore, 2] = np.maximum(cz - rad * np.cos(phi - turn), np.minimum(W[fore, 2], zb))
-    out = placed.copy()
-    out.vertices = W
-    low2 = W[W[:, 2] < TOES_BELOW_MM, 1]
-    info["toes_laid_flat"] = dict(raised_deg=round(raise_deg, 1), pivot_from_heel_mm=round(yp - y0, 1),
-                                  joint_from_heel_mm=round(float(cy - y0), 1),
-                                  length_before_mm=round(L, 1), length_after_mm=round(float(np.ptp(low2)), 1))
-    return out
+    return W, dict(raised_deg=round(raise_deg, 1), pivot_from_heel_mm=round(yp - y0, 1),
+                   joint_from_heel_mm=round(float(cy - y0), 1), pivot_y=yp, floor_z=zb)
 
 
 def _orient_and_trim(placed, info, trim_mm, heel_by: str = "leg", track: list | None = None,

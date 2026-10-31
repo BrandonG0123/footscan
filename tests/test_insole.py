@@ -377,6 +377,22 @@ def test_toes_raised_steeply_from_further_forward_are_still_judged_not_skipped_a
     assert completeness.measure(placed)["length_mm"] > 240.0  # 235.1 when skipped
 
 
+def test_toes_that_curl_as_well_as_bend_are_laid_flat_at_a_second_joint():
+    """Toes bent up 20 degrees at 185 mm and their tips 30 more at 220 mm (as the real legs-flat scan 2190's toe
+    tips still rose 14 mm after one joint, 29 Oct): with one joint the tips stayed 10.7 mm up and the outline
+    read 7.9 mm short (SYNTHETIC); a second joint, from where the first left the toes on the floor, lays them."""
+    from footscan.recon import completeness, foot_prep
+
+    mesh = synth.bend_toes(synth.bend_toes(synth.curved_foot("right"), 30.0, x_from=220.0), 20.0, x_from=185.0)
+    placed, info = foot_prep.prepare_sole_up(synth.sole_up_capture(mesh), foot="right")
+    joints = info["toes_laid_flat"]["joints"]
+    assert len(joints) == 2 and joints[1]["pivot_from_heel_mm"] > joints[0]["pivot_from_heel_mm"] + 20.0
+    m = completeness.measure(placed)
+    assert m["toe_tip_above_floor_mm"] < 4.0
+    assert m["length_mm"] > 250.0 - 6.5
+    assert placed.vertices[:, 2].min() > -0.3
+
+
 def test_toes_already_flat_are_left_exactly_as_scanned(monkeypatch):
     """A sole scan whose toes lie along the sole: nothing is laid flat, and the prepared foot is the same,
     point for point, as with laying toes flat turned off."""

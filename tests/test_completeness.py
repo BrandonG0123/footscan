@@ -116,6 +116,7 @@ def test_the_preparation_version_is_one_not_used_before(kind):
     """Earlier preparations stamped these; reusing one would make what they made look current. (The 29 Oct
     string was kept through fc4982c's change to steep toes, so it names two different preparations.)"""
     used = {"2026-10-29: toes laid flat", "2026-10-29: toes as scanned",
-            "2026-10-30: toes laid flat", "2026-10-30: toes as scanned"}
+            "2026-10-30: toes laid flat", "2026-10-30: toes as scanned",
+            "2026-10-30: toes laid flat, steep ones judged", "2026-10-30: toes laid flat, steep ones judged; one leg read alone"}
     assert foot_prep.prep_version(kind) not in used
     assert foot_prep.prep_version("sole_up") != foot_prep.prep_version("sole_hanging")
