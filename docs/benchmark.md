@@ -224,16 +224,6 @@ below 30 mm and their lowest point is near the floor. What catches them is
 the length against the other foot's scan (12 mm, on arrival) and a ruler
 length.
 
-The floor on a different test shape: `synth.shaped_foot` (a flat-bottomed
-block with a box-shaped arch tunnel, not used by the benchmark) with its
-toes bent up 30-45 degrees has the right foot's floor tipped 4-6 degrees,
-the heel 9-11 mm below it; the left foot is right. The realistic
-`curved_foot` stays within 0.2 degrees up to 50 degrees (1.5 at 55, left).
-Before the 29 Oct change that runs the floor's length on to the toe tips,
-the block read about 2 mm low at 30-35 degrees. Not changed: the block's
-square edges and tunnel are unlike a sole; noted in case a real scan shows
-it.
-
 ## The part not measured yet: the capture
 
 The processing is not the weak link; the capture may be. The closest
