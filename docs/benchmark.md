@@ -262,15 +262,16 @@ on arrival (`TOES_STILL_UP_MM`). Laid flat, the SYNTHETIC tips above sat
 
 Still short, with no warning (SYNTHETIC, curved_foot, right, sole up,
 outline vs 250 mm): a curl that starts within about 25 mm of the tip
-(60 degrees from 225 mm: 14.9 mm short; from 230 mm: 12.0; 50 degrees from
-235 mm after 20 at 185: 10.4), too short past its bend to be told from a
-toe's rounded end, and a curl much steeper than the toes' first bend (20 at
-185 then 70 more at 215: 19.4 short; 15 at 180, 15 at 200, 70 at 222:
-23.4). Neither the tip's height nor how far the foot reaches above the
-outline's 30 mm tells these apart from toes laid flat: the curled tips stay
-below 30 mm and their lowest point is near the floor. What catches them is
-the length against the other foot's scan (12 mm, on arrival) and a ruler
-length.
+(60 degrees from 230 mm: 12.0 mm short; 50 degrees from 235 mm after 20
+at 185: 10.4), too short past its bend to be told from a toe's rounded
+end, and a curl much steeper than the toes' first bend (20 at 185 then 70
+more at 215: 19.4 short; 15 at 180, 15 at 200, 70 at 222: 23.4). Their
+tips sit 1.0-6.1 mm up (1 Nov), under `TOES_STILL_UP_MM`'s 8 mm and
+inside what toes laid flat show (up to 4.5), and how far the foot reaches
+above the outline's 30 mm doesn't tell them apart either. 60 degrees from
+225 mm (14.9 short) leaves its tip 9.2 mm up and now gets the still-off-
+the-floor warning. What catches the rest is the length against the other
+foot's scan (12 mm, on arrival) and a ruler length.
 
 ## The part not measured yet: the capture
 
