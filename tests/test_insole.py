@@ -393,6 +393,31 @@ def test_toes_that_curl_as_well_as_bend_are_laid_flat_at_a_second_joint():
     assert placed.vertices[:, 2].min() > -0.3
 
 
+def test_toes_that_curl_at_three_places_are_laid_flat_at_all_three():
+    """Toes bent up 20 degrees at 180 mm, 20 more at 205 and 20 more at 225 (found by a Codex review, 1 Nov): with
+    two joints their tips stayed about 6 mm up (SYNTHETIC); the third lays them."""
+    from footscan.recon import completeness, foot_prep
+
+    mesh = synth.refined(synth.curved_foot("right"))
+    for at in (225.0, 205.0, 180.0):
+        mesh = synth.bend_toes(mesh, 20.0, x_from=at)
+    placed, info = foot_prep.prepare_sole_up(synth.sole_up_capture(mesh), foot="right")
+    assert len(info["toes_laid_flat"]["joints"]) == 3
+    assert completeness.measure(placed)["toe_tip_above_floor_mm"] < 4.0
+
+
+def test_the_leftover_of_one_bend_is_not_laid_flat_again_as_a_second_joint():
+    """Toes bent 60 degrees about a line 18 mm up at 200 mm read as a first joint of 36 degrees, and the rest of the
+    same bend as a second joint 6 mm on; laying both flat read the outline 261.9 mm of 250 (SYNTHETIC, found by a
+    Codex review, 1 Nov). A second joint that close is the first one's leftover and is left alone."""
+    from footscan.recon import completeness, foot_prep
+
+    mesh = synth.bend_toes(synth.refined(synth.curved_foot("right")), 60.0, x_from=200.0, z_at=18.0)
+    placed, info = foot_prep.prepare_sole_up(synth.sole_up_capture(mesh), foot="right")
+    assert len(info["toes_laid_flat"]["joints"]) == 1
+    assert completeness.measure(placed)["length_mm"] < 257.0
+
+
 def test_toes_already_flat_are_left_exactly_as_scanned(monkeypatch):
     """A sole scan whose toes lie along the sole: nothing is laid flat, and the prepared foot is the same,
     point for point, as with laying toes flat turned off."""

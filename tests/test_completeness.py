@@ -41,7 +41,8 @@ def test_toes_cut_off_are_still_caught_after_the_front_is_laid_flat(shape, deg):
     """The front 25 mm gone and what's left of the toes hanging up: laying them flat must not round the end off.
     (The real legs-flat scan 2190 lost its "toes missing" warning when its toes were laid flat, 29 Oct.)"""
     mesh = synth.shaped_foot("right") if shape == "shaped" else synth.curved_foot("right")
-    m, info = _measured(synth.bend_toes(synth.cut_ends(mesh, x_to=225.0), deg))
+    # split after cutting (the cut's closing face is one big triangle) and before bending: see synth.bend_toes
+    m, info = _measured(synth.bend_toes(synth.refined(synth.cut_ends(mesh, x_to=225.0)), deg))
     assert "toes_laid_flat" in info
     assert any(p.startswith("THE TOES ARE MISSING") for p in completeness.problems(m))
 
@@ -117,6 +118,8 @@ def test_the_preparation_version_is_one_not_used_before(kind):
     string was kept through fc4982c's change to steep toes, so it names two different preparations.)"""
     used = {"2026-10-29: toes laid flat", "2026-10-29: toes as scanned",
             "2026-10-30: toes laid flat", "2026-10-30: toes as scanned",
-            "2026-10-30: toes laid flat, steep ones judged", "2026-10-30: toes laid flat, steep ones judged; one leg read alone"}
+            "2026-10-30: toes laid flat, steep ones judged", "2026-10-30: toes laid flat, steep ones judged; one leg read alone",
+            "2026-10-30: toes laid flat at up to three joints",
+            "2026-10-30: toes laid flat at up to three joints; one leg read alone"}
     assert foot_prep.prep_version(kind) not in used
     assert foot_prep.prep_version("sole_up") != foot_prep.prep_version("sole_hanging")

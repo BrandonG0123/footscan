@@ -462,7 +462,9 @@ def prep_version(kind: str | None = None) -> str:
     # 2026-10-30: steeply raised toes judged by their reach along the underside (fc4982c, which kept the 29 Oct
     # string for sole scans of both kinds)
     # 2026-10-30 (later): toes that curl as well as bend laid flat at up to three joints (TOES_JOINTS)
-    v = "2026-10-30: toes laid flat at up to three joints" if LAY_TOES_FLAT else "2026-10-30: toes as scanned"
+    # 2026-11-01: a further joint closer than TOES_JOINT_APART_MM to the last is that bend's leftover, left alone
+    v = ("2026-11-01: toes laid flat at up to three joints, 12 mm apart" if LAY_TOES_FLAT
+         else "2026-11-01: toes as scanned")
     if kind == "sole_hanging":
         # 2026-10-30: the leg's direction read from one piece; the gap between shins found by where triangles
         # reach, not their centres
@@ -494,6 +496,13 @@ TOES_JOINT_UP_MM = 10.0
 # Toes bend at up to three joints (the ball's, then the toes' own two), and a relaxed toe can curl at each: the
 # step is repeated from where the last one left the toes on the floor, up to this many times.
 TOES_JOINTS = 3
+# A further joint closer than this past the last one is that bend's leftover, not a joint of its own. Toes bent
+# about a line well above the skin are read as a first joint of about 36 degrees (the stretched skin under the
+# bend is shallower than the toes), then a second 6 mm on. SYNTHETIC (curved_foot, right, refined to 2 mm, sole
+# up, toes bent about a line 18 mm up, outline vs 250 mm, 1 Nov): 60 degrees at 200 mm read +11.9 laid flat at
+# both and +4.6 at the first alone; 50 at 185, +10.0 and +7.8; 45 at 200, +8.7 and +8.2. Real second bends were
+# 18 mm (2190) and 28 mm (89df) past the first (Mac, 1 Nov); three bends 20-25 mm apart are still all laid.
+TOES_JOINT_APART_MM = 12.0
 
 
 def _lay_toes_flat(placed, info):
@@ -527,7 +536,9 @@ def _lay_toes_flat(placed, info):
     6. Toes that curl as well as bend (their tips still rise after that):
        the same again, from the frontmost point now back on the floor, up to
        ``TOES_JOINTS`` joints in all. Toes already flat, or laid flat by the
-       first joint, stop there: the next one finds nothing raised.
+       first joint, stop there: the next one finds nothing raised. A next
+       pivot closer than ``TOES_JOINT_APART_MM`` to the last is the same bend's
+       leftover, so it stops there too.
 
     Not a rigid move: the toes move relative to the rest of the foot, so the
     recorded ``to_mat`` is exact everywhere but ahead of the joint. Returns the
@@ -596,6 +607,8 @@ def _lay_one_joint(W, y0, after, n, info):
     while i + 1 < len(z) and (not have[i + 1] or z[i + 1] <= zb + TOES_ON_FLOOR_MM):
         i += 1
     yp = float(ys[i])
+    if after is not None and yp - after[0] < TOES_JOINT_APART_MM:
+        return None  # the last bend's leftover: see TOES_JOINT_APART_MM
     # how far the underside reaches from the pivot, straight-line: the horizontal reach alone would let toes raised
     # steeply (SYNTHETIC: 50 mm of toes bent up 65 degrees reach 21 mm across the floor) skip both the laying and
     # the too-steep warning

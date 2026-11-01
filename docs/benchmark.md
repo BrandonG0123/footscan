@@ -233,6 +233,24 @@ still refused on arrival (torn near the floor, both feet in the scan,
 forefoot rolled 21 mm), so its 48-degree second bend may be a torn edge
 rather than a toe; no insole is made from it.
 
+A Codex review (1 Nov) found one bend read as two joints. Toes bent about
+a line well above the skin read a first joint shallower than the toes
+(the skin stretched under the bend), then the rest of the same bend as a
+second joint 6 mm on, and laying both flat overshot. A further joint
+closer than 12 mm to the last is now left alone (`TOES_JOINT_APART_MM`).
+SYNTHETIC, curved_foot, right, refined to 2 mm, sole up, outline vs 250 mm:
+
+| toes bent about a line 18 mm up | both joints laid | first only |
+|---|---|---|
+| 60 degrees at 200 mm | +11.9 | +4.6 |
+| 50 degrees at 185 mm | +10.0 | +7.8 |
+| 45 degrees at 200 mm | +8.7 | +8.2 |
+
+Still long, and their tips stay 10-20 mm up: the 10 mm joint is wrong for
+toes that bend that far above the skin, the same open question as above.
+Toes bent 20 degrees three times (180, 205, 225 mm) still have all three
+laid. The real scans' second bends were 18 and 28 mm past the first.
+
 Still short, with no warning (SYNTHETIC, curved_foot, right, sole up,
 outline vs 250 mm): a curl that starts within about 25 mm of the tip
 (60 degrees from 225 mm: 14.9 mm short; from 230 mm: 12.0; 50 degrees from
