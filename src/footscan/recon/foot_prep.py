@@ -462,9 +462,7 @@ def prep_version(kind: str | None = None) -> str:
     # 2026-10-30: steeply raised toes judged by their reach along the underside (fc4982c, which kept the 29 Oct
     # string for sole scans of both kinds)
     # 2026-10-30 (later): toes that curl as well as bend laid flat at up to three joints (TOES_JOINTS)
-    # 2026-11-01: a further joint closer than TOES_JOINT_APART_MM to the last is that bend's leftover, left alone
-    v = ("2026-11-01: toes laid flat at up to three joints, 12 mm apart" if LAY_TOES_FLAT
-         else "2026-11-01: toes as scanned")
+    v = "2026-10-30: toes laid flat at up to three joints" if LAY_TOES_FLAT else "2026-10-30: toes as scanned"
     if kind == "sole_hanging":
         # 2026-10-30: the leg's direction read from one piece; the gap between shins found by where triangles
         # reach, not their centres
@@ -493,16 +491,21 @@ TOES_MAX_RAISE_DEG = 60.0    # past this it isn't toes hanging up, it's somethin
 # +0.4 to +3.5.) At 35 degrees and more, as the tips rise past the outline's height, as scanned reads 14.6-38.2
 # mm short; laid flat, -6.4 to +6.6 mm, depending on where the toes really bend.
 TOES_JOINT_UP_MM = 10.0
+# After laying flat, the toes' tip (the lowest point of the front completeness.END_PROBE_MM of what's under the
+# outline's height) higher than this off the floor: the toes weren't laid flat (a joint too steep, or the ball not
+# on the floor to lay them against), so the outline may be short. SYNTHETIC (curved_foot, right, refined to 2 mm,
+# sole up, 1 Nov): laid flat, at one to three joints, 1.2-4.5 mm; 15 degrees at 200 mm then 65 more at 215, 10.6
+# mm up and 224.2 mm of 250 with nothing said before this. Real sole scans laid flat (Mac, 1 Nov): -0.1 to 0.6.
+TOES_STILL_UP_MM = 8.0
 # Toes bend at up to three joints (the ball's, then the toes' own two), and a relaxed toe can curl at each: the
 # step is repeated from where the last one left the toes on the floor, up to this many times.
 TOES_JOINTS = 3
-# A further joint closer than this past the last one is that bend's leftover, not a joint of its own. Toes bent
-# about a line well above the skin are read as a first joint of about 36 degrees (the stretched skin under the
-# bend is shallower than the toes), then a second 6 mm on. SYNTHETIC (curved_foot, right, refined to 2 mm, sole
-# up, toes bent about a line 18 mm up, outline vs 250 mm, 1 Nov): 60 degrees at 200 mm read +11.9 laid flat at
-# both and +4.6 at the first alone; 50 at 185, +10.0 and +7.8; 45 at 200, +8.7 and +8.2. Real second bends were
-# 18 mm (2190) and 28 mm (89df) past the first (Mac, 1 Nov); three bends 20-25 mm apart are still all laid.
-TOES_JOINT_APART_MM = 12.0
+# No rule on how close two joints may be. Toes bent once about a line well above the skin read as a first joint
+# shallower than the toes and a second a few mm on, and laid flat at both read long; but two bends 10-15 mm apart
+# at the skin read the same way, and need both. SYNTHETIC (curved_foot, right, refined to 2 mm, sole up, outline
+# vs 250 mm, 1 Nov), as laid now / skipping a joint under 12 mm past the last: 60 degrees about a line 18 mm up
+# at 200 mm +11.9 / +4.6 (tip 4.5 / 20.1 mm up); 20 at 185 then 30 at 195, -5.9 / -7.8 (tip 1.3 / 15.7). Which
+# real toes do is the same question as TOES_JOINT_UP_MM, for a ruler to settle.
 
 
 def _lay_toes_flat(placed, info):
@@ -536,9 +539,9 @@ def _lay_toes_flat(placed, info):
     6. Toes that curl as well as bend (their tips still rise after that):
        the same again, from the frontmost point now back on the floor, up to
        ``TOES_JOINTS`` joints in all. Toes already flat, or laid flat by the
-       first joint, stop there: the next one finds nothing raised. A next
-       pivot closer than ``TOES_JOINT_APART_MM`` to the last is the same bend's
-       leftover, so it stops there too.
+       first joint, stop there: the next one finds nothing raised.
+    7. If the toes' tip is still more than ``TOES_STILL_UP_MM`` off the floor
+       after that, a warning: the outline may be short.
 
     Not a rigid move: the toes move relative to the rest of the foot, so the
     recorded ``to_mat`` is exact everywhere but ahead of the joint. Returns the
@@ -560,6 +563,7 @@ def _lay_toes_flat(placed, info):
         W, joint = step
         joints.append(joint)
         after = (joint["pivot_y"], joint["floor_z"])
+    _toes_still_up(W, info)
     if not joints:
         return placed
     out = placed.copy()
@@ -572,6 +576,21 @@ def _lay_toes_flat(placed, info):
                                   joints=[{k: j[k] for k in ("raised_deg", "pivot_from_heel_mm", "joint_from_heel_mm")}
                                           for j in joints])
     return out
+
+
+def _toes_still_up(W, info):
+    """After ``_lay_toes_flat``'s joints, on its vertices ``W``: if the toes' tip is still over
+    ``TOES_STILL_UP_MM`` off the floor, and nothing has said why yet, a warning (the arrival check refuses the
+    scan for it, as for a front too steep)."""
+    from .. import insole
+
+    under = W[W[:, 2] < insole.SILHOUETTE_HEIGHT_MM]
+    if not len(under) or "toes_warning" in info:
+        return
+    tip = float(under[under[:, 1] > under[:, 1].max() - completeness.END_PROBE_MM, 2].min())
+    if tip > TOES_STILL_UP_MM:
+        info["toes_warning"] = (f"THE TOES ARE STILL {tip:.0f} MM OFF THE FLOOR after laying them flat, so the "
+                                "insole may be short. Check the toes in the 3D model; scan again with them relaxed.")
 
 
 def _lay_one_joint(W, y0, after, n, info):
@@ -607,8 +626,6 @@ def _lay_one_joint(W, y0, after, n, info):
     while i + 1 < len(z) and (not have[i + 1] or z[i + 1] <= zb + TOES_ON_FLOOR_MM):
         i += 1
     yp = float(ys[i])
-    if after is not None and yp - after[0] < TOES_JOINT_APART_MM:
-        return None  # the last bend's leftover: see TOES_JOINT_APART_MM
     # how far the underside reaches from the pivot, straight-line: the horizontal reach alone would let toes raised
     # steeply (SYNTHETIC: 50 mm of toes bent up 65 degrees reach 21 mm across the floor) skip both the laying and
     # the too-steep warning

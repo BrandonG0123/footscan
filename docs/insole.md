@@ -149,10 +149,12 @@ that) are laid flat again from where the first joint left them on the
 floor, up to three joints in all, as a toe has (`TOES_JOINTS`). SYNTHETIC
 (scripts/benchmark_prep.py, curved_foot, sole up, right foot), toes bent up
 20 degrees and their tips 30 more: 7.9 mm short with one joint, 5.3 mm with
-up to three. A next joint less than 12 mm past the last is that bend's
-leftover and is left alone (`TOES_JOINT_APART_MM`): SYNTHETIC toes bent 60
-degrees about a line 18 mm up read 11.9 mm long laid flat twice, 4.6 mm
-once. Curls that start near the tip or are much steeper still read
+up to three. Toes bent once about a line well above the skin are laid
+flat at two joints too, and read long (SYNTHETIC: 60 degrees about a line
+18 mm up, 11.9 mm long); two bends close together at the skin look the same
+from underneath and need both (docs/benchmark.md). If the toes' tip is still more than 8 mm
+off the floor after all that, Make insole warns that the insole may be
+short and the arrival check refuses the scan (`TOES_STILL_UP_MM`). Curls that start near the tip or are much steeper still read
 short with no warning (docs/benchmark.md). With the toes hung up, the floor's heel and ball are also placed
 along the whole underside, toes included: along the contact areas alone,
 which end at the ball, the "ball" was the arch and tipped the floor

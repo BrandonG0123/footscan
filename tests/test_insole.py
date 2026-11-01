@@ -406,16 +406,32 @@ def test_toes_that_curl_at_three_places_are_laid_flat_at_all_three():
     assert completeness.measure(placed)["toe_tip_above_floor_mm"] < 4.0
 
 
-def test_the_leftover_of_one_bend_is_not_laid_flat_again_as_a_second_joint():
-    """Toes bent 60 degrees about a line 18 mm up at 200 mm read as a first joint of 36 degrees, and the rest of the
-    same bend as a second joint 6 mm on; laying both flat read the outline 261.9 mm of 250 (SYNTHETIC, found by a
-    Codex review, 1 Nov). A second joint that close is the first one's leftover and is left alone."""
+def test_toes_bent_twice_close_together_are_laid_flat_at_both():
+    """Toes bent up 20 degrees at 185 mm and 30 more at 195: the second pivot is 4 mm past the first. A rule that
+    skipped joints closer than 12 mm (tried 1 Nov, for toes bent once about a line 18 mm up, which read the same
+    way) left these tips 15.7 mm up and the outline 7.8 mm short; both joints leave them 1.3 mm up (SYNTHETIC)."""
     from footscan.recon import completeness, foot_prep
 
-    mesh = synth.bend_toes(synth.refined(synth.curved_foot("right")), 60.0, x_from=200.0, z_at=18.0)
+    mesh = synth.bend_toes(synth.bend_toes(synth.refined(synth.curved_foot("right")), 30.0, x_from=195.0), 20.0,
+                           x_from=185.0)
     placed, info = foot_prep.prepare_sole_up(synth.sole_up_capture(mesh), foot="right")
-    assert len(info["toes_laid_flat"]["joints"]) == 1
-    assert completeness.measure(placed)["length_mm"] < 257.0
+    assert len(info["toes_laid_flat"]["joints"]) == 2
+    m = completeness.measure(placed)
+    assert m["toe_tip_above_floor_mm"] < 4.0
+    assert m["length_mm"] > 243.0
+
+
+def test_toes_left_well_off_the_floor_after_laying_flat_are_warned_about_and_refused_on_arrival():
+    """Toes bent up 15 degrees at 200 mm and 65 more at 215: only the first bend was laid, nothing judged the
+    second too steep, and the tip stayed 10.6 mm up with the outline 224.2 mm
+    of 250 and nothing said (found by a Codex review, 1 Nov; SYNTHETIC)."""
+    from footscan.recon import completeness, foot_prep
+
+    mesh = synth.bend_toes(synth.bend_toes(synth.refined(synth.curved_foot("right")), 65.0, x_from=215.0), 15.0,
+                           x_from=200.0)
+    placed, info = foot_prep.prepare_sole_up(synth.sole_up_capture(mesh), foot="right")
+    assert info["toes_warning"].startswith("THE TOES ARE STILL 11 MM OFF THE FLOOR")
+    assert info["toes_warning"] in completeness.from_prep(info)
 
 
 def test_toes_already_flat_are_left_exactly_as_scanned(monkeypatch):

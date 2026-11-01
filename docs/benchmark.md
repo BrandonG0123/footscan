@@ -233,23 +233,32 @@ still refused on arrival (torn near the floor, both feet in the scan,
 forefoot rolled 21 mm), so its 48-degree second bend may be a torn edge
 rather than a toe; no insole is made from it.
 
-A Codex review (1 Nov) found one bend read as two joints. Toes bent about
-a line well above the skin read a first joint shallower than the toes
-(the skin stretched under the bend), then the rest of the same bend as a
-second joint 6 mm on, and laying both flat overshot. A further joint
-closer than 12 mm to the last is now left alone (`TOES_JOINT_APART_MM`).
-SYNTHETIC, curved_foot, right, refined to 2 mm, sole up, outline vs 250 mm:
+Codex reviews (1 Nov) found that toes bent once about a line well above
+the skin read as a first joint shallower than the toes (the skin stretched
+under the bend), then the rest of the same bend as a second joint a few mm
+on, and laid flat at both read long. Skipping a joint under 12 mm past the
+last was tried and taken out again: two bends 10-15 mm apart at the skin
+read the same way, and need both joints. SYNTHETIC, curved_foot, right,
+refined to 2 mm, sole up, outline vs 250 mm, toe tip height in brackets:
 
-| toes bent about a line 18 mm up | both joints laid | first only |
+| toes bent | both joints laid (as now) | under 12 mm apart skipped |
 |---|---|---|
-| 60 degrees at 200 mm | +11.9 | +4.6 |
-| 50 degrees at 185 mm | +10.0 | +7.8 |
-| 45 degrees at 200 mm | +8.7 | +8.2 |
+| 60 degrees about a line 18 mm up at 200 mm | +11.9 (4.5 up) | +4.6 (20.1 up) |
+| 50 degrees about a line 18 mm up at 185 mm | +10.0 (1.3) | +7.8 (17.8) |
+| 45 degrees about a line 18 mm up at 200 mm | +8.7 (1.2) | +8.2 (10.0) |
+| 20 at 185 mm, then 30 at 195 | -5.9 (1.3) | -7.8 (15.7) |
+| 15 at 185 mm, then 40 at 200 | -6.7 (1.9) | -14.6 (23.4) |
+| 25 at 195 mm, then 25 at 210 | -6.2 (1.7) | -7.7 (12.9) |
 
-Still long, and their tips stay 10-20 mm up: the 10 mm joint is wrong for
-toes that bend that far above the skin, the same open question as above.
-Toes bent 20 degrees three times (180, 205, 225 mm) still have all three
-laid. The real scans' second bends were 18 and 28 mm past the first.
+Seen from underneath, the two can't be told apart; which real toes do is
+the same question as `TOES_JOINT_UP_MM`, for a ruler length to settle.
+
+The same review found toes left well off the floor with nothing said:
+15 degrees at 200 mm then 65 more at 215 had only the first bend laid, the
+tip 10.6 mm up and the outline 224.2 mm of 250 (SYNTHETIC). Toes whose tip
+is still over 8 mm up after laying flat now get a warning and are refused
+on arrival (`TOES_STILL_UP_MM`). Laid flat, the SYNTHETIC tips above sat
+1.2-4.5 mm up and the real ones -0.1 to 0.6 mm.
 
 Still short, with no warning (SYNTHETIC, curved_foot, right, sole up,
 outline vs 250 mm): a curl that starts within about 25 mm of the tip

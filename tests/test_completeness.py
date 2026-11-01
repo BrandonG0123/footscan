@@ -119,7 +119,8 @@ def test_the_preparation_version_is_one_not_used_before(kind):
     used = {"2026-10-29: toes laid flat", "2026-10-29: toes as scanned",
             "2026-10-30: toes laid flat", "2026-10-30: toes as scanned",
             "2026-10-30: toes laid flat, steep ones judged", "2026-10-30: toes laid flat, steep ones judged; one leg read alone",
-            "2026-10-30: toes laid flat at up to three joints",
-            "2026-10-30: toes laid flat at up to three joints; one leg read alone"}
+            "2026-11-01: toes laid flat at up to three joints, 12 mm apart",
+            "2026-11-01: toes laid flat at up to three joints, 12 mm apart; one leg read alone",
+            "2026-11-01: toes as scanned", "2026-11-01: toes as scanned; one leg read alone"}
     assert foot_prep.prep_version(kind) not in used
     assert foot_prep.prep_version("sole_up") != foot_prep.prep_version("sole_hanging")
