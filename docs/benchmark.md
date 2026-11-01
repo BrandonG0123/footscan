@@ -210,7 +210,28 @@ the floor unchanged):
 | sole up, toes up 30, tips 40 more | -13.2 / -13.2 | -7.7 / -7.8 |
 | legs flat, toes up 20, tips 30 more | -7.9 / -7.9 | -5.3 / -5.3 |
 
-Toes bent once read exactly as before. Not on a real scan yet.
+Toes bent once read exactly as before.
+
+On the real scans (Brandon's Mac, 1 Nov, `scripts/accuracy_eval.py` at
+cf80fda before and 3e55ae1 after, each commit's own copy; still no ruler
+length, so this says what changed, not that it's more accurate):
+
+| scan | joints laid (deg, at mm from the heel) | toe tip up, mm | outline L x W, mm | footprint length, mm |
+|---|---|---|---|---|
+| 2349 right, sole up | 10.8 at 192.1 | 0.6 -> 0.6 | 243.7 x 89.8, unchanged | 240.8, unchanged |
+| 89df left, sole up | 12.8 at 167.9, 13.1 at 195.8 | 6.0 -> 0.1 | 229.7 x 79.9 -> 229.2 x 79.9 | 224.7 -> 224.3 |
+| 2190 left, legs flat | 21.5 at 183.1, 48.4 at 198.5 | 14.4 -> -0.1 | 219.5 x 108.2 -> 225.3 x 108.4 | 204.9 -> 218.0 |
+
+89df came out 0.5 mm *shorter* with its tips laid flat. Each joint turns
+the toes about a centre `TOES_JOINT_UP_MM` (10 mm) above the floor; a
+point below that centre moves down and slightly back as it turns. 89df's
+tips sat 6 mm up, below the centre, so pressing them to the floor pulled
+the end of the toe back a little. Whether a real toe does that depends on
+where its joint really is, the same open question as the first joint. The
+left foot now reads 14.5 mm shorter than the right (14.0 before). 2190 is
+still refused on arrival (torn near the floor, both feet in the scan,
+forefoot rolled 21 mm), so its 48-degree second bend may be a torn edge
+rather than a toe; no insole is made from it.
 
 Still short, with no warning (SYNTHETIC, curved_foot, right, sole up,
 outline vs 250 mm): a curl that starts within about 25 mm of the tip
