@@ -267,7 +267,7 @@ at 185: 10.4), too short past its bend to be told from a toe's rounded
 end, and a curl much steeper than the toes' first bend (20 at 185 then 70
 more at 215: 19.4 short; 15 at 180, 15 at 200, 70 at 222: 23.4). Their
 tips sit 1.0-6.1 mm up (1 Nov), under `TOES_STILL_UP_MM`'s 8 mm and
-inside what toes laid flat show (up to 4.5), and how far the foot reaches
+close to what toes laid flat show (up to 4.5), and how far the foot reaches
 above the outline's 30 mm doesn't tell them apart either. 60 degrees from
 225 mm (14.9 short) leaves its tip 9.2 mm up and now gets the still-off-
 the-floor warning. What catches the rest is the length against the other
