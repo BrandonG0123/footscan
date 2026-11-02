@@ -115,10 +115,12 @@ LOOPBACK = {"127.0.0.1", "::1", "::ffff:127.0.0.1"}
 # Headers a reverse proxy or tunnel adds. If any is present the request came
 # from somewhere else, whatever the socket address says.
 PROXY_HEADERS = ("X-Forwarded-For", "Forwarded", "CF-Connecting-IP", "X-Real-IP", "True-Client-IP")
-# A connection is kept open between requests (HTTP/1.1 keep-alive), so a page and its ~30 scripts, styles and
-# pictures share a few connections instead of setting up one each. One left idle this long is closed, which
-# frees its thread. It also bounds a single read or write in the middle of a request (an upload that stalls).
+# A connection is kept open between requests (HTTP/1.1 keep-alive), so a page and its scripts and styles (the
+# capture page is 15 files) share a few connections instead of setting up one each. One left idle this long
+# between requests is closed, which frees its thread.
 KEEPALIVE_TIMEOUT_S = 30
+# Within a request, how long one read or write may wait (an upload or download stalled on weak Wi-Fi).
+TRANSFER_TIMEOUT_S = 120
 # How long a new HTTPS connection may take to finish its TLS handshake before it is dropped.
 TLS_HANDSHAKE_TIMEOUT_S = 10
 SECURITY_HEADERS = {
@@ -360,6 +362,7 @@ def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check
         server_version = "footscan"
         # Keep-alive: see KEEPALIVE_TIMEOUT_S. Every response states its length (send_json, send_file,
         # send_error), which is what lets the browser send the next request on the same connection.
+        # One Handler serves every request on its connection, so per-request state is reset in parse_request.
         protocol_version = "HTTP/1.1"
         timeout = KEEPALIVE_TIMEOUT_S
 
@@ -400,7 +403,7 @@ def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check
             self.wfile.write(data)
 
         def send_file(self, path: Path, ctype: str, cache: str = "no-cache", headers: dict | None = None):
-            headers = {**getattr(self, "_extra_headers", {}), **(headers or {})}
+            headers = {**self._extra_headers, **(headers or {})}
             data = path.read_bytes()
             self.send_response(HTTPStatus.OK)
             self.send_header("Content-Type", ctype)
@@ -429,18 +432,31 @@ def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check
             BaseHTTPRequestHandler.end_headers(self)
             return True
 
+        def handle_one_request(self):
+            self.connection.settimeout(KEEPALIVE_TIMEOUT_S)  # waiting for the next request: idle limit
+            super().handle_one_request()
+
         def parse_request(self):
-            self._body_read = False  # a kept-alive connection carries many requests, each with its own body
-            return super().parse_request()
+            # A new request on this connection: nothing from the one before carries over (above all the
+            # studio-key cookie in _extra_headers, which is only for the response that set it).
+            self._body_read = False
+            self._extra_headers = {}
+            if not super().parse_request():
+                return False
+            self.connection.settimeout(TRANSFER_TIMEOUT_S)
+            if self.headers.get("Transfer-Encoding"):
+                # No chunked uploads here, and a body framed two ways (with Content-Length too) is how a
+                # request gets smuggled past a proxy: refuse it and end the connection (send_error does).
+                self.send_error(HTTPStatus.NOT_IMPLEMENTED, "Transfer-Encoding is not supported")
+                return False
+            return True
 
         def body_left_unread(self) -> bool:
             """Did this request send a body that hasn't been read? Then the connection can't be reused."""
             if getattr(self, "_body_read", False) or not hasattr(self, "headers"):
                 return False
-            if self.headers.get("Transfer-Encoding"):
-                return True  # never read here (no chunked uploads)
             try:
-                return int(self.headers.get("Content-Length") or 0) > 0
+                return int(self.headers.get("Content-Length") or 0) != 0  # a negative length isn't valid either
             except ValueError:
                 return True
 
@@ -1486,8 +1502,6 @@ class StudioServer(ThreadingHTTPServer):
     round trips over Wi-Fi, and one that opens and never finishes (a phone that went to sleep mid-way)
     stops the studio answering anyone.
     """
-
-    daemon_threads = True  # an open keep-alive connection doesn't keep the program from stopping
 
     def __init__(self, address, handler, ssl_context: ssl.SSLContext | None = None):
         super().__init__(address, handler)

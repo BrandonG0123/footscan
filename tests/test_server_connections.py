@@ -1,7 +1,7 @@
 """How the studio's server handles connections: HTTPS handshakes and keep-alive.
 
-The phone loads the capture page (and its ~30 scripts, styles and pictures) over Wi-Fi before the camera
-opens. These tests pin the two things that decide how long that takes: a connection is set up in its own
+The phone loads the capture page (15 files: the page, its scripts and its stylesheet) over Wi-Fi before the
+camera opens. These tests pin the two things that decide how long that takes: a connection is set up in its own
 thread (so one slow or stuck phone connection doesn't hold up the others), and a connection is reused for
 the next request instead of being closed after each one.
 """
@@ -14,6 +14,8 @@ import threading
 import pytest
 
 from footscan.server import WEB_DIR, StudioServer, ensure_cert, make_handler
+
+KEY = "test-studio-key"
 
 
 @pytest.fixture
@@ -30,7 +32,7 @@ def https_server(tmp_path):
 
 @pytest.fixture
 def http_server(tmp_path):
-    httpd = StudioServer(("127.0.0.1", 0), make_handler(WEB_DIR, tmp_path / "data"))
+    httpd = StudioServer(("127.0.0.1", 0), make_handler(WEB_DIR, tmp_path / "data", studio_key=KEY))
     threading.Thread(target=httpd.serve_forever, daemon=True).start()
     yield httpd.server_address[1]
     httpd.shutdown()
@@ -120,3 +122,36 @@ def test_an_upload_that_asks_to_continue_gets_a_bare_go_ahead_then_its_answer(ht
         assert resp.status == 400  # read, then refused: not a JSON object
         assert resp.getheader("Connection", "").lower() != "close"
         resp.read()
+
+
+def test_the_studio_key_cookie_goes_only_on_the_answer_to_the_link_that_carried_the_key(http_server):
+    # One connection, two requests: the second must not be handed the first one's Set-Cookie.
+    conn = http.client.HTTPConnection("127.0.0.1", http_server, timeout=3)
+    conn.request("GET", f"/studio/?key={KEY}")
+    first = conn.getresponse()
+    first.read()
+    assert first.status == 200
+    assert KEY in (first.getheader("Set-Cookie") or "")
+    for path in ("/studio/capture.html", "/index.html", "/assets/scanner.js"):
+        conn.request("GET", path)
+        resp = conn.getresponse()
+        resp.read()
+        assert resp.getheader("Set-Cookie") is None, path
+    conn.close()
+
+
+@pytest.mark.parametrize("framing", [
+    b"Transfer-Encoding: chunked\r\nContent-Length: 6\r\n",  # framed two ways
+    b"Transfer-Encoding: chunked\r\n",
+    b"Content-Length: -5\r\n",
+])
+def test_a_body_with_unusable_framing_is_refused_and_ends_the_connection(http_server, framing):
+    with socket.create_connection(("127.0.0.1", http_server), timeout=3) as s:
+        s.sendall(b"POST /api/submissions HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: application/json\r\n"
+                  + framing + b"\r\n6\r\n[1, 2]\r\n0\r\n\r\nGET /robots.txt HTTP/1.1\r\nHost: x\r\n\r\n")
+        resp = http.client.HTTPResponse(s)
+        resp.begin()
+        assert resp.status in (400, 501)
+        assert resp.getheader("Connection", "").lower() == "close"
+        resp.read()
+        assert s.recv(100) == b""  # nothing more: the bytes after it weren't taken as another request
