@@ -144,6 +144,9 @@ def test_the_studio_key_cookie_goes_only_on_the_answer_to_the_link_that_carried_
     b"Transfer-Encoding: chunked\r\nContent-Length: 6\r\n",  # framed two ways
     b"Transfer-Encoding: chunked\r\n",
     b"Content-Length: -5\r\n",
+    b"Transfer-Encoding:\r\nTransfer-Encoding: chunked\r\nContent-Length: 4\r\n",  # an empty first copy
+    b"Content-Length: 2\r\nContent-Length: 6\r\n",  # two lengths that disagree
+    b"Content-Length: 6, 6\r\n",
 ])
 def test_a_body_with_unusable_framing_is_refused_and_ends_the_connection(http_server, framing):
     with socket.create_connection(("127.0.0.1", http_server), timeout=3) as s:

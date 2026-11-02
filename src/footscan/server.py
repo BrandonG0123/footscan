@@ -444,10 +444,17 @@ def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check
             if not super().parse_request():
                 return False
             self.connection.settimeout(TRANSFER_TIMEOUT_S)
-            if self.headers.get("Transfer-Encoding"):
-                # No chunked uploads here, and a body framed two ways (with Content-Length too) is how a
-                # request gets smuggled past a proxy: refuse it and end the connection (send_error does).
+            # Where this request's body ends must be beyond doubt, or the rest of it would be read as the next
+            # request on this connection (and a proxy in front, reading it another way, could slip one past).
+            # Every copy of each header counts: .get() only sees the first.
+            if self.headers.get_all("Transfer-Encoding") is not None:
+                # No chunked uploads here, whatever the value (even empty) and however many times it's sent.
+                # send_error ends the connection.
                 self.send_error(HTTPStatus.NOT_IMPLEMENTED, "Transfer-Encoding is not supported")
+                return False
+            lengths = self.headers.get_all("Content-Length") or []
+            if len(lengths) > 1 or any(not re.fullmatch(r"[0-9]+", v.strip()) for v in lengths):
+                self.send_error(HTTPStatus.BAD_REQUEST, "One Content-Length, a whole number, please")
                 return False
             return True
 
@@ -456,7 +463,7 @@ def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check
             if getattr(self, "_body_read", False) or not hasattr(self, "headers"):
                 return False
             try:
-                return int(self.headers.get("Content-Length") or 0) != 0  # a negative length isn't valid either
+                return int(self.headers.get("Content-Length") or 0) > 0  # parse_request checked it's one whole number
             except ValueError:
                 return True
 
