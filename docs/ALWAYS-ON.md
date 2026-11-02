@@ -177,3 +177,10 @@ Then restart the service: `nssm restart Footscan` (Windows),
   `.studio_key` or `.certs/`.
 - **3-D builds use the whole CPU** for minutes; on tank that competes with the
   Minecraft server.
+- **Opening the camera from the phone.** The app's Photos + mat scan shows
+  "Opening the studio's camera…" until the studio's capture page and its
+  scripts (15 files) have loaded over Wi-Fi. The studio keeps each phone
+  connection open between files (closed after 30 s idle) and sets up each new
+  HTTPS connection in its own thread, with a 10 s limit, so one slow or stuck
+  phone connection doesn't hold up the others (until 2 Nov 2026, one that
+  opened and went quiet stopped the studio answering anyone).

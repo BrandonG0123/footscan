@@ -2,11 +2,10 @@ import json
 import threading
 import urllib.error
 import urllib.request
-from http.server import ThreadingHTTPServer
 
 import pytest
 
-from footscan.server import WEB_DIR, make_handler
+from footscan.server import WEB_DIR, StudioServer, make_handler
 
 JPEG = b"\xff\xd8\xff\xe0" + b"\x00" * 64
 KEY = "test-studio-key"
@@ -27,7 +26,7 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
 
 def start(tmp_path, local: bool):
     handler = make_handler(WEB_DIR, tmp_path, local_check=lambda h: local, studio_key=KEY)
-    httpd = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    httpd = StudioServer(("127.0.0.1", 0), handler)
     threading.Thread(target=httpd.serve_forever, daemon=True).start()
     return httpd, f"http://127.0.0.1:{httpd.server_address[1]}"
 
@@ -271,7 +270,7 @@ def test_proxy_headers_are_never_treated_as_local(tmp_path):
 def test_tunnelled_request_cannot_open_studio(tmp_path):
     from footscan.server import is_loopback
 
-    httpd = ThreadingHTTPServer(("127.0.0.1", 0), make_handler(WEB_DIR, tmp_path, local_check=is_loopback, studio_key=KEY))
+    httpd = StudioServer(("127.0.0.1", 0), make_handler(WEB_DIR, tmp_path, local_check=is_loopback, studio_key=KEY))
     threading.Thread(target=httpd.serve_forever, daemon=True).start()
     url = f"http://127.0.0.1:{httpd.server_address[1]}"
     try:
@@ -295,7 +294,7 @@ def test_security_headers_on_every_response(servers):
 
 
 def test_submission_creation_is_rate_limited(tmp_path):
-    httpd = ThreadingHTTPServer(("127.0.0.1", 0), make_handler(WEB_DIR, tmp_path, local_check=lambda h: False,
+    httpd = StudioServer(("127.0.0.1", 0), make_handler(WEB_DIR, tmp_path, local_check=lambda h: False,
                                                                studio_key=KEY, submissions_per_hour=2))
     threading.Thread(target=httpd.serve_forever, daemon=True).start()
     url = f"http://127.0.0.1:{httpd.server_address[1]}"
@@ -617,7 +616,7 @@ def test_wrong_shaped_input_gets_an_answer(servers):
 
 def test_public_server_hides_from_search_engines(tmp_path):
     handler = make_handler(WEB_DIR, tmp_path, local_check=lambda h: False, studio_key=KEY, allow_indexing=False)
-    httpd = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    httpd = StudioServer(("127.0.0.1", 0), handler)
     threading.Thread(target=httpd.serve_forever, daemon=True).start()
     url = f"http://127.0.0.1:{httpd.server_address[1]}"
     try:
@@ -648,7 +647,7 @@ def test_pairing_code_is_studio_only_and_explains_when_phones_cant_connect(serve
 
 def test_pairing_through_the_public_address_uses_it_and_needs_no_fingerprint(tmp_path):
     handler = make_handler(WEB_DIR, tmp_path, local_check=lambda h: False, studio_key=KEY, public=True)
-    httpd = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    httpd = StudioServer(("127.0.0.1", 0), handler)
     threading.Thread(target=httpd.serve_forever, daemon=True).start()
     url = f"http://127.0.0.1:{httpd.server_address[1]}"
     try:
