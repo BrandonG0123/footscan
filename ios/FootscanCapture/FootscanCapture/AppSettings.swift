@@ -49,7 +49,7 @@ enum CaptureMethod: String, CaseIterable, Identifiable {
     var detail: String {
         self == .lidar
             ? "LiDAR measures as it goes; the phone builds the model."
-            : "Any iPhone. Uses the printed mat; your Footscan studio builds the model."
+            : "Any iPhone. Uses the printed mat; the studio on your Mac builds the model."
     }
 
     /// Can this phone do Apple's 3D capture (Object Capture)?
