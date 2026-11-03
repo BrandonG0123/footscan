@@ -362,7 +362,8 @@ struct HomeView: View {
         if method == .photos {
             // photos go straight to the studio: nothing big is kept on the phone
             guard studio.client != nil else { showStudio = true; return }
-            photoCapture = s
+            // home Wi-Fi or Tailscale: open the camera page at whichever address answers from here
+            Task { await studio.findAddress(); photoCapture = s }
             return
         }
         if let problem = DiskSpace.captureProblem() {
@@ -529,9 +530,9 @@ private struct InsolePath: View {
             ? "Sole up or a foam print: it's the shape the insole is made from."
             : "Sole and foam-print scans need an iPhone with LiDAR (a Pro model)."
         case 1:
-            if !studioConnected { autoSend ? "Connect to the studio on your Mac; then it goes by itself."
-                                           : "Connect to the studio on your Mac, then open the scan and tap Send." }
-            else if autoSend { "It goes by itself when the phone is on the same Wi-Fi as the Mac." }
+            if !studioConnected { autoSend ? "Connect to the studio on your computer; then it goes by itself."
+                                           : "Connect to the studio on your computer, then open the scan and tap Send." }
+            else if autoSend { "It goes by itself whenever the phone can reach the studio (same Wi-Fi, or Tailscale)." }
             else { "Sending automatically is off: tap here to open the scan, then Send." }
         default: "Research library, then Make insole. A podiatrist or athletic trainer signs the summary sheet before you play in it."
         }

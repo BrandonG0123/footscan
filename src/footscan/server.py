@@ -60,6 +60,7 @@ import datetime as dt
 import hashlib
 import hmac
 import http.cookies
+import ipaddress
 import json
 import mimetypes
 import re
@@ -664,7 +665,25 @@ def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check
                 return dict(available=False,
                             reason="Phones can't reach this studio yet. Restart footscan with "
                                    "--host 0.0.0.0 --https, then open this page again.")
-            return dict(available=True, url=info["scan_url"].rstrip("/"), key=studio_key, fingerprint=cert_fingerprint)
+            url = info["scan_url"].rstrip("/")
+            return dict(available=True, url=url, key=studio_key, fingerprint=cert_fingerprint,
+                        alt_urls=self.other_addresses(url))
+
+        def other_addresses(self, url: str) -> list[str]:
+            """This studio's other addresses for the phone, tried alongside the home-network one.
+
+            The home-network address (192.168.x.x) only answers on the same Wi-Fi. With Tailscale on this
+            computer and the phone, its tailnet address (100.x.x.x) answers from anywhere. It is given as the
+            bare IP, never the .ts.net name: the phone accepts this computer's self-made certificate only at
+            IP and local addresses (Apple's App Transport Security refuses it at a full domain name). The
+            phone pins the same certificate fingerprint at every address.
+            """
+            host, port = self.server.server_address[:2]
+            if host not in ("0.0.0.0", "::"):
+                return []  # bound to one address: no other address answers
+            ts = tailnet_ip()
+            alt = f"https://{ts}:{port}" if ts else None
+            return [alt] if alt and alt != url else []
 
         def insole_api(self, method: str, d: Path, rest: list[str]):
             """First-fit insole from a foot capture: POST makes it, GET <file> downloads it."""
@@ -1551,6 +1570,43 @@ def cert_fingerprint(cert_path: Path) -> str:
     return hashlib.sha256(der).hexdigest()
 
 
+TAILNET = ipaddress.ip_network("100.64.0.0/10")  # the addresses Tailscale gives its devices
+
+
+def tailnet_ip() -> str | None:
+    """This computer's Tailscale address (100.64.0.0/10), or None without Tailscale.
+
+    Asks the tailscale command first (`tailscale ip -4`; on Windows it is usually not on the service's PATH, so
+    its install folder is tried too), then falls back to the addresses this computer's name resolves to.
+    """
+    candidates = [shutil.which("tailscale"), r"C:\Program Files\Tailscale\tailscale.exe"]
+    for exe in filter(None, candidates):
+        if not Path(exe).is_file():
+            continue
+        try:
+            out = subprocess.run([exe, "ip", "-4"], capture_output=True, text=True, timeout=3).stdout
+        except (OSError, subprocess.SubprocessError):
+            continue
+        if ip := first_tailnet_ip(out.split()):
+            return ip
+    try:
+        names = [a[4][0] for a in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET)]
+    except OSError:
+        return None
+    return first_tailnet_ip(names)
+
+
+def first_tailnet_ip(texts) -> str | None:
+    """The first of these that is an IPv4 address inside Tailscale's range."""
+    for t in texts:
+        try:
+            if (ip := ipaddress.ip_address(t.strip())).version == 4 and ip in TAILNET:
+                return str(ip)
+        except ValueError:
+            continue
+    return None
+
+
 def lan_ip() -> str | None:
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
@@ -1589,6 +1645,8 @@ def serve(host: str = "127.0.0.1", port: int = 8765, https: bool = False, public
     if host == "0.0.0.0" and (ip := lan_ip()):
         print(f"scan page for phones on this Wi-Fi: {scheme}://{ip}:{port}/")
         print(f"studio on YOUR phone (keep this private): {scheme}://{ip}:{port}/studio/?key={studio_key}")
+        if https and (ts := tailnet_ip()):
+            print(f"over Tailscale, from anywhere (the connect code includes it): {scheme}://{ts}:{port}/")
     else:
         print(f"scan page: {scheme}://localhost:{port}/")
     print("", flush=True)

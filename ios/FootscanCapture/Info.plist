@@ -3,10 +3,13 @@
 <!--
   Merged with the settings Xcode generates (GENERATE_INFOPLIST_FILE).
   - footscan-capture:// links: the studio's connect code opens the app.
-  - NSAllowsLocalNetworking: the studio on the Mac answers at a local address
-    with its own self-made certificate. The app pins that exact certificate
-    (Studio.swift); this lets the connection be made at all. It applies only
-    to local addresses: everything on the internet keeps Apple's full rules.
+  - NSAllowsLocalNetworking: the studio on your computer answers at a local
+    address with its own self-made certificate. The app pins that exact
+    certificate (Studio.swift); this lets the connection be made at all. It
+    applies only to local names: everything on the internet keeps Apple's full
+    rules. The studio's addresses are IPs (home network, Tailscale), which
+    App Transport Security doesn't cover; a full domain name with a self-made
+    certificate would be refused, so the studio never offers one.
 -->
 <plist version="1.0">
 <dict>
@@ -32,6 +35,6 @@
 		<string>LaunchBackground</string>
 	</dict>
 	<key>NSLocalNetworkUsageDescription</key>
-	<string>To send your scans to the Footscan studio on your Mac, over your Wi-Fi.</string>
+	<string>To send your scans to the Footscan studio on your computer, over your Wi-Fi.</string>
 </dict>
 </plist>

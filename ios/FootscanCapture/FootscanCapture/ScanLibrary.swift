@@ -139,7 +139,8 @@ final class ScanLibrary {
         do {
             let sent = try await client.upload(scan, record: record)
             record.studioCaptureID = sent.captureID
-            record.studioHost = client.link.host
+            record.studioHost = sent.link.host
+            studio.remember(sent.link)
             record.sentAt = Date()
             record.studioAccuracy = sent.accuracy
             scan.save(record)

@@ -658,6 +658,59 @@ def test_pairing_through_the_public_address_uses_it_and_needs_no_fingerprint(tmp
         httpd.shutdown()
 
 
+def _phone_ready_studio(tmp_path, monkeypatch, tailnet):
+    """A studio as the tank runs it (every address, HTTPS, a pinned certificate), on a home network."""
+    import footscan.server as srv
+
+    monkeypatch.setattr(srv, "lan_ip", lambda: "192.168.11.233")
+    monkeypatch.setattr(srv, "tailnet_ip", lambda: tailnet)
+    handler = make_handler(WEB_DIR, tmp_path, local_check=lambda h: False, studio_key=KEY, secure_cookie=True,
+                           cert_fingerprint="ab" * 32)
+    httpd = StudioServer(("0.0.0.0", 0), handler)
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    return httpd, f"http://127.0.0.1:{httpd.server_address[1]}"
+
+
+def test_pairing_offers_the_tailscale_address_too_so_the_phone_reaches_the_studio_away_from_home(tmp_path, monkeypatch):
+    httpd, url = _phone_ready_studio(tmp_path, monkeypatch, tailnet="100.101.102.103")
+    port = httpd.server_address[1]
+    try:
+        p = body(call(f"{url}/api/studio/pairing", headers={"X-Studio-Key": KEY}))
+        assert p["available"] is True and p["fingerprint"] == "ab" * 32
+        assert p["url"] == f"https://192.168.11.233:{port}"                 # home Wi-Fi first, as before
+        assert p["alt_urls"] == [f"https://100.101.102.103:{port}"]         # same port, same pinned certificate
+    finally:
+        httpd.shutdown()
+
+
+def test_pairing_without_tailscale_offers_only_the_home_network_address(tmp_path, monkeypatch):
+    httpd, url = _phone_ready_studio(tmp_path, monkeypatch, tailnet=None)
+    try:
+        p = body(call(f"{url}/api/studio/pairing", headers={"X-Studio-Key": KEY}))
+        assert p["available"] is True and p["alt_urls"] == []
+    finally:
+        httpd.shutdown()
+
+
+def test_tailnet_address_is_read_from_the_tailscale_command(monkeypatch, tmp_path):
+    import subprocess
+
+    import footscan.server as srv
+
+    exe = tmp_path / "tailscale"
+    exe.write_text("")
+    monkeypatch.setattr(srv.shutil, "which", lambda name: str(exe))
+    monkeypatch.setattr(srv.subprocess, "run", lambda *a, **k: subprocess.CompletedProcess(a, 0, "100.88.1.2\n", ""))
+    assert srv.tailnet_ip() == "100.88.1.2"
+
+
+def test_only_addresses_in_tailscales_range_count_as_tailnet():
+    from footscan.server import first_tailnet_ip
+
+    assert first_tailnet_ip(["192.168.11.233", "100.63.255.255", "100.128.0.1", "fd7a:115c:a1e0::1"]) is None
+    assert first_tailnet_ip(["192.168.11.233", "not an ip", "100.64.0.1", "100.100.1.1"]) == "100.64.0.1"
+
+
 def test_certificate_fingerprint_is_the_sha256_of_the_certificate(tmp_path):
     import hashlib
     import ssl
