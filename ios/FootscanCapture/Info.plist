@@ -3,7 +3,7 @@
 <!--
   Merged with the settings Xcode generates (GENERATE_INFOPLIST_FILE).
   - footscan-capture:// links: the studio's connect code opens the app.
-  - NSAllowsLocalNetworking: the studio on the Mac answers at a local address
+  - NSAllowsLocalNetworking: a studio on the home network answers at a local address
     with its own self-made certificate. The app pins that exact certificate
     (Studio.swift); this lets the connection be made at all. It applies only
     to local addresses: everything on the internet keeps Apple's full rules.
@@ -32,6 +32,6 @@
 		<string>LaunchBackground</string>
 	</dict>
 	<key>NSLocalNetworkUsageDescription</key>
-	<string>To send your scans to the Footscan studio on your Mac, over your Wi-Fi.</string>
+	<string>To send your scans to your Footscan studio on this Wi-Fi.</string>
 </dict>
 </plist>

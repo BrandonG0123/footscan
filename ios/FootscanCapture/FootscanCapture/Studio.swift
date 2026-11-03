@@ -28,8 +28,14 @@ enum StudioStore {
 
     static func load() -> (link: StudioLink, key: String)? {
         guard let data = UserDefaults.standard.data(forKey: linkKey),
-              let link = try? JSONDecoder().decode(StudioLink.self, from: data),
-              let key = readKey() else { return nil }
+              let link = try? JSONDecoder().decode(StudioLink.self, from: data) else {
+            // iOS keeps Keychain items after the app is deleted, but not its settings. A key with no studio
+            // address is left from an earlier install (or a half-finished save): delete it, so deleting the
+            // app removes the studio's password too, as the privacy policy (docs/PRIVACY.md) says.
+            deleteKey()
+            return nil
+        }
+        guard let key = readKey() else { return nil }
         return (link, key)
     }
 
@@ -40,6 +46,10 @@ enum StudioStore {
 
     static func clear() {
         UserDefaults.standard.removeObject(forKey: linkKey)
+        deleteKey()
+    }
+
+    private static func deleteKey() {
         SecItemDelete([kSecClass: kSecClassGenericPassword, kSecAttrService: service] as CFDictionary)
     }
 
@@ -64,7 +74,7 @@ enum StudioStore {
     }
 
     private static func writeKey(_ key: String) {
-        SecItemDelete([kSecClass: kSecClassGenericPassword, kSecAttrService: service] as CFDictionary)
+        deleteKey()
         SecItemAdd([kSecClass: kSecClassGenericPassword, kSecAttrService: service,
                     kSecAttrAccessible: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
                     kSecValueData: Data(key.utf8)] as CFDictionary, nil)

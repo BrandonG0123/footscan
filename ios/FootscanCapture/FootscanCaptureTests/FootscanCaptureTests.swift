@@ -44,6 +44,27 @@ struct ConnectCodes {
     }
 }
 
+// MARK: - the studio's key after the app is deleted
+
+// Uses the real settings and Keychain of the app the tests run in, and puts back whatever was there.
+@Suite("Studio key storage", .serialized)
+struct StudioKeyStorage {
+    @Test func aKeyLeftFromAnEarlierInstallIsDeletedNotReused() throws {
+        let before = StudioStore.load()
+        defer { if let before { StudioStore.save(before.link, key: before.key) } else { StudioStore.clear() } }
+        let link = StudioLink(url: URL(string: "https://192.168.1.20:8765")!, fingerprint: nil)
+
+        StudioStore.save(link, key: "old-key")
+        #expect(StudioStore.load()?.key == "old-key")
+        // Deleting the app clears its settings, but iOS keeps the Keychain item.
+        UserDefaults.standard.removeObject(forKey: "studio.link")
+        #expect(StudioStore.load() == nil)
+        // The key went with it: the address coming back doesn't bring the old password back.
+        UserDefaults.standard.set(try JSONEncoder().encode(link), forKey: "studio.link")
+        #expect(StudioStore.load() == nil)
+    }
+}
+
 // MARK: - the studio refusing an incomplete scan
 
 @Suite("Incomplete scans")

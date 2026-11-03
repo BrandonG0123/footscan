@@ -1,6 +1,13 @@
 // Settings: the studio, sending, the safety points, and starting over.
 import SwiftUI
 
+/// Pages the App Store requires an app to link to: its privacy policy and a way to get help.
+/// The privacy policy is docs/PRIVACY.md in the public repository (tests/test_privacy_manifest.py checks it exists).
+enum AppLinks {
+    static let privacyPolicy = URL(string: "https://github.com/BrandonG0123/footscan/blob/main/docs/PRIVACY.md")!
+    static let support = URL(string: "https://github.com/BrandonG0123/footscan/issues")!
+}
+
 struct SettingsView: View {
     @Environment(AppSettings.self) private var settings
     @Environment(StudioConnection.self) private var studio
@@ -63,6 +70,12 @@ struct SettingsView: View {
                 }
 
                 Section {
+                    Link(destination: AppLinks.privacyPolicy) {
+                        Label("Privacy policy", systemImage: "hand.raised")
+                    }
+                    Link(destination: AppLinks.support) {
+                        Label("Help and support", systemImage: "questionmark.circle")
+                    }
                     LabeledContent("Version", value: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "?")
                     Text("Footscan measures how accurate iPhone scanning is. It is not a medical device: it designs and treats nothing.")
                         .font(.footnote).foregroundStyle(Color.fsMuted)
