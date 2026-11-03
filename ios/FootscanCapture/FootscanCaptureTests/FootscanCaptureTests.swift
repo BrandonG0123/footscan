@@ -51,8 +51,9 @@ struct IncompleteScans {
     @Test func aScanMissingPartOfTheFootIsToldApartFromOtherRefusals() throws {
         let missing = ["THE TOES ARE MISSING: … Scan again with the toes relaxed and flat."]
         let failure = StudioClient.Failure.from(status: 422, json: ["error": "The studio didn't keep this scan", "incomplete": missing])
-        guard case .incomplete(let why) = failure else { Issue.record("not read as incomplete: \(failure)"); return }
+        guard case .incomplete(let why, let advice) = failure else { Issue.record("not read as incomplete: \(failure)"); return }
         #expect(why == missing)
+        #expect(advice.isEmpty) // a studio that sends no steps: the lines alone
         #expect(failure.errorDescription?.hasPrefix("Scan again") == true)
         // any other refusal is still a plain one, with the studio's own words
         guard case .refused(let other) = StudioClient.Failure.from(status: 400, json: ["error": "bad capture id"]) else {
@@ -62,6 +63,59 @@ struct IncompleteScans {
         guard case .refused("HTTP 500") = StudioClient.Failure.from(status: 500, json: [:]) else {
             Issue.record("an answer without JSON should name its status"); return
         }
+    }
+
+    @Test func theStudiosStepsForTheNextScanAreRead() throws {
+        let json: [String: Any] = [
+            "error": "The studio didn't keep this scan",
+            "incomplete": ["THE FOREFOOT WAS ROLLED ONTO ONE EDGE: … Scan again with the ball of the foot level."],
+            "retake": [["code": "forefoot_rolled", "title": "The ball of the foot wasn't level",
+                        "steps": ["Relax the ankle.", "Lay a book across the ball of the foot."]]],
+        ]
+        guard case .incomplete(_, let advice) = StudioClient.Failure.from(status: 422, json: json) else {
+            Issue.record("not read as incomplete"); return
+        }
+        #expect(advice == [RetakeAdvice(code: "forefoot_rolled", title: "The ball of the foot wasn't level",
+                                        steps: ["Relax the ankle.", "Lay a book across the ball of the foot."])])
+        // steps in a shape this app doesn't know: the refusal still stands, with the lines alone
+        guard case .incomplete(_, let none) = StudioClient.Failure.from(status: 422, json: json.merging(["retake": "?"]) { $1 }) else {
+            Issue.record("a malformed retake lost the refusal"); return
+        }
+        #expect(none.isEmpty)
+    }
+
+    @Test func aRefusalWithoutStepsStillSaysWhatToChange() {
+        // records saved before the studio sent steps have only the lines: each becomes a title and its ending
+        var rec = ScanRecord(subject: .rightSole, created: Date(), device: "test", systemVersion: "0", appVersion: "0")
+        #expect(rec.nextTime.isEmpty)
+        rec.retake = ["THE TOES ARE MISSING: the front of the scan ends square (80% …). Scan again with the toes relaxed and flat."]
+        #expect(rec.nextTime == [RetakeAdvice(code: "other", title: "The toes are missing",
+                                              steps: ["Scan again with the toes relaxed and flat."])])
+        let steps = RetakeAdvice(code: "toes_missing", title: "The toes were cut off", steps: ["Let the toes relax."])
+        rec.retakeAdvice = [steps]
+        #expect(rec.nextTime == [steps])
+    }
+
+    @Test func aRecordSavedBeforeTheStepsExistedStillReads() throws {
+        let dir = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString, directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let scan = Scan(folder: dir)
+        var rec = ScanRecord(subject: .leftSole, created: Date(), device: "test", systemVersion: "0", appVersion: "0")
+        rec.retake = ["THE HEEL IS CUT OFF: … Scan again, taking the phone round behind the heel."]
+        scan.save(rec)
+        // saved without the new key, as an older app wrote it
+        let json = try #require(try JSONSerialization.jsonObject(with: Data(contentsOf: scan.recordURL)) as? [String: Any])
+        #expect(json["retake"] != nil && json["retakeAdvice"] == nil)
+        let back = try #require(scan.record)
+        #expect(back.retake == rec.retake && back.retakeAdvice == nil && back.nextTime.first?.title == "The heel is cut off")
+    }
+
+    @Test func soleScansSayWhatToCheckBeforeStart() {
+        for s in Subject.allCases where s.scanKind == "sole_up" || s.scanKind == "sole_hanging" {
+            #expect(s.startChecks?.contains("ball of the foot level") == true, "\(s)")
+        }
+        #expect(Subject.calibration.startChecks == nil && Subject.rightFoot.startChecks == nil)
     }
 
     @Test func whatsMissingIsKeptWithTheScan() throws {
