@@ -348,7 +348,7 @@ struct HomeView: View {
             }
             .sensoryFeedback(.selection, trigger: settings.method)
         } else {
-            Label("This iPhone scans with photos on the printed mat (it can't run Apple's 3D capture). The studio on your Mac builds the model.",
+            Label("This iPhone scans with photos on the printed mat (it can't run Apple's 3D capture). Your Footscan studio builds the model.",
                   systemImage: "camera.on.rectangle")
                 .font(.footnote).foregroundStyle(Color.fsMuted)
         }
@@ -524,7 +524,7 @@ private struct InsolePath: View {
     ]
 
     private var title: String {
-        ["Scan the bottom of your foot", "Send it to your studio", "Make the insole on your Mac"][step]
+        ["Scan the bottom of your foot", "Send it to your studio", "Make the insole in your studio"][step]
     }
 
     private var detail: String {
