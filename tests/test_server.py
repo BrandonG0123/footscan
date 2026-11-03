@@ -1239,3 +1239,38 @@ def test_kinds_the_check_doesnt_read_are_kept_as_before(servers):
     assert call(f"{op}/api/captures/{cid}/mesh?ext=obj&up=y", "PUT", _object_capture_foot("right"),
                 {"Content-Type": "application/octet-stream"})[0] == 200
     assert "completeness" not in json.loads((data / "captures" / cid / "capture.json").read_text())
+
+
+def test_a_refused_upload_still_gets_its_answer_when_the_body_is_large(servers):
+    """A request refused before its body is read (here: too large) is answered and then the connection closes.
+    Closing with the body still arriving makes the computer reset the connection, which can throw away the
+    answer before the phone reads it (seen on Windows, test_imported_calibration_object_... under load);
+    the server reads and drops what is still coming, within a limit, before it closes."""
+    import socket
+
+    op, _phone, _data = servers
+    host, port = op.removeprefix("http://").split(":")
+    body = b"x" * (6 * 1024 * 1024)  # over the 2 MB JSON limit, and more than the socket buffers hold
+    sock = socket.create_connection((host, int(port)), timeout=10)
+    head = (f"POST /api/captures HTTP/1.1\r\nHost: {host}\r\nContent-Type: application/json\r\n"
+            f"Content-Length: {len(body)}\r\n\r\n").encode()
+    errors = []
+
+    def send():
+        try:
+            sock.sendall(head + body)
+        except OSError as e:  # the server closed while the body was still coming: a reset
+            errors.append(e)
+
+    sender = threading.Thread(target=send, daemon=True)
+    sender.start()
+    got = b""
+    try:
+        while chunk := sock.recv(65536):
+            got += chunk
+    finally:
+        sender.join(10)
+        sock.close()
+    assert got.startswith(b"HTTP/1.1 400"), got[:200]
+    assert b"body too large" in got
+    assert errors == []  # the whole body was taken in before the connection closed, so nothing was reset

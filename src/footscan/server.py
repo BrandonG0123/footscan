@@ -123,6 +123,13 @@ KEEPALIVE_TIMEOUT_S = 30
 TRANSFER_TIMEOUT_S = 120
 # How long a new HTTPS connection may take to finish its TLS handshake before it is dropped.
 TLS_HANDSHAKE_TIMEOUT_S = 10
+# When a request is refused before its body is read (too large, wrong place, bad input), the answer goes out and
+# the connection closes. Closing while the body is still arriving makes the computer reset the connection, and a
+# reset can throw away the answer before the phone reads it (seen on Windows). So the server first reads and drops
+# what is still coming, for up to this long and this much, as web servers do ("lingering close"). Past either
+# limit it closes anyway: a 150 MB model over slow Wi-Fi isn't worth holding the connection for.
+LINGER_S = 3.0
+LINGER_BYTES = 32 * 1024 * 1024
 SECURITY_HEADERS = {
     "X-Content-Type-Options": "nosniff",
     "Referrer-Policy": "no-referrer",  # studio keys and rescan tokens travel in URLs
@@ -1527,14 +1534,14 @@ class StudioServer(ThreadingHTTPServer):
 
     def finish_request(self, request, client_address):
         if self.ssl_context is None:
-            return super().finish_request(request, client_address)
+            return self._serve(request, client_address)
         request.settimeout(TLS_HANDSHAKE_TIMEOUT_S)
         try:
             tls = self.ssl_context.wrap_socket(request, server_side=True)  # the handshake, in this thread
         except OSError:  # ssl.SSLError, a timeout, or the phone hanging up: drop just this connection
             return
         try:
-            super().finish_request(tls, client_address)
+            self._serve(tls, client_address)
         finally:
             # The plain socket handed over its file descriptor to `tls`, so close that one here.
             try:
@@ -1542,6 +1549,32 @@ class StudioServer(ThreadingHTTPServer):
             except OSError:
                 pass
             tls.close()
+
+    def _serve(self, conn, client_address):
+        """Serve the connection's requests; if the last one's body was left unread, take it in before closing."""
+        handler = self.RequestHandlerClass(conn, client_address, self)
+        if handler.body_left_unread():
+            linger(conn)
+
+
+def linger(conn, seconds: float = LINGER_S, limit: int = LINGER_BYTES) -> None:
+    """Say we're done sending, then read and drop what the client is still sending (see LINGER_S)."""
+    import time
+
+    try:
+        conn.shutdown(socket.SHUT_WR)  # the answer is complete: the client sees the end of it
+    except OSError:
+        return
+    deadline, got = time.monotonic() + seconds, 0
+    while got < limit and (left := deadline - time.monotonic()) > 0:
+        try:
+            conn.settimeout(left)
+            chunk = conn.recv(65536)
+        except OSError:  # a timeout, or the client already gone
+            return
+        if not chunk:  # the client finished sending, or read the answer and closed
+            return
+        got += len(chunk)
 
 
 def ensure_cert(cert_dir: Path) -> tuple[Path, Path]:
