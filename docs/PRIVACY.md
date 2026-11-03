@@ -31,10 +31,11 @@ other apps' files. Turn off backup for Footscan in the iPhone's iCloud settings 
 
 ## Sending scans to a studio
 
-A 3D-capture scan leaves your phone only when it is sent to the studio you connected, either when you tap
-Send or, if you turned it on, automatically when the model is finished. Photos + mat scans go to the
-studio as they are taken. Everything is sent over an encrypted (HTTPS) connection. For a studio on your
-home network, the app checks it is talking to that exact computer.
+A 3D-capture scan leaves your phone only when it is sent to the studio you connected. Once a studio is
+connected, each finished model is sent to it automatically; you can turn that off in Settings and tap Send
+yourself instead. Photos + mat scans go to the studio as they are taken. Everything is sent over an
+encrypted (HTTPS) connection. For a studio on your home network, the app checks it is talking to that
+exact computer.
 
 The studio is software run by you, or by someone you chose, on their own computer. If you connect to a
 studio through an internet address, your scans also pass through whatever service that studio uses to be

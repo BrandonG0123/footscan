@@ -24,10 +24,12 @@ CATEGORIES = {
         [r"\.creationDate(Key)?\b", r"\.contentModificationDate(Key)?\b", r"\.attributeModificationDate(Key)?\b",
          r"\bmodificationDate\b", r"\bfileModificationDate\b", r"\bNSFile(Creation|Modification)Date\b",
          r"\bNSURL(Creation|ContentModification|AttributeModification)DateKey\b",
-         r"\b(f|l)?getattrlist(bulk|at)?\(", r"\b(f|l)?stat(at)?\("], {"C617.1"}),  # the scan's own files
+         r"\b(f|l)?getattrlist(bulk|at)?\(", r"\b(f|l)?stat(at)?\((?!\s*\"\")"],    # C stat(); not the app's
+         {"C617.1"}),                                                            # own stat("label", …) helper
     "NSPrivacyAccessedAPICategoryDiskSpace": (
         [r"volume(Available|Total)Capacity", r"\bNSURLVolume(Available|Total)Capacity", r"\bsystemFreeSize\b",
-         r"\bsystemSize\b", r"\bf?statv?fs\("], {"E174.1"}),                    # room to write a scan
+         r"\bsystemSize\b", r"\bf?statv?fs\("],
+        {"E174.1", "85F4.1"}),   # room to write a scan; how much is free, shown when there isn't
     "NSPrivacyAccessedAPICategorySystemBootTime": (
         [r"\bsystemUptime\b", r"\bmach_absolute_time\b"], set()),          # not used: no reason chosen yet
     "NSPrivacyAccessedAPICategoryActiveKeyboards": (
@@ -120,3 +122,10 @@ def test_string_contents_and_comments_are_not_read_as_api_calls():
           '/* UserDefaults */ let w = "UserDefaults" // systemUptime'
     assert "volumeTotalCapacityKey" in strip(src)
     assert "UserDefaults" not in strip(src) and "systemUptime" not in strip(src)
+
+
+def test_the_apps_own_stat_label_helper_is_not_read_as_a_file_date_call():
+    # ScanDetailView has a display helper called like stat("Typical error", value); only C's stat(path, …) counts.
+    pattern = CATEGORIES["NSPrivacyAccessedAPICategoryFileTimestamp"][0]
+    assert not any(re.search(p, strip('stat("Typical error", median)')) for p in pattern)
+    assert any(re.search(p, strip("_ = stat(path, &info)")) for p in pattern)

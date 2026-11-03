@@ -30,9 +30,11 @@ enum StudioStore {
         guard let data = UserDefaults.standard.data(forKey: linkKey),
               let link = try? JSONDecoder().decode(StudioLink.self, from: data) else {
             // iOS keeps Keychain items after the app is deleted, but not its settings. A key with no studio
-            // address is left from an earlier install (or a half-finished save): delete it, so deleting the
-            // app removes the studio's password too, as the privacy policy (docs/PRIVACY.md) says.
-            deleteKey()
+            // address is left from an earlier install (or a cut-off clear()): delete it, so deleting the app
+            // removes the studio's password too, as the privacy policy (docs/PRIVACY.md) says. Only when the
+            // key can be read: before the phone's first unlock after a restart the settings can read as empty
+            // too, and the key is unreadable then, so a real pairing is never thrown away.
+            if readKey() != nil { deleteKey() }
             return nil
         }
         guard let key = readKey() else { return nil }
