@@ -187,12 +187,12 @@ def now_iso() -> str:
 
 
 def read_json(path: Path) -> dict:
-    return json.loads(path.read_text())
+    return json.loads(path.read_text(encoding="utf-8"))
 
 
 def write_json(path: Path, obj: dict) -> None:
     tmp = path.with_suffix(".tmp")
-    tmp.write_text(json.dumps(obj, indent=2))
+    tmp.write_text(json.dumps(obj, indent=2), encoding="utf-8")
     tmp.replace(path)
 
 
@@ -338,10 +338,10 @@ class RateLimiter:
 
 def load_studio_key(path: Path) -> str:
     """A persistent random key, so a phone stays signed in across restarts."""
-    if path.exists() and (key := path.read_text().strip()):
+    if path.exists() and (key := path.read_text(encoding="utf-8").strip()):
         return key
     key = secrets.token_urlsafe(18)
-    path.write_text(key)
+    path.write_text(key, encoding="utf-8")
     path.chmod(0o600)
     return key
 
@@ -1492,7 +1492,7 @@ def list_submissions(submissions_dir: Path) -> list[dict]:
     for f in submissions_dir.glob("*/submission.json") if submissions_dir.exists() else []:
         try:
             out.append(public_meta(read_json(f)))
-        except json.JSONDecodeError:
+        except (json.JSONDecodeError, UnicodeDecodeError):
             continue
     return sorted(out, key=lambda m: m.get("created", ""), reverse=True)
 
@@ -1502,7 +1502,7 @@ def list_captures(captures_dir: Path) -> list[dict]:
     for f in captures_dir.glob("*/capture.json") if captures_dir.exists() else []:
         try:
             meta = read_json(f)
-        except json.JSONDecodeError:
+        except (json.JSONDecodeError, UnicodeDecodeError):
             continue
         meta.pop("frames", None)
         if meta.get("insole") and insole_is_stale(f.parent, meta):
@@ -1558,7 +1558,7 @@ def ensure_cert(cert_dir: Path) -> tuple[Path, Path]:
 
 def cert_fingerprint(cert_path: Path) -> str:
     """SHA-256 of the certificate (DER), hex: what the iPhone app pins."""
-    der = ssl.PEM_cert_to_DER_cert(cert_path.read_text())
+    der = ssl.PEM_cert_to_DER_cert(cert_path.read_text(encoding="utf-8"))
     return hashlib.sha256(der).hexdigest()
 
 

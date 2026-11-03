@@ -329,6 +329,16 @@ def test_every_service_serves_on_the_wifi_with_https_and_review_and_never_public
     assert "--public" not in r["content"]  # the internet is a separate step, with the owner's go-ahead
 
 
+def test_every_service_runs_the_studio_in_utf8_mode(tmp_path):
+    """Windows' default text encoding can't write characters like the √ in a report; UTF-8 mode fixes the whole
+    process, including libraries that open text files with the default."""
+    plist = plistlib.loads(service.render("macos", tmp_path / "f", tmp_path / "d")["content"].encode())
+    assert plist["EnvironmentVariables"] == {"PYTHONUTF8": "1"}
+    assert "Environment=PYTHONUTF8=1" in service.render("linux", tmp_path / "f", tmp_path / "d")["content"]
+    assert "nssm set Footscan AppEnvironmentExtra PYTHONUTF8=1" in service.render(
+        "windows", tmp_path / "f", tmp_path / "d")["content"]
+
+
 def test_the_macos_service_is_a_valid_launch_agent_that_restarts(tmp_path):
     r = service.render("macos", tmp_path / "foot scan", tmp_path / "data")
     plist = plistlib.loads(r["content"].encode())

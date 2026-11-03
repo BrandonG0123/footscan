@@ -169,6 +169,20 @@ Then restart the service: `nssm restart Footscan` (Windows),
 `launchctl kickstart -k gui/$(id -u)/dev.footscan.server` (macOS),
 `systemctl --user restart footscan` (Linux).
 
+**On Windows, use these steps instead: they stop the service first.** The running
+service holds `.venv\Scripts\footscan.exe` open, so `pip install -e .` can't
+replace it, and pip's rollback leaves footscan half uninstalled: the next start
+can't find it. In an Administrator PowerShell:
+
+```powershell
+cd C:\srv\footscan; git pull
+nssm stop Footscan
+.venv\Scripts\python -m pip install -e ".[recon]"    # only if dependencies changed
+nssm start Footscan
+```
+
+Installing other packages (pytest, for example) is fine while it runs.
+
 ## Good to know
 
 - **Backups.** Everything is in `data/`: captures, insoles and review packets.

@@ -245,12 +245,12 @@ def score_capture(folder, up: str = "y") -> dict:
 
     folder = Path(folder)
     calipers_file = folder / "calipers.json"
-    calipers = json.loads(calipers_file.read_text()) if calipers_file.exists() else None
+    calipers = json.loads(calipers_file.read_text(encoding="utf-8")) if calipers_file.exists() else None
     mesh = trimesh.load(folder / "mesh.ply", force="mesh")
     try:
         report = evaluate_imported(mesh, up=up, calipers=calipers)
     except NotTheObject as err:
         (folder / "accuracy.json").unlink(missing_ok=True)
         return dict(error=str(err))
-    (folder / "accuracy.json").write_text(json.dumps(report, indent=2))
+    (folder / "accuracy.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
     return summarize(report)

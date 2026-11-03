@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import subprocess
 import sys
 import threading
@@ -42,8 +43,6 @@ class Busy(Exception):
 
 def pid_alive(pid) -> bool:
     """Is a process with this id still running?"""
-    import os
-
     if not isinstance(pid, int) or pid <= 0:
         return False
     if os.name == "nt":
@@ -101,14 +100,14 @@ class ReconRunner:
             st = folder / "recon" / "status.json"
             if st.exists():
                 try:
-                    cur = json.loads(st.read_text())
-                except (json.JSONDecodeError, OSError):
+                    cur = json.loads(st.read_text(encoding="utf-8"))
+                except (json.JSONDecodeError, UnicodeDecodeError, OSError):
                     cur = {}
                 if cur.get("state") == "running" and pid_alive(cur.get("pid")):
                     raise Busy("this model is already being built")
             out = folder / "recon"
             out.mkdir(exist_ok=True)
-            (out / "status.json").write_text(json.dumps(dict(stage="queued", state="running", at=time.time())))
+            (out / "status.json").write_text(json.dumps(dict(stage="queued", state="running", at=time.time())), encoding="utf-8")
             if accuracy_only:
                 cmd = [self.python, "-m", "footscan.cli", "accuracy", str(folder)]
                 if (folder / "calipers.json").exists():
@@ -119,8 +118,11 @@ class ReconRunner:
                 cmd.append("--calibration-object")
                 if (folder / "calipers.json").exists():
                     cmd += ["--calipers", str(folder / "calipers.json")]
-            log = open(out / "log.txt", "w")  # noqa: SIM115 - handed to the child process
-            self.proc = subprocess.Popen(cmd, stdout=log, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL)
+            log = open(out / "log.txt", "wb")  # noqa: SIM115 - handed to the child process, which writes it
+            # UTF-8 mode in the child, so what it prints and writes is UTF-8 on Windows too (its default there is
+            # the ANSI code page, which can't write characters like the √ in a report and crashes)
+            env = {**os.environ, "PYTHONUTF8": "1"}
+            self.proc = subprocess.Popen(cmd, stdout=log, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, env=env)
             self.folder = folder
             log.close()
 
@@ -131,8 +133,8 @@ def summary(folder: Path, runner: ReconRunner | None = None) -> dict:
     if not (out / "status.json").exists():
         return dict(state="none")
     try:
-        status = json.loads((out / "status.json").read_text())
-    except (json.JSONDecodeError, OSError):
+        status = json.loads((out / "status.json").read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, UnicodeDecodeError, OSError):
         return dict(state="running", stage="starting")  # being written this instant
     # A process that died without writing "done"/"failed" (killed, crashed).
     # The process id survives a restart of the web server; the runner doesn't.
@@ -146,8 +148,8 @@ def summary(folder: Path, runner: ReconRunner | None = None) -> dict:
                error=status.get("error"))
     if (out / "report.json").exists() and res["state"] != "running":
         try:
-            r = json.loads((out / "report.json").read_text())
-        except (json.JSONDecodeError, OSError):
+            r = json.loads((out / "report.json").read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, UnicodeDecodeError, OSError):
             r = {}
         res.update(
             synthetic=r.get("synthetic"),
@@ -164,11 +166,11 @@ def summary(folder: Path, runner: ReconRunner | None = None) -> dict:
             plantar=r.get("plantar"),
         )
     if (out / "plantar.json").exists() and res["state"] == "done":
-        p = json.loads((out / "plantar.json").read_text())
+        p = json.loads((out / "plantar.json").read_text(encoding="utf-8"))
         res["medial_profile"] = p.get("medial_profile")
     if res["state"] == "failed" and (out / "log.txt").exists():
-        res["log_tail"] = (out / "log.txt").read_text(errors="replace")[-2000:]
+        res["log_tail"] = (out / "log.txt").read_text(encoding="utf-8", errors="replace")[-2000:]
     res["files"] = [f for f in RECON_FILES if (out / f).exists()] if res["state"] == "done" else []
     if (folder / "calipers.json").exists():
-        res["calipers"] = json.loads((folder / "calipers.json").read_text())
+        res["calipers"] = json.loads((folder / "calipers.json").read_text(encoding="utf-8"))
     return res

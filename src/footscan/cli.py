@@ -36,7 +36,7 @@ def load_mesh(path: Path):
 def cmd_measure(args) -> int:
     rows, n_warn = [], 0
     for p in map(Path, args.scans):
-        rec = json.loads(p.read_text())
+        rec = json.loads(p.read_text(encoding="utf-8"))
         if rec.get("landmarks_used"):  # a studio pick: includes landmarks found from the surface (heel)
             rec = dict(rec, landmarks=rec["landmarks_used"])
         mesh = load_mesh(p.parent / rec["mesh"]) if rec.get("mesh") else None
@@ -57,7 +57,7 @@ def cmd_measure(args) -> int:
             ))
     out = Path(args.output)
     out.parent.mkdir(parents=True, exist_ok=True)
-    with out.open("w", newline="") as fh:
+    with out.open("w", newline="", encoding="utf-8") as fh:
         w = csv.DictWriter(fh, fieldnames=FIELDS)
         w.writeheader()
         w.writerows(rows)
@@ -77,7 +77,7 @@ def cmd_repeatability(args) -> int:
     text = build_report(rows, targets, args.device_condition, args.scans_per_device, args.inputs)
     out = Path(args.output)
     out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(text)
+    out.write_text(text, encoding="utf-8")
     print(SAFETY_BANNER)
     print(f"\nreport written to {out}")
     return 0
@@ -105,7 +105,7 @@ def cmd_calib_object(args) -> int:
 def cmd_reconstruct(args) -> int:
     from .recon import pipeline
 
-    calipers = json.loads(Path(args.calipers).read_text()) if args.calipers else None
+    calipers = json.loads(Path(args.calipers).read_text(encoding="utf-8")) if args.calipers else None
     report = pipeline.reconstruct(args.capture, calibration_object=args.calibration_object or bool(calipers),
                                   calipers=calipers)
     print(SAFETY_BANNER)
@@ -127,7 +127,7 @@ def cmd_reconstruct(args) -> int:
 def cmd_accuracy(args) -> int:
     from .recon import pipeline
 
-    calipers = json.loads(Path(args.calipers).read_text()) if args.calipers else None
+    calipers = json.loads(Path(args.calipers).read_text(encoding="utf-8")) if args.calipers else None
     report = pipeline.recompute_accuracy(args.capture, calipers)
     a = report["accuracy"]["surface_deviation"]
     print(f"accuracy vs calibration object: median {a['median_mm']} mm, 95th percentile {a['p95_mm']} mm")
@@ -137,7 +137,7 @@ def cmd_accuracy(args) -> int:
 def cmd_accuracy_mesh(args) -> int:
     from .recon import imported
 
-    calipers = json.loads(Path(args.calipers).read_text()) if args.calipers else None
+    calipers = json.loads(Path(args.calipers).read_text(encoding="utf-8")) if args.calipers else None
     try:
         mesh = imported.load_geometry(args.mesh)
     except ValueError as err:
@@ -161,7 +161,7 @@ def cmd_accuracy_mesh(args) -> int:
     for w in a["warnings"]:
         print(f"  warning: {w}", file=sys.stderr)
     if args.output:
-        Path(args.output).write_text(json.dumps(a, indent=2))
+        Path(args.output).write_text(json.dumps(a, indent=2), encoding="utf-8")
         print(f"report: {args.output}")
     return 0
 
@@ -222,7 +222,7 @@ def cmd_export_measures(args) -> int:
     stale = sum(1 for f in folders for r in list_picks(f) if r.get("stale"))
     out = Path(args.output)
     out.parent.mkdir(parents=True, exist_ok=True)
-    with out.open("w", newline="") as fh:
+    with out.open("w", newline="", encoding="utf-8") as fh:
         w = csv.DictWriter(fh, fieldnames=FIELDS)
         w.writeheader()
         w.writerows(rows)

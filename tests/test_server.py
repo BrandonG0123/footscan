@@ -1,4 +1,5 @@
 import json
+import sys
 import threading
 import urllib.error
 import urllib.request
@@ -492,15 +493,21 @@ def test_calipers_saved_and_validated(servers):
     assert body(call(f"{op}/api/captures/{cid}/recon")) == {"state": "none"}  # readings alone don't build
 
 
-def test_runner_one_build_at_a_time_and_notices_a_dead_process(tmp_path):
+def test_runner_one_build_at_a_time_and_notices_a_dead_process(tmp_path, monkeypatch):
     from footscan import recon_jobs
 
-    fake = tmp_path / "fake-python"
-    fake.write_text("#!/bin/sh\nsleep 2\n")
-    fake.chmod(0o755)
+    # A stand-in `footscan.cli` that sleeps and exits without writing "done". It's put first on PYTHONPATH and
+    # run by this same Python, so the test runs on Windows too (a `#!/bin/sh` fake can't be started there).
+    fake = tmp_path / "fake" / "footscan"
+    fake.mkdir(parents=True)
+    (fake / "__init__.py").write_text("", encoding="utf-8")
+    (fake / "cli.py").write_text(
+        "import sys, time\nprint(f'utf8_mode={sys.flags.utf8_mode}', flush=True)\ntime.sleep(2)\n", encoding="utf-8")
+    monkeypatch.setenv("PYTHONPATH", str(fake.parent))
+    monkeypatch.setenv("PYTHONUTF8", "0")  # as on Windows; a C locale would otherwise turn UTF-8 mode on by itself
     a, b = tmp_path / "a", tmp_path / "b"
     a.mkdir(), b.mkdir()
-    runner = recon_jobs.ReconRunner(python=str(fake))
+    runner = recon_jobs.ReconRunner(python=sys.executable)
     runner.start(a, calibration_object=False)
     assert recon_jobs.summary(a, runner)["state"] == "running"
     with pytest.raises(recon_jobs.Busy):
@@ -509,6 +516,8 @@ def test_runner_one_build_at_a_time_and_notices_a_dead_process(tmp_path):
     # it exited without writing "done": that's a failure, not "still running"
     s = recon_jobs.summary(a, runner)
     assert s["state"] == "failed" and "unexpectedly" in s["error"]
+    # the build runs in UTF-8 mode, so its log and files are UTF-8 on Windows as well
+    assert "utf8_mode=1" in (a / "recon" / "log.txt").read_text(encoding="utf-8")
 
 
 def test_customer_scan_recon_writes_what_the_pipeline_needs(servers):

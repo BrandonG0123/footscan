@@ -10,6 +10,10 @@ Wi-Fi (``--host 0.0.0.0 --https``, the phone app pins the certificate), plus
 ``--review`` so each new insole gets its review packet (footscan.review). It
 is never ``--public`` here: putting the studio on the internet is a separate
 step that waits for the owner's go-ahead (docs/HOSTING.md).
+
+Each file also sets ``PYTHONUTF8=1``: Python's UTF-8 mode, so the studio reads
+and writes text as UTF-8 on every system. Windows' own default (cp1252) can't
+write characters like √ and crashes on them.
 """
 
 from __future__ import annotations
@@ -72,6 +76,11 @@ def _launchd(root, exe, args, log, port, regen) -> dict:
   </array>
   <key>WorkingDirectory</key>
   <string>{escape(str(root))}</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PYTHONUTF8</key>
+    <string>1</string>
+  </dict>
   <key>RunAtLoad</key>
   <true/>
   <key>KeepAlive</key>
@@ -109,6 +118,7 @@ Wants=network-online.target
 
 [Service]
 WorkingDirectory={root}
+Environment=PYTHONUTF8=1
 ExecStart={" ".join(q(a) for a in [exe, *args])}
 Restart=always
 RestartSec=10
@@ -134,6 +144,7 @@ def _nssm(root, exe, args, log, port) -> dict:
         "# Administrator PowerShell. NOT a medical device; Wi-Fi only (no tunnel, no port forwarding).",
         f'nssm install Footscan "{exe}" "{" ".join(args)}"',
         f'nssm set Footscan AppDirectory "{root}"',
+        "nssm set Footscan AppEnvironmentExtra PYTHONUTF8=1",
         f'nssm set Footscan AppStdout "{log}"',
         f'nssm set Footscan AppStderr "{log}"',
         "nssm set Footscan Start SERVICE_AUTO_START",

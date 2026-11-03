@@ -64,7 +64,7 @@ def load_spec(path: Path | None = None) -> dict:
     p = Path(path) if path else SPEC_PATH
     spec = dict(DEFAULT_SPEC)
     if p.is_file():
-        spec.update({k: v for k, v in json.loads(p.read_text()).items() if not k.startswith("_")})
+        spec.update({k: v for k, v in json.loads(p.read_text(encoding="utf-8")).items() if not k.startswith("_")})
     return spec
 
 
@@ -160,7 +160,7 @@ def checks(ins_dir: Path, meta: dict, report: dict, mesh, spec: dict, other: dic
         f"{tm_len:.1f} mm long; STL {stl_len:.1f} mm; insole.json says {length:.1f}")
 
     # SAFETY.md requirement 1: the sheet a clinician signs, with the break-in protocol on it
-    summary = (ins_dir / "summary.html").read_text(errors="replace") if (ins_dir / "summary.html").is_file() else ""
+    summary = (ins_dir / "summary.html").read_text(encoding="utf-8", errors="replace") if (ins_dir / "summary.html").is_file() else ""
     parts = {"the not-a-medical-device notice": "NOT A MEDICAL DEVICE" in summary,
              "the signature line": "<th>Signature</th>" in summary,
              "the break-in section": "Break-in" in summary}
@@ -363,7 +363,7 @@ def _write_packet(data_dir, folder, meta, made, spec, work, out, read_json) -> N
     for name in SNAPSHOT:
         if (ins / name).is_file():
             shutil.copy2(ins / name, snap_w / name)
-    report = json.loads((snap_w / "insole.json").read_text())
+    report = read_json(snap_w / "insole.json")
     now = (read_json(folder / "capture.json").get("insole") or {})
     if (_identity(ins) != before or now.get("made") != made
             or any(now.get(k) != report.get(k) for k in SAME_BUILD)):
@@ -374,7 +374,7 @@ def _write_packet(data_dir, folder, meta, made, spec, work, out, read_json) -> N
     other_info = other_pts = other_note = None
     if other is not None:
         try:
-            orep = json.loads((other[0] / "insole" / "insole.json").read_text())
+            orep = read_json(other[0] / "insole" / "insole.json")
             other_info = dict(capture=other[0].name, foot=other[1]["foot"], length_mm=orep["length_mm"],
                               width_mm=orep["width_mm"], made=other[1]["insole"]["made"])
             other_pts = _points(trimesh.load(other[0] / "insole" / "insole.stl", force="mesh"), 12.0)[0]
@@ -406,8 +406,8 @@ def _write_packet(data_dir, folder, meta, made, spec, work, out, read_json) -> N
                    pair=str(out / "pair.png") if has_pair else None),
         written=time.strftime("%Y-%m-%dT%H:%M:%S%z"),
     )
-    (work / "packet.md").write_text(packet_markdown(packet))
-    (work / "review.json").write_text(json.dumps(packet, indent=2))
+    (work / "packet.md").write_text(packet_markdown(packet), encoding="utf-8")
+    (work / "review.json").write_text(json.dumps(packet, indent=2), encoding="utf-8")
 
 
 def packet_markdown(p: dict) -> str:

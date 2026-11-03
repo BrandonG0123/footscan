@@ -291,8 +291,8 @@ def list_picks(folder: Path) -> list[dict]:
     files = [p for p in d.glob("pick-*.json") if p.stem.split("-", 1)[1].isdigit()] if d.exists() else []
     for p in sorted(files, key=lambda p: int(p.stem.split("-", 1)[1])):
         try:
-            rec = json.loads(p.read_text())
-        except (json.JSONDecodeError, OSError):
+            rec = json.loads(p.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, UnicodeDecodeError, OSError):
             continue  # a damaged file is skipped, not allowed to break the page
         rec["stale"] = rec.get("mesh_sha256") != current
         out.append(rec)
@@ -334,7 +334,7 @@ def save_pick(folder: Path, n: int, body: dict, ident: dict) -> dict:
     )
     record = compute(record, V, F, mat)
     (folder / "landmarks").mkdir(exist_ok=True)
-    (folder / "landmarks" / f"pick-{n}.json").write_text(json.dumps(record, indent=1))
+    (folder / "landmarks" / f"pick-{n}.json").write_text(json.dumps(record, indent=1), encoding="utf-8")
     record["stale"] = False
     return record
 
@@ -348,7 +348,7 @@ def export_rows(folders: list[Path]) -> list[dict]:
     rows = []
     for folder in folders:
         meta = folder / "capture.json"
-        if meta.exists() and json.loads(meta.read_text()).get("synthetic"):
+        if meta.exists() and json.loads(meta.read_text(encoding="utf-8")).get("synthetic"):
             continue  # rendered/test scenes never enter real measurement data
         for rec in list_picks(folder):
             if rec.get("stale"):
