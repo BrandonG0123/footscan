@@ -155,8 +155,41 @@ struct ScanRecord: Codable {
     /// Set when the studio refused the scan because part of the foot is missing (toes, heel): what's
     /// missing and how to scan again, one line each. Such a scan is never sent again: take a new one.
     var retake: [String]?
+    /// With `retake`: what to change on the next scan, as the studio worded it (title and steps per problem).
+    /// Missing from records made before the studio sent it, and from studios that don't: see `nextTime`.
+    var retakeAdvice: [RetakeAdvice]?
     var units = "metres, Y up (Apple Object Capture's own frame). The studio's Import 3D converts to millimetres."
     var note = "Footscan LiDAR test capture. Not a medical device."
+}
+
+extension ScanRecord {
+    /// What to change on the next scan of this kind, if the studio refused this one: its own steps, or for
+    /// a refusal that came without them, each line's headline as the title and its "Scan again ..." ending
+    /// as the one step (the same fallback as the studio's completeness.retake_advice).
+    var nextTime: [RetakeAdvice] {
+        if let retakeAdvice, !retakeAdvice.isEmpty { return retakeAdvice }
+        return (retake ?? []).map(RetakeAdvice.init(line:))
+    }
+}
+
+/// What to change on the next scan after the studio refused one (its completeness.retake_advice): a short
+/// title for what went wrong, and the steps to do differently, in the order to do them.
+struct RetakeAdvice: Codable, Hashable {
+    var code: String
+    var title: String
+    var steps: [String]
+
+    init(code: String, title: String, steps: [String]) {
+        self.code = code; self.title = title; self.steps = steps
+    }
+
+    /// From one of the studio's refusal lines alone ("THE TOES ARE MISSING: ... Scan again with ...").
+    init(line: String) {
+        let head = line.split(separator: ":", maxSplits: 1).first.map(String.init) ?? line
+        let lower = head.trimmingCharacters(in: .whitespaces).lowercased()
+        let again = line.range(of: "Scan again").map { String(line[$0.lowerBound...]) } ?? "Scan again."
+        self.init(code: "other", title: lower.prefix(1).uppercased() + lower.dropFirst(), steps: [again])
+    }
 }
 
 struct Scan: Identifiable, Hashable {

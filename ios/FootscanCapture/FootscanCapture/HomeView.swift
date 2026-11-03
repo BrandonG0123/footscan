@@ -3,7 +3,8 @@
 // The first time, the intro runs instead (OnboardingView). Before the first
 // scan of each kind, a short "get ready" list (PrepSheet); after that, Start
 // goes straight to the camera, and the model is built (and sent, with a
-// studio connected) by itself.
+// studio connected) by itself. A scan the studio refused has Scan again,
+// which shows what to change before the camera opens and while the box is set.
 import RealityKit
 import SwiftUI
 
@@ -57,11 +58,14 @@ struct HomeView: View {
     @State private var error: String?
     @State private var startAfterPrep: Subject?
     @State private var photoCapture: Subject?
+    /// Scanning again after a refusal: what to change, for the get-ready sheet and the camera.
+    @State private var retake: [RetakeAdvice] = []
 
     struct PrepRequest: Identifiable {
         let subject: Subject
         let mustTick: Bool
-        var id: String { subject.rawValue + (mustTick ? "!" : "") }
+        var retake: [RetakeAdvice] = []
+        var id: String { subject.rawValue + (mustTick ? "!" : "") + (retake.isEmpty ? "" : "+retake") }
     }
 
     /// What this phone can scan: sole and foam-print scans need Apple's 3D capture.
@@ -100,7 +104,7 @@ struct HomeView: View {
                         .accessibilityLabel("Settings")
                 }
             }
-            .navigationDestination(for: Scan.self) { ScanDetailView(scan: $0) }
+            .navigationDestination(for: Scan.self) { ScanDetailView(scan: $0, onScanAgain: scanAgain) }
             .refreshable { library.reload() }
         }
         .tint(.fsBrand)
@@ -109,9 +113,9 @@ struct HomeView: View {
         // The camera opens only once the get-ready sheet has fully gone:
         // presenting it while the sheet is still closing can lose it.
         .sheet(item: $prep, onDismiss: {
-            if let s = startAfterPrep { startAfterPrep = nil; begin(s) }
+            if let s = startAfterPrep { startAfterPrep = nil; begin(s) } else { retake = [] }
         }) { req in
-            PrepSheet(subject: req.subject, mustTick: req.mustTick) { startAfterPrep = req.subject }
+            PrepSheet(subject: req.subject, mustTick: req.mustTick, retake: req.retake) { startAfterPrep = req.subject }
                 .presentationDragIndicator(.visible)
         }
         .fullScreenCover(item: $photoCapture) { s in
@@ -123,14 +127,16 @@ struct HomeView: View {
             }
         }
         .fullScreenCover(item: $capturing) { scan in
-            CaptureView(scan: scan, onDone: { done in
+            CaptureView(scan: scan, retake: retake, onDone: { done in
                 capturing = nil
+                retake = []
                 if let s = done.record?.subject { settings.markPrepared(s) }
                 library.reload()
                 path = [done]
                 Task { await library.finish(done, settings: settings, studio: studio) }
             }, onCancel: {
                 capturing = nil
+                retake = []
                 library.reload()
             })
         }
@@ -275,10 +281,12 @@ struct HomeView: View {
         for s in library.scans where library.work[s.folder] == nil {
             guard let r = s.record else { continue }
             if let p = library.problems[s.folder] { return (s, "\(r.subject.label) needs a look", p) }
-            if let missing = r.retake?.first, !library.scans.contains(where: { newer in
+            if r.retake != nil, !library.scans.contains(where: { newer in
                 newer.record.map { $0.subject == r.subject && $0.created > r.created } ?? false
             }) {
-                return (s, "Scan your \(r.subject.label.lowercased()) again", missing)
+                // what went wrong, in short; the steps to fix it are on the scan's page, with Scan again
+                let what = r.nextTime.map(\.title).joined(separator: ". ")
+                return (s, "Scan your \(r.subject.label.lowercased()) again", what + ". Tap to see what to change.")
             }
             if s.photoCount > 0 && !s.hasOBJ && CaptureMethod.lidarAvailable {
                 return (s, "Finish your \(r.subject.label.lowercased()) scan", "Its 3D model hasn't been built yet.")
@@ -355,7 +363,18 @@ struct HomeView: View {
     }
 
     private func start() {
+        retake = []
         if settings.hasPrepared(subject) { begin(subject) } else { prep = PrepRequest(subject: subject, mustTick: true) }
+    }
+
+    /// A new scan of the same kind as one the studio refused: back to home, the get-ready sheet with what to
+    /// change this time on top, then the camera (which shows it again while the box is set).
+    private func scanAgain(_ refused: Scan) {
+        guard let rec = refused.record, subjects.contains(rec.subject) else { return }
+        subjectRaw = rec.subject.rawValue
+        path = []
+        retake = rec.nextTime
+        prep = PrepRequest(subject: rec.subject, mustTick: false, retake: retake)
     }
 
     private func begin(_ s: Subject) {

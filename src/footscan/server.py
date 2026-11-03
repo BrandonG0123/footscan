@@ -115,6 +115,14 @@ LOOPBACK = {"127.0.0.1", "::1", "::ffff:127.0.0.1"}
 # Headers a reverse proxy or tunnel adds. If any is present the request came
 # from somewhere else, whatever the socket address says.
 PROXY_HEADERS = ("X-Forwarded-For", "Forwarded", "CF-Connecting-IP", "X-Real-IP", "True-Client-IP")
+# A connection is kept open between requests (HTTP/1.1 keep-alive), so a page and its scripts and styles (the
+# capture page is 15 files) share a few connections instead of setting up one each. One left idle this long
+# between requests is closed, which frees its thread.
+KEEPALIVE_TIMEOUT_S = 30
+# Within a request, how long one read or write may wait (an upload or download stalled on weak Wi-Fi).
+TRANSFER_TIMEOUT_S = 120
+# How long a new HTTPS connection may take to finish its TLS handshake before it is dropped.
+TLS_HANDSHAKE_TIMEOUT_S = 10
 SECURITY_HEADERS = {
     "X-Content-Type-Options": "nosniff",
     "Referrer-Policy": "no-referrer",  # studio keys and rescan tokens travel in URLs
@@ -164,6 +172,14 @@ class IncompleteScan(Exception):
     def __init__(self, problems: list[str]):
         super().__init__("The studio didn't keep this scan, because part of the foot is missing. " + " ".join(problems))
         self.problems = problems
+        from .recon import completeness
+
+        # one entry per kind of problem: shorter than both feet's scans is two lines, but one set of steps
+        self.advice = []
+        for p in problems:
+            a = completeness.retake_advice(p)
+            if a["code"] == "other" or a["code"] not in {b["code"] for b in self.advice}:
+                self.advice.append(a)
 
 
 def now_iso() -> str:
@@ -352,12 +368,22 @@ def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check
 
     class Handler(BaseHTTPRequestHandler):
         server_version = "footscan"
+        # Keep-alive: see KEEPALIVE_TIMEOUT_S. Every response states its length (send_json, send_file,
+        # send_error), which is what lets the browser send the next request on the same connection.
+        # One Handler serves every request on its connection, so per-request state is reset in parse_request.
+        protocol_version = "HTTP/1.1"
+        timeout = KEEPALIVE_TIMEOUT_S
 
         def log_message(self, fmt, *args):  # skip static asset noise
             if args and "/api/" in str(args[0]):
                 super().log_message(fmt, *args)
 
         def end_headers(self):
+            if not self.close_connection and self.body_left_unread():
+                # A request refused before its body was read (too large, wrong place, bad input): the unread
+                # bytes would be taken for the next request, so this connection ends with this answer.
+                # (send_error already says so itself.)
+                self.send_header("Connection", "close")
             for k, v in SECURITY_HEADERS.items():
                 self.send_header(k, v)
             if not allow_indexing:
@@ -385,7 +411,7 @@ def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check
             self.wfile.write(data)
 
         def send_file(self, path: Path, ctype: str, cache: str = "no-cache", headers: dict | None = None):
-            headers = {**getattr(self, "_extra_headers", {}), **(headers or {})}
+            headers = {**self._extra_headers, **(headers or {})}
             data = path.read_bytes()
             self.send_response(HTTPStatus.OK)
             self.send_header("Content-Type", ctype)
@@ -402,7 +428,52 @@ def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check
                 raise BadRequest("empty body")
             if length > limit:
                 raise BadRequest("body too large")
-            return self.rfile.read(length)
+            body = self.rfile.read(length)
+            self._body_read = len(body) == length
+            return body
+
+        def handle_expect_100(self):
+            # "Expect: 100-continue" (curl sends it before a large upload): the go-ahead is an interim answer,
+            # so it goes out bare, without end_headers' additions (above all its Connection: close, as the
+            # body that is about to arrive hasn't been read yet).
+            self.send_response_only(HTTPStatus.CONTINUE)
+            BaseHTTPRequestHandler.end_headers(self)
+            return True
+
+        def handle_one_request(self):
+            self.connection.settimeout(KEEPALIVE_TIMEOUT_S)  # waiting for the next request: idle limit
+            super().handle_one_request()
+
+        def parse_request(self):
+            # A new request on this connection: nothing from the one before carries over (above all the
+            # studio-key cookie in _extra_headers, which is only for the response that set it).
+            self._body_read = False
+            self._extra_headers = {}
+            if not super().parse_request():
+                return False
+            self.connection.settimeout(TRANSFER_TIMEOUT_S)
+            # Where this request's body ends must be beyond doubt, or the rest of it would be read as the next
+            # request on this connection (and a proxy in front, reading it another way, could slip one past).
+            # Every copy of each header counts: .get() only sees the first.
+            if self.headers.get_all("Transfer-Encoding") is not None:
+                # No chunked uploads here, whatever the value (even empty) and however many times it's sent.
+                # send_error ends the connection.
+                self.send_error(HTTPStatus.NOT_IMPLEMENTED, "Transfer-Encoding is not supported")
+                return False
+            lengths = self.headers.get_all("Content-Length") or []
+            if len(lengths) > 1 or any(not re.fullmatch(r"[0-9]+", v.strip()) for v in lengths):
+                self.send_error(HTTPStatus.BAD_REQUEST, "One Content-Length, a whole number, please")
+                return False
+            return True
+
+        def body_left_unread(self) -> bool:
+            """Did this request send a body that hasn't been read? Then the connection can't be reused."""
+            if getattr(self, "_body_read", False) or not hasattr(self, "headers"):
+                return False
+            try:
+                return int(self.headers.get("Content-Length") or 0) > 0  # parse_request checked it's one whole number
+            except ValueError:
+                return True
 
         def json_body(self) -> dict:
             body = json.loads(self.read_body(MAX_JSON_BYTES))
@@ -517,7 +588,10 @@ def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check
             except ScreenedOut as e:
                 self.send_json({"error": str(e), "blocked": e.blocked}, HTTPStatus.UNPROCESSABLE_ENTITY)
             except IncompleteScan as e:
-                self.send_json({"error": str(e), "incomplete": e.problems}, HTTPStatus.UNPROCESSABLE_ENTITY)
+                # "incomplete": what was found, the studio's own words; "retake": what to change next time, in
+                # steps (completeness.retake_advice), for the phone to show before the next scan
+                self.send_json({"error": str(e), "incomplete": e.problems, "retake": e.advice},
+                               HTTPStatus.UNPROCESSABLE_ENTITY)
             except (ValueError, json.JSONDecodeError) as e:
                 self.send_json({"error": f"invalid input: {e}"}, HTTPStatus.BAD_REQUEST)
             except FileNotFoundError:
@@ -1437,6 +1511,39 @@ def list_captures(captures_dir: Path) -> list[dict]:
     return sorted(out, key=lambda m: m.get("created", ""), reverse=True)
 
 
+class StudioServer(ThreadingHTTPServer):
+    """The studio's web server: one thread per connection, HTTPS optional.
+
+    With HTTPS, each connection's TLS handshake runs in that connection's own thread, with a time limit.
+    Wrapping the listening socket instead (ssl's usual recipe) does the handshake inside accept(), in the
+    one thread that takes every new connection: then the phone's connections queue behind each other's
+    round trips over Wi-Fi, and one that opens and never finishes (a phone that went to sleep mid-way)
+    stops the studio answering anyone.
+    """
+
+    def __init__(self, address, handler, ssl_context: ssl.SSLContext | None = None):
+        super().__init__(address, handler)
+        self.ssl_context = ssl_context
+
+    def finish_request(self, request, client_address):
+        if self.ssl_context is None:
+            return super().finish_request(request, client_address)
+        request.settimeout(TLS_HANDSHAKE_TIMEOUT_S)
+        try:
+            tls = self.ssl_context.wrap_socket(request, server_side=True)  # the handshake, in this thread
+        except OSError:  # ssl.SSLError, a timeout, or the phone hanging up: drop just this connection
+            return
+        try:
+            super().finish_request(tls, client_address)
+        finally:
+            # The plain socket handed over its file descriptor to `tls`, so close that one here.
+            try:
+                tls.shutdown(socket.SHUT_WR)
+            except OSError:
+                pass
+            tls.close()
+
+
 def ensure_cert(cert_dir: Path) -> tuple[Path, Path]:
     cert, key = cert_dir / "cert.pem", cert_dir / "key.pem"
     if not cert.exists():
@@ -1479,13 +1586,12 @@ def serve(host: str = "127.0.0.1", port: int = 8765, https: bool = False, public
     handler = make_handler(data_dir=(data_dir or DATA_DIR).resolve(), studio_key=studio_key,
                            secure_cookie=https or public, local_check=never_local if public else is_loopback,
                            allow_indexing=allow_indexing, public=public, cert_fingerprint=cert_fp)
-    httpd = ThreadingHTTPServer((host, port), handler)
-    scheme = "http"
+    ctx = None
     if https:
         ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
         ctx.load_cert_chain(cert_path, key_path)
-        httpd.socket = ctx.wrap_socket(httpd.socket, server_side=True)
-        scheme = "https"
+    httpd = StudioServer((host, port), handler, ssl_context=ctx)
+    scheme = "https" if https else "http"
     print("footscan - NOT a medical device", flush=True)
     if public:
         print("PUBLIC MODE: the studio opens only with the studio key, even on this computer.")

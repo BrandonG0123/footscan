@@ -2,11 +2,10 @@ import json
 import threading
 import urllib.error
 import urllib.request
-from http.server import ThreadingHTTPServer
 
 import pytest
 
-from footscan.server import WEB_DIR, make_handler
+from footscan.server import WEB_DIR, StudioServer, make_handler
 
 JPEG = b"\xff\xd8\xff\xe0" + b"\x00" * 64
 KEY = "test-studio-key"
@@ -27,7 +26,7 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
 
 def start(tmp_path, local: bool):
     handler = make_handler(WEB_DIR, tmp_path, local_check=lambda h: local, studio_key=KEY)
-    httpd = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    httpd = StudioServer(("127.0.0.1", 0), handler)
     threading.Thread(target=httpd.serve_forever, daemon=True).start()
     return httpd, f"http://127.0.0.1:{httpd.server_address[1]}"
 
@@ -271,7 +270,7 @@ def test_proxy_headers_are_never_treated_as_local(tmp_path):
 def test_tunnelled_request_cannot_open_studio(tmp_path):
     from footscan.server import is_loopback
 
-    httpd = ThreadingHTTPServer(("127.0.0.1", 0), make_handler(WEB_DIR, tmp_path, local_check=is_loopback, studio_key=KEY))
+    httpd = StudioServer(("127.0.0.1", 0), make_handler(WEB_DIR, tmp_path, local_check=is_loopback, studio_key=KEY))
     threading.Thread(target=httpd.serve_forever, daemon=True).start()
     url = f"http://127.0.0.1:{httpd.server_address[1]}"
     try:
@@ -295,7 +294,7 @@ def test_security_headers_on_every_response(servers):
 
 
 def test_submission_creation_is_rate_limited(tmp_path):
-    httpd = ThreadingHTTPServer(("127.0.0.1", 0), make_handler(WEB_DIR, tmp_path, local_check=lambda h: False,
+    httpd = StudioServer(("127.0.0.1", 0), make_handler(WEB_DIR, tmp_path, local_check=lambda h: False,
                                                                studio_key=KEY, submissions_per_hour=2))
     threading.Thread(target=httpd.serve_forever, daemon=True).start()
     url = f"http://127.0.0.1:{httpd.server_address[1]}"
@@ -617,7 +616,7 @@ def test_wrong_shaped_input_gets_an_answer(servers):
 
 def test_public_server_hides_from_search_engines(tmp_path):
     handler = make_handler(WEB_DIR, tmp_path, local_check=lambda h: False, studio_key=KEY, allow_indexing=False)
-    httpd = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    httpd = StudioServer(("127.0.0.1", 0), handler)
     threading.Thread(target=httpd.serve_forever, daemon=True).start()
     url = f"http://127.0.0.1:{httpd.server_address[1]}"
     try:
@@ -648,7 +647,7 @@ def test_pairing_code_is_studio_only_and_explains_when_phones_cant_connect(serve
 
 def test_pairing_through_the_public_address_uses_it_and_needs_no_fingerprint(tmp_path):
     handler = make_handler(WEB_DIR, tmp_path, local_check=lambda h: False, studio_key=KEY, public=True)
-    httpd = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    httpd = StudioServer(("127.0.0.1", 0), handler)
     threading.Thread(target=httpd.serve_forever, daemon=True).start()
     url = f"http://127.0.0.1:{httpd.server_address[1]}"
     try:
@@ -934,6 +933,8 @@ def test_a_sole_scan_without_its_toes_is_refused_and_not_kept(servers):
     r = json.loads(raw)
     assert r["incomplete"] and r["incomplete"][0].startswith("THE TOES ARE MISSING")
     assert r["error"].startswith("The studio didn't keep this scan") and "Scan again" in r["error"]
+    # and what to change next time, one entry per line found, for the phone to show before the retake
+    assert [a["code"] for a in r["retake"]] == ["toes_missing"] and r["retake"][0]["steps"]
     assert not (data / "captures" / cid).exists()
     assert cid not in [c["capture_id"] for c in body(call(f"{op}/api/captures"))]
 
@@ -946,6 +947,18 @@ def test_a_whole_sole_scan_is_kept_with_its_measures(servers):
     assert st == 200, raw
     c = json.loads((data / "captures" / cid / "capture.json").read_text())["completeness"]
     assert c["problems"] == [] and c["measures"]["length_mm"] == pytest.approx(250.0, abs=3.0)
+
+
+def test_a_refusal_gives_one_set_of_steps_per_kind_of_problem():
+    """Shorter than both feet's scans is two lines but one thing to change: the phone shows its steps once."""
+    from footscan.server import IncompleteScan
+
+    lines = ["THIS FOOT IS 20 MM SHORTER than an earlier scan of the same foot (L1): ...",
+             "THIS FOOT IS 18 MM SHORTER than your right foot's scan (R1): ...",
+             "THE TOES ARE MISSING: ...", "SOMETHING NEW: a. Scan again.", "SOMETHING ELSE: b. Scan again."]
+    e = IncompleteScan(lines)
+    assert e.problems == lines
+    assert [a["code"] for a in e.advice] == ["shorter_than_other", "toes_missing", "other", "other"]
 
 
 def test_a_sole_scan_much_shorter_than_the_other_foot_is_refused(servers):
