@@ -122,6 +122,12 @@ struct ConnectionTestFailures {
         #expect(!silent.contains("Local Network"))
     }
 
+    @Test func aDropMidSendIsNotBlamedOnTheWiFiAndTheScanWaits() {
+        let failure = StudioClient.Failure.dropped(host: "192.168.11.233")
+        #expect(failure.isUnreachable) // sent again once the studio is back
+        #expect(failure.errorDescription?.contains("same Wi-Fi") == false)
+    }
+
     @Test(arguments: [
         (URLError.Code.cancelled, StudioClient.Miss.wrongCertificate), // the pin cancels the challenge
         (.serverCertificateUntrusted, .wrongCertificate),

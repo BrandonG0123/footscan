@@ -61,7 +61,7 @@ final class StudioConnection {
     /// does, the page itself says it couldn't reach the studio.
     func findAddress() async {
         guard let client, !client.link.alternates.isEmpty,
-              let reached = try? await client.reach(timeout: 5) else { return }
+              let reached = try? await client.reach(timeout: 3) else { return }
         remember(reached.link)
     }
 

@@ -363,7 +363,10 @@ struct HomeView: View {
             // photos go straight to the studio: nothing big is kept on the phone
             guard studio.client != nil else { showStudio = true; return }
             // home Wi-Fi or Tailscale: open the camera page at whichever address answers from here
-            Task { await studio.findAddress(); photoCapture = s }
+            Task {
+                await studio.findAddress()
+                if studio.client != nil { photoCapture = s } // still connected after the wait
+            }
             return
         }
         if let problem = DiskSpace.captureProblem() {

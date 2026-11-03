@@ -213,15 +213,23 @@ struct StudioClient {
         /// `incomplete`: the studio found part of the foot missing (toes, heel) and didn't keep the scan;
         /// each line says what's missing and how to scan again.
         /// `unreachable`: none of the studio's addresses answered as the studio, in the order they were tried.
-        case refused(String), unreachable([Missed], pinned: Bool), incomplete([String])
+        /// `dropped`: the studio answered, then the connection failed partway through sending.
+        case refused(String), unreachable([Missed], pinned: Bool), incomplete([String]), dropped(host: String)
         var errorDescription: String? {
             switch self {
             case .refused(let why): "The studio said no: \(why)"
             case .incomplete(let why): "Scan again: the studio didn't keep this scan. \(why.joined(separator: " "))"
             case .unreachable(let misses, let pinned): Self.explain(misses, pinned: pinned)
+            case .dropped(let host): "The connection to the studio at \(host) dropped partway through sending. Try again; the scan is still on this phone."
             }
         }
-        var isUnreachable: Bool { if case .unreachable = self { true } else { false } }
+        /// Worth sending again once the studio is back (waiting scans go then).
+        var isUnreachable: Bool {
+            switch self {
+            case .unreachable, .dropped: true
+            default: false
+            }
+        }
 
         /// What each address needs, in plain words: away from home the home-network address can't answer,
         /// the Tailscale one needs Tailscale on, and a different certificate means a different server.
@@ -287,6 +295,8 @@ struct StudioClient {
         do {
             (data, response) = try await s.data(for: req)
         } catch {
+            // a cancelled task also ends with URLError.cancelled: that isn't a wrong certificate
+            if Task.isCancelled { throw CancellationError() }
             throw Failure.unreachable([Missed(address: link.url, miss: Miss(error))], pinned: link.fingerprint != nil)
         }
         let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
@@ -336,7 +346,12 @@ struct StudioClient {
     /// Make a research capture for this scan and upload its model, at whichever address answers.
     func upload(_ scan: Scan, record: ScanRecord) async throws -> Sent {
         // A quick hello first: a studio that isn't there fails in seconds, not after a long upload timeout.
-        try await reach(timeout: 6).uploadHere(scan, record: record)
+        let here = try await reach(timeout: 6)
+        do {
+            return try await here.uploadHere(scan, record: record)
+        } catch Failure.unreachable {
+            throw Failure.dropped(host: here.link.host) // it answered the hello: not a question of which Wi-Fi
+        }
     }
 
     private func uploadHere(_ scan: Scan, record: ScanRecord) async throws -> Sent {
