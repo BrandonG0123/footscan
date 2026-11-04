@@ -169,6 +169,7 @@ def _nssm(root, exe, args, log, port) -> dict:
              f'Open PowerShell as Administrator: New-Item -ItemType Directory -Force "{log.parent}", '
              "then paste the commands above",
              "Settings > Network: your Wi-Fi must be a Private network, or the firewall rule doesn't apply",
+             'sc.exe qc Footscan    # BINARY_PATH_NAME must be "C:\\Program Files\\nssm\\nssm.exe", in quotes',
              f"Get-Content -Wait {log}    # the studio's addresses",
              "to stop: nssm stop Footscan"]
     return dict(path=None, content=content, steps=steps, port=port)
