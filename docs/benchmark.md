@@ -273,6 +273,20 @@ above the outline's 30 mm doesn't tell them apart either. 60 degrees from
 the-floor warning. What catches the rest is the length against the other
 foot's scan (12 mm, on arrival) and a ruler length.
 
+A third Codex review (4 Nov) found another of these: 15 degrees at 185 mm
+then 60 more at 230 reads 235.9 mm (14.5 short) with nothing said. The
+very front of that toe is 10.7 mm up, but the still-off-the-floor check
+takes the lowest point of the front 5 mm, which is 1.6 mm. Reading the tip
+nearer the front doesn't separate it from good scans, because a toe's end
+is rounded. SYNTHETIC, curved_foot, refined to 2 mm, sole up, prepared at
+549f2de: the lowest point in the front 2 mm is 8.3 mm up on this foot,
+but 8.8 on toes bent 20 degrees three times and laid flat (244.4 mm, as
+good as any here), 4.1 on toes bent 20 once, and 5.1 on the flat foot
+with 0.6 mm speckle. Over the front 1 mm it's 10.7 against 13.3, 13.1 and
+8.8. How far the outline reaches past the last point under 2 mm high is
+4.5 mm on this foot and 4.1-5.2 on those three. So it joins the near-tip
+curls above, left for the other-foot check and a ruler length.
+
 ## The part not measured yet: the capture
 
 The processing is not the weak link; the capture may be. The closest
