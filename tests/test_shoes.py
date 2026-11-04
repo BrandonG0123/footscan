@@ -133,3 +133,17 @@ def test_two_sizes_of_a_shoe_with_a_long_name_stay_two_saved_shoes():
     name = "A Very Long Shoe Model Name That Goes On And On For Ever"  # 57 characters
     assert shoes.shoe_id(name, "US men's 9.5") != shoes.shoe_id(name, "US men's 10")
     assert shoes.shoe_id(name, "US men's 10").endswith("-us-men-s-10")
+
+
+def test_saving_the_same_shoe_from_many_requests_at_once_leaves_one_readable_file(tmp_path):
+    from concurrent.futures import ThreadPoolExecutor
+
+    from footscan import shoes
+
+    outline, read = _shoe_outline()
+    with ThreadPoolExecutor(8) as pool:
+        saved = list(pool.map(lambda i: shoes.save(tmp_path, outline, "Test Trainer", "9.5", f"scan {i}", read),
+                              range(32)))
+    assert {s["id"] for s in saved} == {"test-trainer-9-5"}
+    assert shoes.load(tmp_path, "test-trainer-9-5")["read_from"].startswith("scan ")
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["test-trainer-9-5.json"]  # no part files left behind

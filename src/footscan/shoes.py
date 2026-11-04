@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import json
 import re
+import secrets
 from datetime import datetime
 from pathlib import Path
 
@@ -79,9 +80,12 @@ def save(folder: Path, outline, name: str, size: str, source: str, read: dict, d
     folder = Path(folder)
     folder.mkdir(parents=True, exist_ok=True)
     path = _path(folder, shoe["id"])
-    tmp = path.with_suffix(".json.part")
-    tmp.write_text(json.dumps(shoe, indent=1))
-    tmp.replace(path)
+    tmp = path.with_name(f"{path.name}.part-{secrets.token_hex(4)}")  # this save's own: two at once never share one
+    try:
+        tmp.write_text(json.dumps(shoe, indent=1))
+        tmp.replace(path)
+    finally:
+        tmp.unlink(missing_ok=True)
     if default:
         set_default(folder, shoe["id"])
     return shoe
