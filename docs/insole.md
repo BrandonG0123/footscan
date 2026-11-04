@@ -44,10 +44,10 @@ Save a shoe once, from a scan of its own stock insole lying flat (the app's
 
 In the studio: *Save as a shoe* on the shoe's-insole scan's card, then the
 outline menu on any foot scan's card lists the saved shoes, the default
-chosen. Saved shoes are small JSON files in `data/shoes/` (the studio's:
-`<--data>/shoes`; `footscan shoe --shoes` to use another; the outline in
-mm, heel at the origin; `footscan/shoes.py`). A shoe's insole isn't
-personal data.
+chosen. Saved shoes are small JSON files in `data/shoes/`, each holding the
+outline in mm with the heel at the origin (`footscan/shoes.py`). A studio
+started with `--data X` keeps them in `X/shoes`; point the command line at
+the same folder with `--shoes X/shoes`. A shoe's insole isn't personal data.
 
 With a default saved shoe, `footscan insole` and *Make insole* take its
 outline unless told otherwise (`--shoe <another id or a scan>`, `--length`,
