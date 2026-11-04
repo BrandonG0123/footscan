@@ -70,7 +70,11 @@ prints the start-up file for this computer, filled in with this checkout's
 paths, and the numbered steps to install it. It installs nothing itself.
 
 - **Windows** (tank): a service through NSSM, plus a firewall rule for Private
-  networks only. Keep the data folder's path free of spaces. **First check `nssm status Footscan`**: if a service by that name
+  networks only. The commands copy `nssm.exe` to `C:\Program Files\nssm` first:
+  the service runs it with full control of the computer, so it must not sit in
+  your own folder, where winget puts it. (A service installed from winget's copy:
+  copy it there, then `sc.exe config Footscan binPath= "C:\Program Files\nssm\nssm.exe"`
+  and `nssm restart Footscan`; its settings stay.) Keep the data folder's path free of spaces. **First check `nssm status Footscan`**: if a service by that name
   already exists, it's the public deploy from DEPLOY-TANK.md on the same port.
   Stop and decide which one tank should run; two can't share port 8765.
 - **macOS**: a LaunchAgent. It runs while your account is logged in, so turn on

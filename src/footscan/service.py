@@ -23,6 +23,7 @@ from pathlib import Path
 from xml.sax.saxutils import escape
 
 LABEL = "dev.footscan.server"
+NSSM_DIR = r"C:\Program Files\nssm"
 SYSTEMS = ("macos", "linux", "windows")
 
 
@@ -139,9 +140,18 @@ WantedBy=default.target
 
 
 def _nssm(root, exe, args, log, port) -> dict:
-    """A Windows service through NSSM (tank already runs Caddy this way). Commands, not a file."""
+    """A Windows service through NSSM (tank already runs Caddy this way). Commands, not a file.
+
+    The service runs nssm.exe itself, as LocalSystem. winget puts nssm in the user's own folder, where the
+    user (or anything running as them) can replace it and so get the whole computer; so the commands first
+    copy it to Program Files, which only an administrator can change, and install the service from there.
+    """
     content = "\n".join([
         "# Administrator PowerShell. NOT a medical device; Wi-Fi only (no tunnel, no port forwarding).",
+        "# nssm where only an administrator can change it (the service runs it with full control of the computer)",
+        f'New-Item -ItemType Directory -Force "{NSSM_DIR}" | Out-Null',
+        f'Copy-Item (Get-Command nssm).Source "{NSSM_DIR}\\nssm.exe"',
+        f'$env:Path = "{NSSM_DIR};" + $env:Path',
         f'nssm install Footscan "{exe}" "{" ".join(args)}"',
         f'nssm set Footscan AppDirectory "{root}"',
         "nssm set Footscan AppEnvironmentExtra PYTHONUTF8=1",

@@ -359,6 +359,16 @@ def test_the_windows_service_opens_the_port_on_private_networks_only(tmp_path):
     assert "-Profile Private" in r["content"]
 
 
+def test_the_windows_service_runs_nssm_from_where_only_an_administrator_can_change_it(tmp_path):
+    """The service runs nssm.exe as LocalSystem; winget leaves it in the user's own folder, so the commands copy it
+    to Program Files and put that copy first before `nssm install` records which nssm the service runs."""
+    lines = service.render("windows", tmp_path / "footscan", tmp_path / "data")["content"].splitlines()
+    copy = next(i for i, ln in enumerate(lines) if ln.startswith("Copy-Item") and "Program Files\\nssm" in ln)
+    first = next(i for i, ln in enumerate(lines) if ln.startswith('$env:Path = "C:\\Program Files\\nssm;"'))
+    install = next(i for i, ln in enumerate(lines) if ln.startswith("nssm install Footscan"))
+    assert copy < first < install
+
+
 def test_the_windows_service_refuses_a_data_folder_with_spaces(tmp_path):
     with pytest.raises(ValueError, match="without spaces"):
         service.render("windows", tmp_path / "footscan", tmp_path / "my data")
