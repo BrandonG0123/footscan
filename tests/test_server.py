@@ -943,6 +943,9 @@ def test_a_saved_shoe_is_the_default_outline_for_every_new_insole(servers):
     assert body(call(f"{op}/api/shoes/default", "POST", {"id": None})) == {"default": None}
     assert call(f"{op}/api/shoes/default", "POST", {"id": "no-such-shoe"})[0] == 400
     assert body(call(f"{op}/api/captures/{foot}/insole", "POST", {}))["shoe"] is None  # no default: the foot's
+    (data / "captures" / shoe / "mesh.ply").write_bytes(b"ply\nnot a model")  # broken: an answer, not a dropped line
+    st, raw, _ = call(f"{op}/api/shoes", "POST", new)
+    assert st == 400 and "couldn't read" in json.loads(raw)["error"]
 
 
 def test_the_studio_compares_two_scans_of_the_same_foot(servers):

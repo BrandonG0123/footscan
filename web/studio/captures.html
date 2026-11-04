@@ -139,11 +139,14 @@
 
   // The insole's outline: a saved shoe's (one outline per shoe model and size, footscan/shoes.py), a scanned
   // shoe's insole (recon/shoe.py), or the foot's own (optionally lengthened). A saved shoe or a scan, or a length.
+  // What the menu shows: what was picked on this card since the page loaded, else the shoe the last insole was
+  // fitted to, else the default saved shoe (an insole made before there was one doesn't hold the foot's outline).
+  const picked = {};
   function outlineChoice(c) {
+    if (picked[c.capture_id]) return picked[c.capture_id];
     const shoe = c.insole && !c.insole.error ? c.insole.shoe : undefined;
-    if (shoe?.saved) return `saved:${shoe.saved}`;
-    if (shoe?.capture) return `scan:${shoe.capture}`;
-    if (c.insole && !c.insole.error) return "foot";
+    if (shoe?.saved && saved.shoes.some((s) => s.id === shoe.saved)) return `saved:${shoe.saved}`;
+    if (shoe?.capture && all.some((s) => s.capture_id === shoe.capture)) return `scan:${shoe.capture}`;
     return saved.default ? `saved:${saved.default}` : "foot";
   }
 
@@ -161,6 +164,7 @@
   document.addEventListener("change", (e) => {
     const sel = e.target.closest("[data-shoe-for]");
     if (!sel) return;
+    picked[sel.dataset.shoeFor] = sel.value;
     const len = document.querySelector(`[data-length-for="${CSS.escape(sel.dataset.shoeFor)}"]`);
     if (len) { len.disabled = sel.value !== "foot"; if (sel.value !== "foot") len.value = ""; }
   });

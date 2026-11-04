@@ -672,17 +672,14 @@ def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check
             if method == "POST" and not rest:
                 body = self.json_body()
                 folder = shoe_capture(captures_dir, body.get("capture"))
-                from .recon import shoe as shoe_mod
-                from .recon.imported import load_geometry
-
-                smeta = read_json(folder / "capture.json")
                 try:
-                    outline, read = shoe_mod.outline_from_scan(load_geometry(insole_source(folder, smeta)),
-                                                               up=(smeta.get("mesh") or {}).get("up", "y"))
+                    outline, read = shoe_outline(folder)
                     saved = shoes_mod.save(shoes_dir, outline, body.get("name"), body.get("size"), folder.name, read,
                                            default=bool(body.get("default")))
                 except ValueError as e:  # a ShoeError (not an insole's scan) or a ShoeLibraryError (name, size)
                     raise BadRequest(str(e)) from None
+                except Exception as e:  # noqa: BLE001 - a broken model is reported, never a dropped connection
+                    raise BadRequest(f"couldn't read the shoe's insole from this model ({type(e).__name__}: {e})") from None
                 return self.send_json({k: v for k, v in saved.items() if k != "outline"}, HTTPStatus.CREATED)
             if method == "POST" and rest == ["default"]:
                 sid = self.json_body().get("id")
@@ -1235,7 +1232,7 @@ def _shoe_changed(folder: Path, ins: dict) -> bool:
     shoe = ins.get("shoe")
     if not shoe:
         return False
-    if shoe.get("saved"):  # a saved shoe: <data>/shoes/<id>.json, beside <data>/captures
+    if shoe.get("saved"):  # a saved shoe: <data>/shoes/<id>.json, beside <data>/captures (make_handler's layout)
         return shoes_mod.stamp(folder.parent.parent / "shoes", shoe["saved"]) != shoe.get("source")
     sf = folder.parent / shoe["capture"]
     if not (sf / "capture.json").is_file():
@@ -1302,9 +1299,19 @@ def shoe_capture(captures_dir: Path, cid) -> Path:
 def saved_shoe(shoes_dir: Path, sid) -> tuple[str, dict, str | None]:
     """A saved shoe for Make insole -> (its id, the saved shoe, its file's stamp)."""
     try:
-        return sid, shoes_mod.load(shoes_dir, sid), shoes_mod.stamp(shoes_dir, sid)
+        return (sid, *shoes_mod.load_stamped(shoes_dir, sid))
     except shoes_mod.ShoeLibraryError as e:
         raise BadRequest(f"saved_shoe: {e}") from None
+
+
+def shoe_outline(folder: Path):
+    """A shoe's-insole capture's outline -> (outline, read info), as recon/shoe.py reads it."""
+    from .recon import shoe as shoe_mod
+    from .recon.imported import load_geometry
+
+    smeta = read_json(folder / "capture.json")
+    return shoe_mod.outline_from_scan(load_geometry(insole_source(folder, smeta)),
+                                      up=(smeta.get("mesh") or {}).get("up", "y"))
 
 
 def shoe_stamp(folder: Path) -> dict:
@@ -1338,10 +1345,8 @@ def make_insole(folder: Path, meta: dict, length_mm: float | None = None, shoe: 
         if shoe is not None:
             from .recon import shoe as shoe_mod
 
-            smeta = read_json(shoe / "capture.json")
             shoe_info = shoe_stamp(shoe)
-            outline, read = shoe_mod.outline_from_scan(load_geometry(insole_source(shoe, smeta)),
-                                                       up=(smeta.get("mesh") or {}).get("up", "y"))
+            outline, read = shoe_outline(shoe)
             shoe_info.update(length_mm=read["length_mm"], width_mm=read["width_mm"])
             params = insole_mod.InsoleParams(shoe_outline=shoe_mod.as_param(outline))
         elif saved is not None:

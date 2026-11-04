@@ -30,16 +30,23 @@ from pathlib import Path
 DEFAULT_DIR = Path(__file__).resolve().parents[2] / "data" / "shoes"  # the studio's: <its data folder>/shoes
 ID_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,79}$")
 DEFAULT_FILE = "default.txt"
-NAME_MAX = 80
+NAME_MAX = 60   # characters: the id keeps up to 55 of the name's and all of the size's
+SIZE_MAX = 24
 
 
 class ShoeLibraryError(ValueError):
     pass
 
 
+def _slug(text: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")
+
+
 def shoe_id(name: str, size: str) -> str:
-    """"ASICS Gel Resolution X", "US men's 9.5" -> "asics-gel-resolution-x-us-men-s-9-5"."""
-    slug = re.sub(r"[^a-z0-9]+", "-", f"{name} {size}".lower()).strip("-")[:80].strip("-")
+    """"ASICS Gel Resolution X", "US men's 9.5" -> "asics-gel-resolution-x-us-men-s-9-5". The size is always
+    whole in it, so two sizes of one shoe are never the same saved shoe."""
+    n, z = _slug(name)[:55].strip("-"), _slug(size)
+    slug = f"{n}-{z}" if n and z else ""
     if not ID_RE.match(slug):
         raise ShoeLibraryError("a saved shoe needs a name and a size with some letters or numbers")
     return slug
@@ -60,8 +67,8 @@ def save(folder: Path, outline, name: str, size: str, source: str, read: dict, d
     name, size = (str(name or "").strip(), str(size or "").strip())
     if not name or not size:
         raise ShoeLibraryError("a saved shoe needs a name (e.g. ASICS Gel Resolution X) and a size (e.g. US men's 9.5)")
-    if len(name) > NAME_MAX or len(size) > NAME_MAX:
-        raise ShoeLibraryError(f"name and size: at most {NAME_MAX} characters each")
+    if len(name) > NAME_MAX or len(size) > SIZE_MAX:
+        raise ShoeLibraryError(f"name: at most {NAME_MAX} characters; size: at most {SIZE_MAX}")
     hand, _ = shoe_mod.handedness(outline)
     x0, y0, x1, y1 = outline.bounds
     shoe = dict(id=shoe_id(name, size), name=name, size=size,
@@ -84,10 +91,28 @@ def load(folder: Path, sid: str) -> dict:
     path = _path(folder, sid)
     if not path.is_file():
         raise ShoeLibraryError(f"no saved shoe {sid!r} (footscan shoe list shows them)")
-    shoe = json.loads(path.read_text())
-    if not isinstance(shoe.get("outline"), list) or len(shoe["outline"]) < 3:
-        raise ShoeLibraryError(f"saved shoe {sid!r} has no outline: save it again from its insole's scan")
+    try:
+        shoe = json.loads(path.read_text())
+        ok = (isinstance(shoe, dict) and all(isinstance(shoe.get(k), str) for k in ("name", "size"))
+              and all(isinstance(shoe.get(k), (int, float)) for k in ("length_mm", "width_mm"))
+              and isinstance(shoe.get("outline"), list) and len(shoe["outline"]) >= 3
+              and all(isinstance(p, list) and len(p) == 2 and all(isinstance(v, (int, float)) for v in p)
+                      for p in shoe["outline"]))
+    except (OSError, ValueError):
+        ok = False
+    if not ok:
+        raise ShoeLibraryError(f"saved shoe {sid!r} can't be read: save it again from its insole's scan")
     return shoe
+
+
+def load_stamped(folder: Path, sid: str) -> tuple[dict, str | None]:
+    """A saved shoe and the stamp of exactly the file it was read from (saved again meanwhile: read again)."""
+    for _ in range(3):
+        before = stamp(folder, sid)
+        shoe = load(folder, sid)
+        if stamp(folder, sid) == before:
+            return shoe, before
+    raise ShoeLibraryError(f"saved shoe {sid!r} keeps changing while it's read: try again")
 
 
 def listed(folder: Path) -> list[dict]:
@@ -96,7 +121,7 @@ def listed(folder: Path) -> list[dict]:
     for path in sorted(Path(folder).glob("*.json")) if Path(folder).is_dir() else []:
         try:
             s = load(folder, path.stem)
-        except (ShoeLibraryError, ValueError, OSError):
+        except ShoeLibraryError:  # unreadable: left out (``footscan shoe add`` again replaces it)
             continue
         out.append({k: v for k, v in s.items() if k != "outline"})
     return sorted(out, key=lambda s: (s["name"].lower(), s["size"].lower()))
@@ -108,7 +133,13 @@ def default_id(folder: Path) -> str | None:
     if not f.is_file():
         return None
     sid = f.read_text().strip()
-    return sid if ID_RE.match(sid) and _path(folder, sid).is_file() else None
+    if not ID_RE.match(sid):
+        return None
+    try:
+        load(folder, sid)
+    except ShoeLibraryError:  # gone or unreadable: no default, rather than every insole refused
+        return None
+    return sid
 
 
 def set_default(folder: Path, sid: str | None) -> None:

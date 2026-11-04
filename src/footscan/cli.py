@@ -428,7 +428,7 @@ def main(argv=None) -> int:
     ins.add_argument("--shoe-up", default="y", choices=["y", "z"], help="the shoe scan's up axis (default y)")
     ins.add_argument("--foot-outline", action="store_true",
                      help="the foot's own outline, even if there is a default saved shoe")
-    ins.add_argument("--shoes", default=str(SHOES_DIR), help=f"saved shoes folder (default {SHOES_DIR})")
+    ins.add_argument("--shoes", default=str(SHOES_DIR), help=f"saved shoes folder (default {SHOES_DIR}; the studio's is <its --data>/shoes)")
     ins.set_defaults(func=cmd_insole)
 
     sh = sub.add_parser("shoe", help="saved shoes: one fixed insole outline per shoe model and size")
@@ -443,7 +443,7 @@ def main(argv=None) -> int:
     sd.add_argument("id", help="a saved shoe's id, or none")
     sl = shs.add_parser("list", help="the saved shoes (* the default)")
     for p in (sa, sd, sl):
-        p.add_argument("--shoes", default=str(SHOES_DIR), help=f"saved shoes folder (default {SHOES_DIR})")
+        p.add_argument("--shoes", default=str(SHOES_DIR), help=f"saved shoes folder (default {SHOES_DIR}; the studio's is <its --data>/shoes)")
     sh.set_defaults(func=cmd_shoe)
 
     cp = sub.add_parser("compare", help="how much two scans of the same foot agree (repeatability)")

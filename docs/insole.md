@@ -27,9 +27,11 @@ the shoe the way the stock insole came out, whoever wears it. So, as custom
 insole makers do, the outline is kept **per shoe model and size**, and only
 the top surface (the arch fill, the heel cup's depth) comes from the foot.
 A foot's own outline also carries any error in the scan's size into the
-insole: the first real right-foot scan read about 7 to 8% small against a
-ruler (2026-11-01), and an outline cut from it came out too short and too
-narrow; a shoe's outline doesn't move with the scan.
+insole: the right-foot sole-up scan LIDAR_nwb_relaxed_R_20261027-151404-2349
+measured 244.3 mm long and 94.3 mm wide, against the owner's ruler reading of
+the same foot, 10.5 x 4 in (266.7 x 101.6 mm, 2026-11-01): 8.4% and 7.2% small.
+An outline cut from it comes out too short and too narrow; a shoe's outline
+doesn't move with the scan.
 
 Save a shoe once, from a scan of its own stock insole lying flat (the app's
 *Shoe's insole* card):
@@ -42,7 +44,8 @@ Save a shoe once, from a scan of its own stock insole lying flat (the app's
 
 In the studio: *Save as a shoe* on the shoe's-insole scan's card, then the
 outline menu on any foot scan's card lists the saved shoes, the default
-chosen. Saved shoes are small JSON files in `data/shoes/` (the outline in
+chosen. Saved shoes are small JSON files in `data/shoes/` (the studio's:
+`<--data>/shoes`; `footscan shoe --shoes` to use another; the outline in
 mm, heel at the origin; `footscan/shoes.py`). A shoe's insole isn't
 personal data.
 

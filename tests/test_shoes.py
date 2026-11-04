@@ -49,7 +49,8 @@ def test_a_saved_shoe_needs_a_name_and_size_and_ids_cant_reach_outside_the_folde
 
 def test_feet_of_different_sizes_in_the_same_saved_shoe_get_the_same_outline(tmp_path):
     """The rule: the shoe sets the insole's outline, the foot only the top inside it. A scan that reads 7% small
-    (as the first real right-foot scan did against a ruler) shrinks the foot's own outline, but not the shoe's."""
+    (as scan LIDAR_nwb_relaxed_R_20261027-151404-2349 did against a ruler, docs/insole.md) shrinks the foot's
+    own outline, but not the shoe's."""
     import trimesh
 
     from footscan import insole, shoes
@@ -112,3 +113,23 @@ def test_the_insole_command_takes_the_default_saved_shoes_outline_unless_told_ot
     assert "outline: the foot's own (no default" in (capsys.readouterr(), insole())[1]
     assert cli.main(["insole", str(foot), "--foot", "right", "-o", str(tmp_path / "x"), "--shoes", str(shoes_dir),
                      "--shoe", "no-such-shoe"]) == 1
+
+
+def test_an_unreadable_saved_shoe_is_left_out_and_never_stays_the_default(tmp_path):
+    from footscan import shoes
+
+    outline, read = _shoe_outline()
+    s = shoes.save(tmp_path, outline, "Test Trainer", "9.5", "synthetic", read, default=True)
+    (tmp_path / "hand-edited.json").write_text("[1, 2, 3]")
+    (tmp_path / "no-name.json").write_text('{"outline": [[0, 0], [1, 0], [0, 1]]}')
+    assert [x["id"] for x in shoes.listed(tmp_path)] == [s["id"]]
+    (tmp_path / f"{s['id']}.json").write_text('{"name": "Test Trainer"')  # cut short
+    assert shoes.listed(tmp_path) == [] and shoes.default_id(tmp_path) is None
+
+
+def test_two_sizes_of_a_shoe_with_a_long_name_stay_two_saved_shoes():
+    from footscan import shoes
+
+    name = "A Very Long Shoe Model Name That Goes On And On For Ever"  # 57 characters
+    assert shoes.shoe_id(name, "US men's 9.5") != shoes.shoe_id(name, "US men's 10")
+    assert shoes.shoe_id(name, "US men's 10").endswith("-us-men-s-10")
