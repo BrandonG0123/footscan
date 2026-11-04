@@ -20,6 +20,23 @@ reconstructions are; mm, cm or m are detected. It writes:
 | `print-notes.txt` | Starting points for TPU. Untested on this design (that's Phase 5). |
 | `right-insole.json` | Everything above as data. |
 
+### A Bambu Studio project with TPU settings
+
+```bash
+.venv/bin/python -m footscan.bambu reports/my-insole/right-insole.3mf right-insole-tpu.3mf \
+  --profiles /Applications/BambuStudio.app/Contents/Resources/profiles/BBL --bed-type "High Temp Plate"
+```
+
+turns the plain 3MF into a Bambu Studio project (`src/footscan/bambu.py`):
+opening it selects the printer (default X1 Carbon 0.4 mm nozzle), Bambu's own
+TPU 95A HF filament profile, the plate type, and a process with 3 walls,
+20% gyroid infill and slow speeds (40 mm/s infill, 25 mm/s outer wall and
+top surface). The shape is copied unchanged at scale 1; it is only turned
+and moved to lie on the bed clear of the printer's no-print corner. The
+settings are starting points, not yet checked on a printed insole. Use the
+profile folder of the Bambu Studio that will open the file, and
+`--app-version` no newer than that app.
+
 `--length 270` lengthens the insole to a shoe's insole length (mm): only the
 flat front reaches further, the shape under the heel, arch and ball stays
 where the foot is, and it's never made shorter than the foot. In the studio
