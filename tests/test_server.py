@@ -889,6 +889,62 @@ def test_make_insole_can_fit_to_a_scanned_shoes_insole(servers):
     assert call(f"{op}/api/captures/{foot}/insole/insole.3mf")[0] == 409
 
 
+def test_a_saved_shoe_is_the_default_outline_for_every_new_insole(servers):
+    """POST /api/shoes saves a shoe's-insole capture as a saved shoe (one outline per shoe and size); made the
+    default, POST insole {} takes its outline; {foot_outline: true} opts out; saving it again makes the insole
+    stale; the phone can't reach any of it."""
+    import time
+
+    import synth
+
+    op, phone, data = servers
+    foot = body(call(f"{op}/api/captures", "POST", {"condition": "swb", "foot": "right", "session": "LIDAR",
+                                                     "load_kg": 30, "method": "imported_mesh"}))["id"]
+    assert call(f"{op}/api/captures/{foot}/mesh?ext=obj&up=y", "PUT", _object_capture_foot("right"),
+                {"Content-Type": "application/octet-stream"})[0] == 200
+    shoe = body(call(f"{op}/api/captures", "POST", {"condition": "shoe_insole", "session": "LIDAR",
+                                                    "method": "imported_mesh"}))["id"]
+    assert call(f"{op}/api/captures/{shoe}/mesh?ext=obj&up=y", "PUT",
+                synth.shoe_insole().export(file_type="obj").encode(), {"Content-Type": "application/octet-stream"})[0] == 200
+
+    assert body(call(f"{op}/api/shoes")) == {"shoes": [], "default": None}
+    plain = body(call(f"{op}/api/captures/{foot}/insole", "POST", {}))  # no saved shoe yet: the foot's outline
+    assert plain["shoe"] is None and plain["length_mm"] < 265
+
+    new = {"capture": shoe, "name": "Test Trainer", "size": "US men's 9.5", "default": True}
+    st, raw, _ = call(f"{op}/api/shoes", "POST", new)
+    assert st == 201, raw
+    s = json.loads(raw)
+    assert s["id"] == "test-trainer-us-men-s-9-5" and s["length_mm"] == pytest.approx(271, abs=2) and "outline" not in s
+    listed = body(call(f"{op}/api/shoes"))
+    assert listed["default"] == s["id"] and [x["id"] for x in listed["shoes"]] == [s["id"]]
+    assert call(f"{op}/api/shoes", "POST", {**new, "capture": foot})[0] == 400  # not a shoe's insole
+    assert call(f"{op}/api/shoes", "POST", {**new, "name": " "})[0] == 400
+    assert call(f"{phone}/api/shoes")[0] == 403
+
+    r = body(call(f"{op}/api/captures/{foot}/insole", "POST", {}))  # nothing chosen: the default saved shoe
+    assert r["shoe"]["saved"] == s["id"] and r["shoe"]["name"] == "Test Trainer, US men's 9.5"
+    assert r["length_mm"] == pytest.approx(271, abs=2)
+    assert "Test Trainer" in call(f"{op}/api/captures/{foot}/insole/summary.html")[1].decode()
+    own = body(call(f"{op}/api/captures/{foot}/insole", "POST", {"foot_outline": True}))
+    assert own["shoe"] is None and own["length_mm"] == plain["length_mm"]
+    assert call(f"{op}/api/captures/{foot}/insole", "POST", {"saved_shoe": s["id"], "length_mm": 280})[0] == 400
+    assert call(f"{op}/api/captures/{foot}/insole", "POST", {"saved_shoe": "no-such-shoe"})[0] == 400
+    assert call(f"{op}/api/captures/{foot}/insole", "POST", {"saved_shoe": "../x"})[0] == 400
+
+    # saved again (a better scan of the same shoe): an insole made from the old outline is stale
+    assert body(call(f"{op}/api/captures/{foot}/insole", "POST", {"saved_shoe": s["id"]}))["shoe"]["saved"] == s["id"]
+    time.sleep(0.01)
+    assert call(f"{op}/api/shoes", "POST", new)[0] == 201
+    listed = [c for c in body(call(f"{op}/api/captures")) if c["capture_id"] == foot][0]
+    assert listed["insole"].get("stale") is True
+    assert call(f"{op}/api/captures/{foot}/insole/insole.3mf")[0] == 409
+
+    assert body(call(f"{op}/api/shoes/default", "POST", {"id": None})) == {"default": None}
+    assert call(f"{op}/api/shoes/default", "POST", {"id": "no-such-shoe"})[0] == 400
+    assert body(call(f"{op}/api/captures/{foot}/insole", "POST", {}))["shoe"] is None  # no default: the foot's
+
+
 def test_the_studio_compares_two_scans_of_the_same_foot(servers):
     """POST /api/compare {a, b}: two imports of the same synthetic foot agree closely; studio only."""
     op, phone, _ = servers

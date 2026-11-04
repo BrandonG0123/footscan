@@ -20,6 +20,46 @@ reconstructions are; mm, cm or m are detected. It writes:
 | `print-notes.txt` | Starting points for TPU. Untested on this design (that's Phase 5). |
 | `right-insole.json` | Everything above as data. |
 
+## The outline is the shoe's: saved shoes
+
+The insole's outline belongs to the shoe, not the foot: it has to go into
+the shoe the way the stock insole came out, whoever wears it. So, as custom
+insole makers do, the outline is kept **per shoe model and size**, and only
+the top surface (the arch fill, the heel cup's depth) comes from the foot.
+A foot's own outline also carries any error in the scan's size into the
+insole: the first real right-foot scan read about 7 to 8% small against a
+ruler (2026-11-01), and an outline cut from it came out too short and too
+narrow; a shoe's outline doesn't move with the scan.
+
+Save a shoe once, from a scan of its own stock insole lying flat (the app's
+*Shoe's insole* card):
+
+```bash
+.venv/bin/footscan shoe add stock-insole.obj --name "ASICS Gel Resolution X" --size "US men's 9.5" --default
+.venv/bin/footscan shoe list            # * marks the default
+.venv/bin/footscan shoe default none    # back to the foot's own outline
+```
+
+In the studio: *Save as a shoe* on the shoe's-insole scan's card, then the
+outline menu on any foot scan's card lists the saved shoes, the default
+chosen. Saved shoes are small JSON files in `data/shoes/` (the outline in
+mm, heel at the origin; `footscan/shoes.py`). A shoe's insole isn't
+personal data.
+
+With a default saved shoe, `footscan insole` and *Make insole* take its
+outline unless told otherwise (`--shoe <another id or a scan>`, `--length`,
+or `--foot-outline`; in the studio, the outline menu). The outline is placed
+round the foot exactly as a scanned shoe's insole is (below) and keeps its
+shape. On SYNTHETIC test feet (`tests/test_shoes.py`, 2026-11-04), a foot and
+the same foot scaled to 93% got insole outlines of 22,847 mm2 each in the same
+saved shoe; with their own outlines, 20,144 and 17,532 mm2 (13.0% less). Without any shoe the outline is the foot's own, and
+the summary sheet and the studio say so: trim it to the stock insole.
+
+Saving a shoe again (a better scan of it) makes insoles made from the old
+outline stale in the studio, as a re-scanned foot does.
+
+No saved shoe exists yet: the stock ASICS insole hasn't been scanned.
+
 `--length 270` lengthens the insole to a shoe's insole length (mm): only the
 flat front reaches further, the shape under the heel, arch and ball stays
 where the foot is, and it's never made shorter than the foot. In the studio

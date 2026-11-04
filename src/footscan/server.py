@@ -45,6 +45,9 @@ PUT  /api/captures/<id>/picks/<n>                       save pick n {landmarks: 
 DELETE /api/captures/<id>/picks/<n>
 (the same three under /api/submissions/<id>/scans/<key>/)
 GET  /api/measurements.csv                              every research capture's picks, for the repeatability study
+GET  /api/shoes                                         saved shoes (one insole outline per shoe and size), the default
+POST /api/shoes                                         {capture, name, size, default}: save a shoe's-insole scan's outline
+POST /api/shoes/default                                 {id} (null: none): insoles take its outline unless told otherwise
 
 The server itself needs only the standard library; saving a pick loads
 numpy and trimesh to compute the measurements.
@@ -75,6 +78,7 @@ from pathlib import Path
 
 from . import mat as mat_mod
 from . import recon_jobs
+from . import shoes as shoes_mod
 from . import survey as survey_mod
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -363,6 +367,7 @@ def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check
                  public: bool = False, cert_fingerprint: str | None = None):
     runner = recon_jobs.ReconRunner()
     captures_dir = data_dir / "captures"
+    shoes_dir = data_dir / "shoes"
     submissions_dir = data_dir / "submissions"
     limiter = RateLimiter(submissions_per_hour)
 
@@ -639,6 +644,9 @@ def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check
             if parts[:1] == ["captures"]:
                 self.require_local()
                 return self.api_captures(method, parts[1:])
+            if parts[:1] == ["shoes"]:
+                self.require_local()
+                return self.api_shoes(method, parts[1:])
             if parts == ["compare"] and method == "POST":
                 self.require_local()
                 if self.cross_site():
@@ -654,6 +662,35 @@ def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check
             if parts == ["studio", "pairing"] and method == "GET":
                 self.require_local()
                 return self.send_json(self.pairing())
+            raise FileNotFoundError
+
+        def api_shoes(self, method: str, rest: list[str]):
+            """Saved shoes (footscan/shoes.py): GET the list and the default; POST {capture, name, size, default}
+            saves a shoe's-insole capture's outline; POST default {id} (null: none) chooses the default."""
+            if method == "GET" and not rest:
+                return self.send_json(dict(shoes=shoes_mod.listed(shoes_dir), default=shoes_mod.default_id(shoes_dir)))
+            if method == "POST" and not rest:
+                body = self.json_body()
+                folder = shoe_capture(captures_dir, body.get("capture"))
+                from .recon import shoe as shoe_mod
+                from .recon.imported import load_geometry
+
+                smeta = read_json(folder / "capture.json")
+                try:
+                    outline, read = shoe_mod.outline_from_scan(load_geometry(insole_source(folder, smeta)),
+                                                               up=(smeta.get("mesh") or {}).get("up", "y"))
+                    saved = shoes_mod.save(shoes_dir, outline, body.get("name"), body.get("size"), folder.name, read,
+                                           default=bool(body.get("default")))
+                except ValueError as e:  # a ShoeError (not an insole's scan) or a ShoeLibraryError (name, size)
+                    raise BadRequest(str(e)) from None
+                return self.send_json({k: v for k, v in saved.items() if k != "outline"}, HTTPStatus.CREATED)
+            if method == "POST" and rest == ["default"]:
+                sid = self.json_body().get("id")
+                try:
+                    shoes_mod.set_default(shoes_dir, sid or None)
+                except shoes_mod.ShoeLibraryError as e:
+                    raise BadRequest(str(e)) from None
+                return self.send_json(dict(default=shoes_mod.default_id(shoes_dir)))
             raise FileNotFoundError
 
         def pairing(self) -> dict:
@@ -703,15 +740,19 @@ def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check
                 opts = opts if isinstance(opts, dict) else {}
                 length = parse_shoe_length(opts.get("length_mm"))
                 shoe_id = opts.get("shoe") or None
-                if shoe_id is not None and length is not None:
-                    raise BadRequest("give the shoe's insole or a length, not both")
+                saved_id = opts.get("saved_shoe") or None
+                if sum(x is not None for x in (shoe_id, saved_id, length)) > 1:
+                    raise BadRequest("give one of: a shoe's insole, a saved shoe, a length")
+                if shoe_id is None and saved_id is None and length is None and not opts.get("foot_outline"):
+                    saved_id = shoes_mod.default_id(shoes_dir)  # per shoe by default: the default saved shoe's outline
                 with capture_lock(d.name):
                     meta = read_json(d / "capture.json")
                     foot = meta.get("foot")
                     if foot not in FEET:
                         raise BadRequest("an insole needs a foot capture (left or right)")
                     shoe = shoe_capture(captures_dir, shoe_id) if shoe_id is not None else None
-                    result = make_insole(d, meta, length_mm=length, shoe=shoe)
+                    saved = saved_shoe(shoes_dir, saved_id) if saved_id is not None else None
+                    result = make_insole(d, meta, length_mm=length, shoe=shoe, saved=saved)
                     if "error" in result:  # a failed attempt leaves nothing printable behind
                         shutil.rmtree(d / "insole", ignore_errors=True)
                     meta = read_json(d / "capture.json")  # re-read: don't undo other changes made meanwhile
@@ -1190,10 +1231,12 @@ def source_stamp(path: Path | None) -> str | None:
 
 
 def _shoe_changed(folder: Path, ins: dict) -> bool:
-    """Was the shoe's-insole capture an insole was fitted to replaced, rebuilt or deleted since?"""
+    """Was the shoe's-insole capture (or saved shoe) an insole was fitted to replaced, rebuilt or deleted since?"""
     shoe = ins.get("shoe")
     if not shoe:
         return False
+    if shoe.get("saved"):  # a saved shoe: <data>/shoes/<id>.json, beside <data>/captures
+        return shoes_mod.stamp(folder.parent.parent / "shoes", shoe["saved"]) != shoe.get("source")
     sf = folder.parent / shoe["capture"]
     if not (sf / "capture.json").is_file():
         return True
@@ -1256,18 +1299,29 @@ def shoe_capture(captures_dir: Path, cid) -> Path:
     return folder
 
 
+def saved_shoe(shoes_dir: Path, sid) -> tuple[str, dict, str | None]:
+    """A saved shoe for Make insole -> (its id, the saved shoe, its file's stamp)."""
+    try:
+        return sid, shoes_mod.load(shoes_dir, sid), shoes_mod.stamp(shoes_dir, sid)
+    except shoes_mod.ShoeLibraryError as e:
+        raise BadRequest(f"saved_shoe: {e}") from None
+
+
 def shoe_stamp(folder: Path) -> dict:
     meta = read_json(folder / "capture.json")
     return dict(capture=folder.name, source=source_stamp(insole_source(folder, meta)))
 
 
-def make_insole(folder: Path, meta: dict, length_mm: float | None = None, shoe: Path | None = None) -> dict:
+def make_insole(folder: Path, meta: dict, length_mm: float | None = None, shoe: Path | None = None,
+                saved: tuple[str, dict, str | None] | None = None) -> dict:
     """First-fit insole for a foot capture: an imported model (iPhone app) or a footscan reconstruction.
 
     ``length_mm``: a shoe's insole length: the outline is lengthened to it at the front only (the
     shape under the heel, arch and ball unchanged); never shorter than the foot.
     ``shoe``: a shoe's-insole capture's folder: the insole takes that insole's outline, fitted round the
     foot (recon/shoe.py). Not with ``length_mm``.
+    ``saved``: (id, saved shoe, stamp) from <data>/shoes (footscan/shoes.py): the same, from the outline kept for
+    that shoe model and size. Not with the others.
     Files go to <capture>/insole/. Returns a short report (or {"error": ...}).
     """
     import shutil
@@ -1290,6 +1344,11 @@ def make_insole(folder: Path, meta: dict, length_mm: float | None = None, shoe: 
                                                        up=(smeta.get("mesh") or {}).get("up", "y"))
             shoe_info.update(length_mm=read["length_mm"], width_mm=read["width_mm"])
             params = insole_mod.InsoleParams(shoe_outline=shoe_mod.as_param(outline))
+        elif saved is not None:
+            sid, s, sstamp = saved
+            shoe_info = dict(saved=sid, source=sstamp,
+                             name=shoes_mod.label(s), length_mm=s["length_mm"], width_mm=s["width_mm"])
+            params = insole_mod.InsoleParams(shoe_outline=shoes_mod.outline_param(s), shoe_name=shoes_mod.label(s))
         if meta.get("method") == "imported_mesh" and (folder / "mesh.ply").is_file():
             up = (meta.get("mesh") or {}).get("up", "y")
             kind = meta.get("scan_kind") or "foot"
