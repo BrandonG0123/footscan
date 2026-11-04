@@ -196,8 +196,9 @@ struct StudioClient {
         init(_ error: Error) {
             switch (error as? URLError)?.code {
             // .cancelled: the pin cancels the challenge when the certificate differs
+            // (.secureConnectionFailed is a TLS set-up failure, not a certificate: it counts as no answer)
             case .cancelled?, .serverCertificateUntrusted?, .serverCertificateHasBadDate?, .serverCertificateHasUnknownRoot?,
-                 .serverCertificateNotYetValid?, .secureConnectionFailed?: self = .wrongCertificate
+                 .serverCertificateNotYetValid?: self = .wrongCertificate
             case .notConnectedToInternet?, .dataNotAllowed?, .internationalRoamingOff?: self = .noRoute
             default: self = .noAnswer
             }

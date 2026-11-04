@@ -1576,10 +1576,12 @@ TAILNET = ipaddress.ip_network("100.64.0.0/10")  # the addresses Tailscale gives
 def tailnet_ip() -> str | None:
     """This computer's Tailscale address (100.64.0.0/10), or None without Tailscale.
 
-    Asks the tailscale command first (`tailscale ip -4`; on Windows it is usually not on the service's PATH, so
-    its install folder is tried too), then falls back to the addresses this computer's name resolves to.
+    Asks the tailscale command first (`tailscale ip -4`). It is often not on the studio's PATH (a Windows service
+    started before Tailscale was installed; the Mac app, whose command sits inside the app), so the install
+    locations are tried too. Then falls back to the addresses this computer's name resolves to.
     """
-    candidates = [shutil.which("tailscale"), r"C:\Program Files\Tailscale\tailscale.exe"]
+    candidates = [shutil.which("tailscale"), r"C:\Program Files\Tailscale\tailscale.exe",
+                  "/Applications/Tailscale.app/Contents/MacOS/Tailscale"]
     for exe in filter(None, candidates):
         if not Path(exe).is_file():
             continue

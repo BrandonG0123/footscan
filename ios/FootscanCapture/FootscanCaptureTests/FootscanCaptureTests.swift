@@ -131,6 +131,7 @@ struct ConnectionTestFailures {
     @Test(arguments: [
         (URLError.Code.cancelled, StudioClient.Miss.wrongCertificate), // the pin cancels the challenge
         (.serverCertificateUntrusted, .wrongCertificate),
+        (.secureConnectionFailed, .noAnswer), // a failed TLS set-up says nothing about which certificate
         (.notConnectedToInternet, .noRoute),
         (.timedOut, .noAnswer), (.cannotConnectToHost, .noAnswer),
     ])

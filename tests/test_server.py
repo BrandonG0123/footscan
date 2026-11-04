@@ -704,6 +704,25 @@ def test_tailnet_address_is_read_from_the_tailscale_command(monkeypatch, tmp_pat
     assert srv.tailnet_ip() == "100.88.1.2"
 
 
+def test_tailnet_address_is_found_through_the_mac_app_when_the_command_isnt_on_path(monkeypatch):
+    import subprocess
+
+    import footscan.server as srv
+
+    mac_cli = "/Applications/Tailscale.app/Contents/MacOS/Tailscale"
+    ran = []
+    monkeypatch.setattr(srv.shutil, "which", lambda name: None)
+    monkeypatch.setattr(srv.Path, "is_file", lambda self: str(self) == mac_cli)
+
+    def run(cmd, **kw):
+        ran.append(cmd[0])
+        return subprocess.CompletedProcess(cmd, 0, "100.88.1.2\n", "")
+
+    monkeypatch.setattr(srv.subprocess, "run", run)
+    monkeypatch.setattr(srv.socket, "getaddrinfo", lambda *a, **k: [])  # the computer's name gives only LAN addresses
+    assert srv.tailnet_ip() == "100.88.1.2" and ran == [mac_cli]
+
+
 def test_only_addresses_in_tailscales_range_count_as_tailnet():
     from footscan.server import first_tailnet_ip
 
