@@ -150,3 +150,45 @@ def test_the_printers_no_print_corner_is_kept_clear(profiles):
     placed = bambu.placed_vertices(placement["transform"], V)
     assert not np.any((placed[:, 0] < 73) & (placed[:, 1] < 73))
     assert placement["room_mm"] >= 3.0
+
+
+def test_a_pair_goes_on_two_plates_of_one_project_each_insole_unchanged(tmp_path, profiles):
+    """Left on plate 1, right on plate 2: Bambu puts an object on a plate by where it lies, plates a bed + 1/5 apart."""
+    left, right = _insole_like(), _insole_like(length=270.0)
+    right.apply_scale([1, -1, 1])  # a mirror, like a right insole made from a left
+    paths = []
+    for name, m in (("left", left), ("right", right)):
+        paths.append(tmp_path / f"{name}.stl")
+        m.export(paths[-1])
+    out = tmp_path / "pair.3mf"
+    info = bambu.tpu_project(paths, out, profiles, bed_type="High Temp Plate", **X1C)
+
+    r = bambu.read_project(out)
+    assert [p["plate"] for p in info["plates"]] == [1, 2]
+    assert [p["length_mm"] for p in info["plates"]] == [275.0, 270.0]
+    assert r["model_settings"].count("<plate>") == 2
+    stride = 256 * 1.2
+    for k, (part, src) in enumerate(zip(r["parts"], (left, right))):
+        # the same points (an STL round trip may list them in another order)
+        got, want = part["vertices"], np.asarray(src.vertices)
+        order = lambda v: v[np.lexsort(np.round(v, 2).T + 0.0)]  # noqa: E731
+        assert len(got) == len(want) and np.allclose(order(got), order(want), atol=1e-3)
+        placed = bambu.placed_vertices(part["transform"], part["vertices"])
+        on_plate = placed[:, :2] - [k * stride, 0]
+        assert on_plate.min() >= 3.0 - 1e-6 and on_plate.max() <= 253.0 + 1e-6, k
+        assert np.isclose(placed[:, 2].min(), 0.0, atol=1e-6)
+
+
+def test_a_slower_spool_lowers_the_filament_flow_limit_and_lists_it_as_a_filament_change(tmp_path, profiles):
+    (profiles / "filament" / "Bambu TPU 95A HF @BBL X1C.json").write_text(json.dumps({
+        "name": "Bambu TPU 95A HF @BBL X1C", "from": "system", "instantiation": "true", "filament_id": "GFU00",
+        "filament_max_volumetric_speed": ["12", "12"], "nozzle_temperature": ["230", "230"],
+        "filament_extruder_variant": ["Direct Drive Standard", "Direct Drive High Flow"],
+        "compatible_printers": ["Bambu Lab X1 Carbon 0.4 nozzle"]}))
+    cfg = bambu.project_config(profiles, **X1C, bed_type="High Temp Plate",
+                               filament_changes={"filament_max_volumetric_speed": "2.5"})
+    assert cfg["filament_max_volumetric_speed"] == ["2.5", "2.5"]
+    assert cfg["different_settings_to_system"][1] == "filament_max_volumetric_speed"
+    assert cfg["nozzle_temperature"] == ["230", "230"]
+    with pytest.raises(KeyError, match="not filament settings"):
+        bambu.project_config(profiles, **X1C, bed_type="High Temp Plate", filament_changes={"wall_loops": "4"})

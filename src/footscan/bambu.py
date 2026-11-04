@@ -119,9 +119,14 @@ def _set_everywhere(base, value: str):
 
 
 def project_config(profiles: Path, printer: str, process: str, filament: str, *, bed_type: str,
-                   changes: dict[str, str] | None = None, colour: str = "#FFFFFF",
-                   app_version: str = DEFAULT_APP_VERSION) -> dict:
-    """The project settings: printer + process + filament presets, the process changes on top."""
+                   changes: dict[str, str] | None = None, filament_changes: dict[str, str] | None = None,
+                   colour: str = "#FFFFFF", app_version: str = DEFAULT_APP_VERSION) -> dict:
+    """The project settings: printer + process + filament presets, the changes on top.
+
+    ``changes`` are process settings (default ``TPU_INSOLE_PROCESS``); ``filament_changes``
+    are filament settings, e.g. a lower ``filament_max_volumetric_speed`` for a
+    slower spool. Each is listed as changed in its own preset's slot.
+    """
     if bed_type not in BED_TYPES:
         raise ValueError(f"bed_type must be one of {BED_TYPES}, not {bed_type!r}")
     changes = TPU_INSOLE_PROCESS if changes is None else changes
@@ -132,15 +137,21 @@ def project_config(profiles: Path, printer: str, process: str, filament: str, *,
         compatible = preset.get("compatible_printers")
         if kind != "machine" and compatible and printer not in compatible:
             raise ValueError(f"{kind} preset {wanted!r} is not made for {printer!r} (it lists {compatible})")
+    filament_changes = filament_changes or {}
     unknown = sorted(set(changes) - set(p))
     if unknown:
         raise KeyError(f"not process settings in {process!r}: {unknown}")
+    unknown = sorted(set(filament_changes) - set(f))
+    if unknown:
+        raise KeyError(f"not filament settings in {filament!r}: {unknown}")
 
     cfg: dict = {}
     for preset in (m, p, f):
         cfg.update({k: v for k, v in preset.items() if k not in _PRESET_META})
     for key, value in changes.items():
         cfg[key] = _set_everywhere(p[key], value)
+    for key, value in filament_changes.items():
+        cfg[key] = _set_everywhere(f[key], value)
 
     variants = f.get("filament_extruder_variant") or []
     cfg.update({
@@ -152,7 +163,7 @@ def project_config(profiles: Path, printer: str, process: str, filament: str, *,
         "curr_bed_type": bed_type,
         "default_print_profile": m.get("default_print_profile", process),
         # one slot per filament, then the printer: [process, filament 1, printer]
-        "different_settings_to_system": [";".join(sorted(changes)), "", ""],
+        "different_settings_to_system": [";".join(sorted(changes)), ";".join(sorted(filament_changes)), ""],
     })
     if variants:
         # one filament, with one set of values per nozzle kind the printer offers
@@ -243,46 +254,84 @@ def _fmt(x: float) -> str:
     return f"{x:.6f}".rstrip("0").rstrip(".") if x != 0 else "0"
 
 
-def write_project(vertices, faces, path: Path, config: dict, *, title: str, description: str,
-                  placement: dict) -> Path:
-    """Write the Bambu Studio project: the mesh unchanged, placed by ``placement``, with ``config``."""
-    V = np.asarray(vertices, float)
-    F = np.asarray(faces, int)
-    app = f"BambuStudio-{config['version']}"
-    t = " ".join(_fmt(x) for x in placement["transform"])
-    ident = " ".join(["1", "0", "0", "0", "0", "1", "0", "0", "0", "0", "1", "0", "0", "0", "0", "1"])
+def plate_offset(printable_area, plate: int) -> tuple[float, float]:
+    """Where plate ``plate`` (0 = first) sits in Bambu Studio's project space.
 
-    verts = "\n".join(f'     <vertex x="{x:.4f}" y="{y:.4f}" z="{z:.4f}"/>' for x, y, z in V)
-    tris = "\n".join(f'     <triangle v1="{a}" v2="{b}" v3="{d}"/>' for a, b, d in F)
+    Bambu lays plates out in a grid of ceil-ish(sqrt(count)) columns, each one
+    a bed width plus a fifth apart (``PartPlateList::compute_shape_position``,
+    ``LOGICAL_PART_PLATE_GAP = 1/5``). Objects are put on a plate by where they
+    lie, so an object for plate 2 is moved by this much.
+    """
+    bed = _poly(printable_area)
+    w, d = np.ptp(bed, axis=0)
+    return plate * w * 1.2, 0.0
+
+
+def _columns(count: int) -> int:
+    root = np.sqrt(count)
+    return int(round(root) + 1) if root > round(root) else int(round(root))
+
+
+def write_project(parts: list[dict], path: Path, config: dict, *, title: str, description: str) -> Path:
+    """Write the Bambu Studio project: each part's mesh unchanged, on its own plate, with ``config``.
+
+    A part is ``dict(vertices, faces, name, placement)``; part k goes on plate k + 1.
+    """
+    if len(parts) > 2:
+        raise ValueError("one or two parts (plates in one row); more needs Bambu's grid of rows")
+    app = f"BambuStudio-{config['version']}"
+    ident = " ".join(["1", "0", "0", "0", "0", "1", "0", "0", "0", "0", "1", "0", "0", "0", "0", "1"])
     head = (f'<?xml version="1.0" encoding="UTF-8"?>\n<model unit="millimeter" xml:lang="en-US" xmlns="{_CORE}" '
             f'xmlns:BambuStudio="{_BBS}" xmlns:p="{_PROD}" requiredextensions="p">\n')
-    mesh_model = (head + ' <metadata name="BambuStudio:3mfVersion">1</metadata>\n <resources>\n'
-                  '  <object id="1" p:UUID="00010000-81cb-4c03-9d28-80fed5dfa1dc" type="model">\n   <mesh>\n'
-                  f"    <vertices>\n{verts}\n    </vertices>\n    <triangles>\n{tris}\n    </triangles>\n"
-                  "   </mesh>\n  </object>\n </resources>\n <build/>\n</model>\n")
+    files: dict[str, str] = {}
+    objects, items, rels, settings_objects, plates = [], [], [], [], []
+    for k, part in enumerate(parts):
+        V = np.asarray(part["vertices"], float)
+        F = np.asarray(part["faces"], int)
+        mesh_id, obj_id = 2 * k + 1, 2 * k + 2
+        dx, dy = plate_offset(config["printable_area"], k)
+        T = list(part["placement"]["transform"])
+        T[9] += dx
+        T[10] += dy
+        t = " ".join(_fmt(x) for x in T)
+        verts = "\n".join(f'     <vertex x="{x:.4f}" y="{y:.4f}" z="{z:.4f}"/>' for x, y, z in V)
+        tris = "\n".join(f'     <triangle v1="{a}" v2="{b}" v3="{d}"/>' for a, b, d in F)
+        mesh_file = f"3D/Objects/object_{mesh_id}.model"
+        files[mesh_file] = (
+            head + ' <metadata name="BambuStudio:3mfVersion">1</metadata>\n <resources>\n'
+            f'  <object id="{mesh_id}" p:UUID="000{k + 1}0000-81cb-4c03-9d28-80fed5dfa1dc" type="model">\n   <mesh>\n'
+            f"    <vertices>\n{verts}\n    </vertices>\n    <triangles>\n{tris}\n    </triangles>\n"
+            "   </mesh>\n  </object>\n </resources>\n <build/>\n</model>\n")
+        objects.append(
+            f'  <object id="{obj_id}" p:UUID="0000000{k + 1}-61cb-4c03-9d28-80fed5dfa1dc" type="model">\n   <components>\n'
+            f'    <component p:path="/{mesh_file}" objectid="{mesh_id}" '
+            f'p:UUID="000{k + 1}0000-b206-40ff-9872-83e8017abed1" transform="1 0 0 0 1 0 0 0 1 0 0 0"/>\n'
+            "   </components>\n  </object>\n")
+        items.append(f'  <item objectid="{obj_id}" p:UUID="0000000{k + 1}-b1ec-4553-aec9-835e5b724bb4" '
+                     f'transform="{t}" printable="1"/>\n')
+        rels.append(f' <Relationship Target="/{mesh_file}" Id="rel-{k + 1}" Type="{_REL_MODEL}"/>\n')
+        name = quoteattr(part["name"])
+        settings_objects.append(
+            f'  <object id="{obj_id}">\n'
+            f'    <metadata key="name" value={name}/>\n    <metadata key="extruder" value="1"/>\n'
+            f'    <metadata face_count="{len(F)}"/>\n    <part id="{mesh_id}" subtype="normal_part">\n'
+            f'      <metadata key="name" value={name}/>\n      <metadata key="matrix" value="{ident}"/>\n'
+            f'      <mesh_stat face_count="{len(F)}" edges_fixed="0" degenerate_facets="0" facets_removed="0" '
+            'facets_reversed="0" backwards_edges="0"/>\n    </part>\n  </object>\n')
+        plates.append(
+            f'  <plate>\n    <metadata key="plater_id" value="{k + 1}"/>\n'
+            f'    <metadata key="plater_name" value={name}/>\n'
+            '    <metadata key="locked" value="false"/>\n    <model_instance>\n'
+            f'      <metadata key="object_id" value="{obj_id}"/>\n      <metadata key="instance_id" value="0"/>\n'
+            f'      <metadata key="identify_id" value="{100 * (k + 1)}"/>\n    </model_instance>\n  </plate>\n')
+
     meta = {"Application": app, "BambuStudio:3mfVersion": "1", "Title": title, "Description": description,
             "Designer": "footscan", "CreationDate": "", "ModificationDate": ""}
     meta_xml = "".join(f' <metadata name={quoteattr(k)}>{escape(v)}</metadata>\n' for k, v in meta.items())
-    main_model = (head + meta_xml + " <resources>\n"
-                  '  <object id="2" p:UUID="00000001-61cb-4c03-9d28-80fed5dfa1dc" type="model">\n   <components>\n'
-                  '    <component p:path="/3D/Objects/object_1.model" objectid="1" '
-                  'p:UUID="00010000-b206-40ff-9872-83e8017abed1" transform="1 0 0 0 1 0 0 0 1 0 0 0"/>\n'
-                  "   </components>\n  </object>\n </resources>\n"
-                  ' <build p:UUID="2c7c17d8-22b5-4d84-8835-1976022ea369">\n'
-                  f'  <item objectid="2" p:UUID="00000002-b1ec-4553-aec9-835e5b724bb4" transform="{t}" printable="1"/>\n'
-                  " </build>\n</model>\n")
-    name = quoteattr(title)
-    model_settings = (
-        '<?xml version="1.0" encoding="UTF-8"?>\n<config>\n  <object id="2">\n'
-        f'    <metadata key="name" value={name}/>\n    <metadata key="extruder" value="1"/>\n'
-        f'    <metadata face_count="{len(F)}"/>\n    <part id="1" subtype="normal_part">\n'
-        f'      <metadata key="name" value={name}/>\n      <metadata key="matrix" value="{ident}"/>\n'
-        f'      <mesh_stat face_count="{len(F)}" edges_fixed="0" degenerate_facets="0" facets_removed="0" '
-        'facets_reversed="0" backwards_edges="0"/>\n    </part>\n  </object>\n  <plate>\n'
-        '    <metadata key="plater_id" value="1"/>\n    <metadata key="plater_name" value=""/>\n'
-        '    <metadata key="locked" value="false"/>\n    <model_instance>\n'
-        '      <metadata key="object_id" value="2"/>\n      <metadata key="instance_id" value="0"/>\n'
-        '      <metadata key="identify_id" value="100"/>\n    </model_instance>\n  </plate>\n</config>\n')
+    main_model = (head + meta_xml + " <resources>\n" + "".join(objects) + " </resources>\n"
+                  ' <build p:UUID="2c7c17d8-22b5-4d84-8835-1976022ea369">\n' + "".join(items) + " </build>\n</model>\n")
+    model_settings = ('<?xml version="1.0" encoding="UTF-8"?>\n<config>\n' + "".join(settings_objects)
+                      + "".join(plates) + "</config>\n")
     content_types = (
         '<?xml version="1.0" encoding="UTF-8"?>\n'
         '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">\n'
@@ -290,13 +339,12 @@ def write_project(vertices, faces, path: Path, config: dict, *, title: str, desc
         ' <Default Extension="model" ContentType="application/vnd.ms-package.3dmanufacturing-3dmodel+xml"/>\n'
         ' <Default Extension="png" ContentType="image/png"/>\n'
         ' <Default Extension="gcode" ContentType="text/x.gcode"/>\n</Types>\n')
-    rels = ('<?xml version="1.0" encoding="UTF-8"?>\n'
-            '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">\n'
-            f' <Relationship Target="/3D/3dmodel.model" Id="rel-1" Type="{_REL_MODEL}"/>\n</Relationships>\n')
+    root_rels = ('<?xml version="1.0" encoding="UTF-8"?>\n'
+                 '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">\n'
+                 f' <Relationship Target="/3D/3dmodel.model" Id="rel-1" Type="{_REL_MODEL}"/>\n</Relationships>\n')
     model_rels = ('<?xml version="1.0" encoding="UTF-8"?>\n'
                   '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">\n'
-                  f' <Relationship Target="/3D/Objects/object_1.model" Id="rel-1" Type="{_REL_MODEL}"/>\n'
-                  "</Relationships>\n")
+                  + "".join(rels) + "</Relationships>\n")
     slice_info = ('<?xml version="1.0" encoding="UTF-8"?>\n<config>\n  <header>\n'
                   '    <header_item key="X-BBL-Client-Type" value="slicer"/>\n'
                   f'    <header_item key="X-BBL-Client-Version" value="{config["version"]}"/>\n'
@@ -306,10 +354,11 @@ def write_project(vertices, faces, path: Path, config: dict, *, title: str, desc
     tmp = path.with_suffix(path.suffix + ".part")
     with zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as z:
         z.writestr("[Content_Types].xml", content_types)
-        z.writestr("_rels/.rels", rels)
+        z.writestr("_rels/.rels", root_rels)
         z.writestr("3D/3dmodel.model", main_model)
         z.writestr("3D/_rels/3dmodel.model.rels", model_rels)
-        z.writestr("3D/Objects/object_1.model", mesh_model)
+        for name, text in files.items():
+            z.writestr(name, text)
         z.writestr("Metadata/project_settings.config", json.dumps(config, indent=4, ensure_ascii=False))
         z.writestr("Metadata/model_settings.config", model_settings)
         z.writestr("Metadata/slice_info.config", slice_info)
@@ -318,20 +367,26 @@ def write_project(vertices, faces, path: Path, config: dict, *, title: str, desc
 
 
 def read_project(path: Path) -> dict:
-    """Read back what ``write_project`` wrote (mesh in its own coordinates, transform, settings). For checking."""
+    """Read back what ``write_project`` wrote (each part's mesh in its own coordinates, its build
+    transform, plate offset included, and the settings). For checking."""
     import xml.etree.ElementTree as ET
 
     ns = {"m": _CORE}
+    parts = []
     with zipfile.ZipFile(path) as z:
         names = set(z.namelist())
-        mesh = ET.fromstring(z.read("3D/Objects/object_1.model"))
         main = ET.fromstring(z.read("3D/3dmodel.model"))
         config = json.loads(z.read("Metadata/project_settings.config"))
-    V = np.array([[float(v.get(k)) for k in "xyz"] for v in mesh.iterfind(".//m:vertex", ns)])
-    F = np.array([[int(t.get(k)) for k in ("v1", "v2", "v3")] for t in mesh.iterfind(".//m:triangle", ns)])
-    item = main.find(".//m:build/m:item", ns)
-    return dict(names=names, vertices=V, faces=F, transform=[float(x) for x in item.get("transform").split()],
-                config=config, metadata={m.get("name"): m.text for m in main.iterfind("m:metadata", ns)})
+        settings = z.read("Metadata/model_settings.config").decode()
+        comps = {o.get("id"): o.find(".//m:component", ns) for o in main.iterfind(".//m:resources/m:object", ns)}
+        for item in main.iterfind(".//m:build/m:item", ns):
+            comp = comps[item.get("objectid")]
+            mesh = ET.fromstring(z.read(comp.get(f"{{{_PROD}}}path").lstrip("/")))
+            V = np.array([[float(v.get(k)) for k in "xyz"] for v in mesh.iterfind(".//m:vertex", ns)])
+            F = np.array([[int(t.get(k)) for k in ("v1", "v2", "v3")] for t in mesh.iterfind(".//m:triangle", ns)])
+            parts.append(dict(vertices=V, faces=F, transform=[float(x) for x in item.get("transform").split()]))
+    return dict(names=names, parts=parts, config=config, model_settings=settings,
+                metadata={m.get("name"): m.text for m in main.iterfind("m:metadata", ns)}, **parts[0])
 
 
 def placed_vertices(transform, vertices) -> np.ndarray:
@@ -340,30 +395,46 @@ def placed_vertices(transform, vertices) -> np.ndarray:
     return np.asarray(vertices, float) @ M[:3] + M[3]
 
 
-def tpu_project(mesh_path: Path, out: Path, profiles: Path, *, printer: str, process: str, filament: str,
-                bed_type: str, app_version: str = DEFAULT_APP_VERSION) -> dict:
-    """An insole file (the plain 3MF or the STL the insole command wrote) -> Bambu Studio TPU project."""
+def _load_insole(mesh_path: Path):
     mesh_path = Path(mesh_path)
     if mesh_path.suffix.lower() == ".3mf":
         from .insole import read_3mf
 
         r = read_3mf(mesh_path)
-        V, F = r["vertices"], r["faces"]
-        title = r["metadata"].get("Title") or mesh_path.stem
-        description = r["metadata"].get("Description") or ""
-    else:
-        import trimesh
+        return r["vertices"], r["faces"], r["metadata"].get("Title") or mesh_path.stem, r["metadata"].get("Description") or ""
+    import trimesh
 
-        m = trimesh.load(mesh_path, force="mesh")
-        V, F = np.asarray(m.vertices), np.asarray(m.faces)
-        title, description = mesh_path.stem, ""
-    cfg = project_config(profiles, printer, process, filament, bed_type=bed_type, app_version=app_version)
-    placement = place_on_bed(V, cfg["printable_area"], cfg.get("bed_exclude_area") or [])
-    write_project(V, F, out, cfg, title=title, description=description, placement=placement)
-    size = V.max(0) - V.min(0)
-    return dict(path=str(out), length_mm=round(float(size.max()), 1), size_mm=[round(float(s), 1) for s in size],
-                angle_deg=placement["angle_deg"], room_mm=placement["room_mm"], printer=printer, process=process,
-                filament=filament, bed_type=bed_type, changed=sorted(TPU_INSOLE_PROCESS))
+    m = trimesh.load(mesh_path, force="mesh")
+    return np.asarray(m.vertices), np.asarray(m.faces), mesh_path.stem, ""
+
+
+def tpu_project(mesh_paths, out: Path, profiles: Path, *, printer: str, process: str, filament: str,
+                bed_type: str, filament_changes: dict[str, str] | None = None,
+                app_version: str = DEFAULT_APP_VERSION) -> dict:
+    """Insole files (the plain 3MF or STL the insole command wrote) -> one Bambu Studio TPU project.
+
+    One insole per plate, in the order given (left then right makes plate 1 the left).
+    """
+    if isinstance(mesh_paths, (str, Path)):
+        mesh_paths = [mesh_paths]
+    cfg = project_config(profiles, printer, process, filament, bed_type=bed_type,
+                         filament_changes=filament_changes, app_version=app_version)
+    parts, report, descriptions = [], [], []
+    for mp in mesh_paths:
+        V, F, name, description = _load_insole(mp)
+        placement = place_on_bed(V, cfg["printable_area"], cfg.get("bed_exclude_area") or [])
+        parts.append(dict(vertices=V, faces=F, name=name, placement=placement))
+        size = V.max(0) - V.min(0)
+        report.append(dict(name=name, plate=len(parts), length_mm=round(float(size.max()), 1),
+                           size_mm=[round(float(x), 1) for x in size], angle_deg=placement["angle_deg"],
+                           room_mm=placement["room_mm"]))
+        if description and description not in descriptions:
+            descriptions.append(description)
+    title = parts[0]["name"] if len(parts) == 1 else " + ".join(p["name"] for p in parts)
+    write_project(parts, out, cfg, title=title, description=" ".join(descriptions))
+    return dict(path=str(out), plates=report, printer=printer, process=process, filament=filament,
+                bed_type=bed_type, changed=sorted(TPU_INSOLE_PROCESS), filament_changed=filament_changes or {},
+                **{k: report[0][k] for k in ("length_mm", "size_mm", "angle_deg", "room_mm")})
 
 
 def main(argv=None) -> int:
@@ -371,19 +442,26 @@ def main(argv=None) -> int:
 
     ap = argparse.ArgumentParser(prog="python -m footscan.bambu",
                                  description="insole 3MF/STL -> Bambu Studio project with TPU settings")
-    ap.add_argument("mesh", type=Path, help="the insole's .3mf (from `footscan insole`) or .stl")
-    ap.add_argument("out", type=Path, help="the project file to write (.3mf)")
+    ap.add_argument("files", type=Path, nargs="+",
+                    help="the insole .3mf (from `footscan insole`) or .stl files, one per plate, then the "
+                         "project file to write (.3mf)")
     ap.add_argument("--profiles", type=Path, required=True,
                     help="Bambu Studio's BBL profile folder, e.g. BambuStudio.app/Contents/Resources/profiles/BBL")
     ap.add_argument("--printer", default="Bambu Lab X1 Carbon 0.4 nozzle")
     ap.add_argument("--process", default="0.20mm Standard @BBL X1C")
     ap.add_argument("--filament", default="Bambu TPU 95A HF @BBL X1C")
     ap.add_argument("--bed-type", default="Textured PEI Plate", choices=BED_TYPES)
+    ap.add_argument("--max-flow", type=float, default=None,
+                    help="filament max volumetric speed (mm^3/s), lower for a slower spool")
     ap.add_argument("--app-version", default=DEFAULT_APP_VERSION,
                     help="Bambu Studio version to write (not newer than the app that will open it)")
     a = ap.parse_args(argv)
-    info = tpu_project(a.mesh, a.out, a.profiles, printer=a.printer, process=a.process, filament=a.filament,
-                       bed_type=a.bed_type, app_version=a.app_version)
+    if len(a.files) < 2:
+        ap.error("give at least one insole file and then the project file to write")
+    *meshes, out = a.files
+    fil = {"filament_max_volumetric_speed": f"{a.max_flow:g}"} if a.max_flow else None
+    info = tpu_project(meshes, out, a.profiles, printer=a.printer, process=a.process, filament=a.filament,
+                       bed_type=a.bed_type, filament_changes=fil, app_version=a.app_version)
     print(json.dumps(info, indent=2))
     return 0
 

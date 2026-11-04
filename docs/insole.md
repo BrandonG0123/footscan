@@ -37,6 +37,12 @@ settings are starting points, not yet checked on a printed insole. Use the
 profile folder of the Bambu Studio that will open the file, and
 `--app-version` no newer than that app.
 
+Give it both insoles (`left.3mf right.3mf pair.3mf`) for one project with the
+left on plate 1 and the right on plate 2. For a different spool pick its
+profile with `--filament` (e.g. `"Bambu TPU 95A @BBL X1C"`, Bambu's standard,
+not-HF TPU) and slow the whole print with `--max-flow 2.5` (mm³/s), which
+caps every speed at what the spool can melt.
+
 `--length 270` lengthens the insole to a shoe's insole length (mm): only the
 flat front reaches further, the shape under the heel, arch and ball stays
 where the foot is, and it's never made shorter than the foot. In the studio
