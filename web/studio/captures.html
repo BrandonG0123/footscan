@@ -58,10 +58,13 @@
 
   async function load() {
     try {
-      const r = await fetch("/api/captures");
+      // the captures and the saved shoes (one insole outline per shoe model and size; none is fine), together
+      const [r, shoes] = await Promise.all([
+        fetch("/api/captures"),
+        fetch("/api/shoes").then((r) => r.ok ? r.json() : saved).catch(() => saved),
+      ]);
       all = await r.json();
-      // saved shoes (one insole outline per shoe model and size); none is fine
-      saved = await fetch("/api/shoes").then((r) => r.ok ? r.json() : saved).catch(() => saved);
+      saved = shoes;
     } catch {
       $("list").innerHTML = `<div class="callout stop"><p>Can't reach the footscan server. Start it with <span class="mono">footscan serve</span>.</p></div>`;
       return;
@@ -245,7 +248,7 @@
       <strong>First-fit insole</strong> <span class="badge">${esc(r.foot)} foot</span> <span class="badge">no posting</span>
       <p class="hint" style="margin:6px 0">${r.length_mm} × ${r.width_mm} mm, ${r.height_mm} mm tall · highest arch fill ${r.max_fill_mm} mm ·
         sole seen ${Math.round(100 * r.sole.seen)}% (arch ${Math.round(100 * r.sole.seen_under_arch)}%) · bed: ${esc(r.bed.how)}</p>
-      ${!r.shoe ? `<p class="hint" style="margin:0 0 6px">Outline: the foot's own (no shoe chosen): trim it to the shoe's stock insole.</p>` : ""}
+      ${!r.shoe ? `<p class="hint" style="margin:0 0 6px">Outline: the foot's own${r.shoe_length_mm ? `, lengthened to the shoe's ${esc(r.shoe_length_mm)} mm` : " (no shoe chosen)"}: trim it to the shoe's stock insole.</p>` : ""}
       ${r.shoe?.fit ? `<p class="hint" style="margin:0 0 6px">Outline: ${r.shoe.name ? esc(r.shoe.name) : "the shoe's own insole"} (${esc(r.shoe.fit.shoe_length_mm)} mm),
         ${esc(r.shoe.fit.room_past_toes_mm)} mm past the toes${r.shoe.fit.overhang.max_mm > 1
           ? `; the foot is over its edge by up to ${esc(r.shoe.fit.overhang.max_mm)} mm at the ${esc(r.shoe.fit.overhang.where)}` : "; the foot is inside it all round"}.</p>` : ""}

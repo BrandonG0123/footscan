@@ -445,3 +445,59 @@ def test_a_saved_shoe_far_from_the_charts_length_is_flagged_though_the_insole_ma
     c = _check(p, "shoe_length")
     assert not c["ok"] and "chart length" in c["found"]
     assert "shoe_length" in json.loads((p / "review.json").read_text())["flags"]
+
+
+def _saved_shoe_capture(data, cid, foot, sid, turn_deg=0.0, scale=1.0):
+    """A SYNTHETIC block foot, turned ``turn_deg`` about the vertical and scaled, cut to saved shoe ``sid``."""
+    import trimesh
+
+    d = data / "captures" / cid
+    d.mkdir(parents=True)
+    m = synth.block_foot(0.0, foot, origin=(0, 0))
+    m.apply_transform(trimesh.transformations.rotation_matrix(np.radians(turn_deg), [0, 0, 1]))
+    m.apply_scale(scale)
+    m.apply_transform(np.block([[imported.UP["y"].T, np.zeros((3, 1))], [np.zeros((1, 3)), np.ones((1, 1))]]))
+    m.apply_scale(0.001)
+    m.export(d / "mesh.ply")
+    meta = dict(capture_id=cid, foot=foot, method="imported_mesh", condition="swb", scan_kind="foot",
+                mesh=dict(up="y"))
+    meta["insole"] = server.make_insole(d, meta, saved=server.saved_shoe(data / "shoes", sid))
+    assert "error" not in meta["insole"], meta["insole"]
+    server.write_json(d / "capture.json", meta)
+    return meta
+
+
+def test_a_pair_cut_to_one_saved_shoe_is_compared_by_the_outline_not_its_length_along_each_foot(tmp_path):
+    """Each foot turns the one saved outline to itself (up to 10 degrees), which shortens it along that foot by a
+    mm or two: the pair check compares the outline's own length, so a right pair isn't flagged. The shoe_length
+    check and the packet's Outline line use the outline's own length too."""
+    from footscan import shoes
+    from footscan.recon import shoe as shoe_mod
+
+    data = tmp_path / "data"
+    outline, read = shoe_mod.outline_from_scan(synth.shoe_insole(ball=114.0))
+    s = shoes.save(data / "shoes", outline, "ASICS Gel Resolution X", "US men's 9.5", "synthetic", read)
+    left = _saved_shoe_capture(data, "Lsaved", "left", s["id"])
+    right = _saved_shoe_capture(data, "Rsaved", "right", s["id"], turn_deg=8.0)
+    for meta in (left, right):
+        fit = meta["insole"]["shoe"]["fit"]
+        assert fit["outline_length_mm"] == pytest.approx(s["length_mm"], abs=0.2)
+    shutil.rmtree(data / "reviews", ignore_errors=True)
+    packets = review.run_once(data, SPEC)
+    for p in packets:
+        c = _check(p, "pair_length")
+        assert c["ok"] and "cut to an outline" in c["found"], c
+        assert f"is {s['length_mm']:.1f} mm long" in _check(p, "shoe_length")["found"]
+
+
+def test_a_saved_shoe_that_only_shares_an_id_with_the_specs_shoe_is_flagged(tmp_path):
+    """"Nike Pegasus", "40 US 9" and the spec's "Nike Pegasus 40", "US 9" have one id but are different shoes."""
+    from footscan import shoes
+    from footscan.recon import shoe as shoe_mod
+
+    data = tmp_path / "data"
+    outline, read = shoe_mod.outline_from_scan(synth.shoe_insole(ball=114.0))
+    s = shoes.save(data / "shoes", outline, "Nike Pegasus", "40 US 9", "synthetic", read)
+    _saved_shoe_capture(data, "Rpeg", "right", s["id"])
+    [p] = review.run_once(data, dict(SPEC, shoe="Nike Pegasus 40", size="US 9"))
+    assert not _check(p, "shoe")["ok"]

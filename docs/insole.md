@@ -80,6 +80,12 @@ one the spec names, and FLAGs `shoe_length` if the outline is more than 5 mm
 off the spec's chart length (a stock insole scanned at the wrong scale would
 otherwise make insoles that match it exactly and pass).
 
+A saved shoe's outline also hides a foot scan that reads small: the insole
+still fits the shoe, but the arch support sits where the scan puts the arch.
+When the foot reads more than 20 mm shorter than the shoe's insole (a
+judgment: Brandon's ruler length, 266.7 mm, leaves about 8 mm in the 275 mm
+chart insole), the sheet says so and asks for a ruler measurement of the foot.
+
 Two different shoes can get the same id (the id keeps only a-z and 0-9, so
 "Nike Pegasus 40", "US 9" and "Nike Pegasus", "40 US 9" meet). Saving the
 second is refused with a message, rather than replacing the first; give it a

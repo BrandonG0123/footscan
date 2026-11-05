@@ -19,3 +19,6 @@ ios/**/xcuserdata/
 ios/**/*.xcuserstate
 ios/**/DerivedData/
 ios/**/build/
+
+# which saved shoe is the default is each studio's own choice (the shoes themselves may be committed)
+data/shoes/default.txt

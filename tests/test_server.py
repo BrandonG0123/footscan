@@ -933,6 +933,7 @@ def test_a_saved_shoe_is_the_default_outline_for_every_new_insole(servers):
     mine = [c for c in body(call(f"{op}/api/captures")) if c["capture_id"] == foot][0]
     assert mine["insole"]["outline"] == "foot"
     assert call(f"{op}/api/captures/{foot}/insole", "POST", {"saved_shoe": s["id"], "length_mm": 280})[0] == 400
+    assert call(f"{op}/api/captures/{foot}/insole", "POST", {"saved_shoe": s["id"], "foot_outline": True})[0] == 400
     assert call(f"{op}/api/captures/{foot}/insole", "POST", {"saved_shoe": "no-such-shoe"})[0] == 400
     assert call(f"{op}/api/captures/{foot}/insole", "POST", {"saved_shoe": "../x"})[0] == 400
 

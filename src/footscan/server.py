@@ -752,6 +752,8 @@ def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check
                 saved_id = opts.get("saved_shoe") or None
                 if sum(x is not None for x in (shoe_id, saved_id, length)) > 1:
                     raise BadRequest("give one of: a shoe's insole, a saved shoe, a length")
+                if opts.get("foot_outline") and (shoe_id is not None or saved_id is not None):
+                    raise BadRequest("the foot's own outline or a shoe's, not both")
                 if shoe_id is None and saved_id is None and length is None and not opts.get("foot_outline"):
                     # per shoe by default: the default saved shoe's outline. A default that's chosen but broken
                     # stops here with why, rather than quietly cutting the insole to the foot's own outline
@@ -1399,7 +1401,8 @@ def make_insole(folder: Path, meta: dict, length_mm: float | None = None, shoe: 
         elif saved is not None:
             sid, s, sstamp = saved
             shoe_info = dict(saved=sid, source=sstamp,
-                             name=shoes_mod.label(s), length_mm=s["length_mm"], width_mm=s["width_mm"])
+                             name=shoes_mod.label(s), model=s["name"], size=s["size"], length_mm=s["length_mm"],
+                             width_mm=s["width_mm"])
             # shoe_saved: one saved outline serves both feet, so mirroring it for the other foot is expected
             params = insole_mod.InsoleParams(shoe_outline=shoes_mod.outline_param(s), shoe_name=shoes_mod.label(s),
                                              shoe_saved=True)

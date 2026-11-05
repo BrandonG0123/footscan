@@ -335,3 +335,33 @@ def test_two_different_shoes_that_get_the_same_id_never_replace_each_other(tmp_p
         assert shoes.load(folder, a["id"])["name"] == first[0] and shoes.default_id(folder) == a["id"]
     again = shoes.save(tmp_path / "NikePegasus40", outline, "nike  pegasus-40", "us 9", "a better scan", read)
     assert again["name"] == "nike  pegasus-40"
+
+
+def test_a_foot_far_shorter_than_its_saved_shoe_is_warned_about_on_the_sheet(tmp_path):
+    """A saved shoe's outline hides a scan that reads small: the insole fits the shoe, but the arch support sits
+    where the scan puts the arch. With much more room past the toes than a shoe usually leaves, the sheet says
+    to measure the foot. SYNTHETIC foot scaled to 90%."""
+    from footscan import insole, shoes
+
+    outline, read = _shoe_outline(ball=114.0)
+    s = shoes.save(tmp_path, outline, "Test Trainer", "9.5", "synthetic", read)
+    params = insole.InsoleParams(shoe_outline=shoes.outline_param(s), shoe_name=shoes.label(s), shoe_saved=True)
+    small = synth.curved_foot("right", leg=False)
+    small.apply_scale(0.9)
+    ins = insole.from_scan(small, "right", params)
+    assert ins.report["shoe_fit"]["room_past_toes_mm"] > 20
+    assert any("the scan may read small" in w for w in ins.report["warnings"])
+    fits = insole.from_scan(synth.curved_foot("right", leg=False), "right", params)
+    assert fits.report["shoe_fit"]["room_past_toes_mm"] <= 20
+    assert not any("the scan may read small" in w for w in fits.report["warnings"])
+
+
+def test_the_sheet_says_a_lengthened_outline_was_lengthened(tmp_path):
+    from footscan import cli
+
+    foot = _foot_file(tmp_path)
+    assert cli.main(["insole", str(foot), "--foot", "right", "-o", str(tmp_path / "out"),
+                     "--shoes", str(tmp_path / "shoes"), "--length", "280"]) == 0
+    sheet = (tmp_path / "out" / "right-insole-summary.html").read_text(encoding="utf-8")
+    assert "lengthened to the shoe&#x27;s 280 mm" in sheet or "lengthened to the shoe's 280 mm" in sheet
+    assert "no shoe chosen" not in sheet

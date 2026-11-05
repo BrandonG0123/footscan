@@ -57,6 +57,9 @@ TABLE_TRIES = 4
 SHOE_LENGTH_MM = (180.0, 360.0)
 SHOE_RATIO = (0.25, 0.50)
 FIT_TURN_DEG = 10.0
+# More room past the toes than this, and the foot scan may read small rather than the shoe being big: ~8 mm is
+# what Brandon's ruler length (266.7 mm) leaves in the US 9.5 chart insole (275 mm). A judgment, not measured.
+ROOM_WARN_MM = 20.0
 FIT_SLIDE_MM = 8.0
 FIT_BAND_MM = 3.0
 OVERHANG_WARN_MM = 1.0
@@ -296,8 +299,11 @@ def fit_to_foot(shoe, sil, foot: str, heel_gap_mm: float):
                         where=part if part in ("heel", "toes") else f"{part}, {'inner' if inner else 'outer'} side",
                         area_mm2=round(float(sil.difference(placed).area), 0))
     px0, _, px1, _ = placed.bounds
+    sx0, _, sx1, _ = shoe.bounds  # the outline as kept: heel at the origin, toes along +x (not turned to the foot)
+    # shoe_length_mm: along the foot (the insole's own length, turned with the outline); outline_length_mm: the
+    # shoe's insole itself, the same for both feet whatever the turn
     report = dict(shoe=hand, toe_end_left_mm=toe_left, mirrored=bool(mir), turned_deg=round(float(turn), 2), slid_mm=round(float(dy), 2),
-                  shoe_length_mm=round(px1 - px0, 1), foot_length_mm=round(length, 1),
+                  shoe_length_mm=round(px1 - px0, 1), outline_length_mm=round(sx1 - sx0, 1), foot_length_mm=round(length, 1),
                   room_past_toes_mm=round(px1 - x1, 1), overhang=overhang)
     return placed, report
 
@@ -315,6 +321,12 @@ def fit_warnings(fit: dict, saved: bool = False) -> list[str]:
     if fit["room_past_toes_mm"] < 0:
         w.append(f"the shoe's insole is {-fit['room_past_toes_mm']} mm shorter than the foot: is this the right "
                  f"shoe, and the whole insole in the scan?")
+    elif fit["room_past_toes_mm"] > ROOM_WARN_MM:
+        # the shoe's outline hides a short scan: the insole fits the shoe, but the arch support sits where the
+        # scan puts the arch, and a scan reading small puts it too near the heel
+        w.append(f"the foot reads {fit['room_past_toes_mm']} mm shorter than the shoe's insole, more than a shoe "
+                 f"usually leaves past the toes: if the shoe fits, the scan may read small. Measure the foot with a "
+                 f"ruler (heel to longest toe); the arch support is placed where the scan puts the arch")
     if fit["mirrored"] and not saved:
         w.append(f"the shoe's insole is a {fit['shoe']} shoe's as scanned (scanned upside down, or from the other "
                  f"shoe), so it was mirrored for this foot. If it was the right shoe, top side up, check the scan")

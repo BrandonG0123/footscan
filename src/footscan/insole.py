@@ -582,10 +582,15 @@ def capture_html(prep: dict | None) -> str:
     return "<h2>How the foot was captured</h2>\n<table>\n" + "\n".join(rows) + "\n</table>"
 
 
-def shoe_row(fit: dict | None, name: str | None = None) -> str:
-    """The summary sheet's line on the outline: the foot's own, or fitted to a shoe's insole."""
+def shoe_row(fit: dict | None, name: str | None = None, lengthened_to: float | None = None) -> str:
+    """The summary sheet's line on the outline: the foot's own (lengthened to a shoe's length or not), or fitted
+    to a shoe's insole."""
     from html import escape
 
+    if not fit and lengthened_to:
+        return (f'<tr><th>Outline</th><td colspan="3">the foot\'s own, its front lengthened to the shoe\'s '
+                f'{lengthened_to:g} mm (no shoe\'s outline): check it against the shoe\'s stock insole and trim to '
+                f'it</td></tr>')
     if not fit:
         return ('<tr><th>Outline</th><td colspan="3">the foot\'s own (no shoe chosen): check it against the '
                 'shoe\'s stock insole and trim to it</td></tr>')
@@ -593,7 +598,8 @@ def shoe_row(fit: dict | None, name: str | None = None) -> str:
     over = (f"the foot is wider than it at the {o['where']} by up to {o['max_mm']} mm (the insole stops at the shoe's edge)"
             if o["max_mm"] > 1.0 else "the foot is inside it all round")
     which = f" of the {escape(name)}" if name else ""
-    return (f'<tr><th>Outline</th><td colspan="3">the shoe\'s own insole{which} ({fit["shoe_length_mm"]} mm long, '
+    return (f'<tr><th>Outline</th><td colspan="3">the shoe\'s own insole{which} '
+            f'({fit.get("outline_length_mm", fit["shoe_length_mm"])} mm long, '
             f'{fit["room_past_toes_mm"]} mm past the toes{", matched mirrored" if fit["mirrored"] else ""}); {over}</td></tr>')
 
 
@@ -637,7 +643,7 @@ anything and is not equivalent to, or a substitute for, a prescribed orthotic. N
 <tr><th>Stiffness</th><td colspan="3">Uniform (no lattice zones). Material and infill as printed: record below.</td></tr>
 <tr><th>Size</th><td colspan="3">{r['length_mm']} &times; {r['width_mm']} mm, {r['height_mm']} mm tall</td></tr>
 {f'<tr><th>Under the toes</th><td colspan="3">no fill from {p.toes_flat_from:.0%} of the length (the toes lie flat when standing)</td></tr>' if p.toes_flat_from is not None else ''}
-{shoe_row(r.get('shoe_fit'), r.get('shoe_name'))}
+{shoe_row(r.get('shoe_fit'), r.get('shoe_name'), p.target_length_mm)}
 </table>
 
 {capture}
