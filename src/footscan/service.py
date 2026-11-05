@@ -18,6 +18,7 @@ write characters like √ and crashes on them.
 
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 from xml.sax.saxutils import escape
@@ -70,7 +71,9 @@ def render(system: str, root: Path, data_dir: Path | None = None, port: int = 87
     if any(" " in a for a in args):
         # NSSM takes the arguments as one quoted string; a quoted path inside it can't survive PowerShell
         raise ValueError("on Windows, choose a data folder without spaces in its path (e.g. C:\\srv\\footscan-data)")
-    return _nssm(root, exe, args, log, port, Path(python_home or sys.base_prefix), data_dir)
+    if python_home is None and os.name == "nt":
+        python_home = sys.base_prefix  # footscan service runs from the checkout's .venv: its Python is this one
+    return _nssm(root, exe, args, log, port, Path(python_home) if python_home else None, data_dir)
 
 
 def _launchd(root, exe, args, log, port, regen) -> dict:
@@ -179,7 +182,10 @@ def _nssm(root, exe, args, log, port, python_home, data_dir) -> dict:
         "# the studio runs as Local Service (no more rights than a normal user): it may read the checkout and the",
         "# Python it runs on, and write only the data folder",
         f'icacls "{root}" /grant "{LOCAL_SERVICE_SID}:(OI)(CI)RX"',
-        f'icacls "{python_home}" /grant "{LOCAL_SERVICE_SID}:(OI)(CI)RX"',
+        *([f'icacls "{python_home}" /grant "{LOCAL_SERVICE_SID}:(OI)(CI)RX"'] if python_home else [
+            # made on another computer (this one's Python is no use there): ask the checkout's own .venv
+            f'$py = & "{Path(exe).parent / "python.exe"}" -c "import sys; print(sys.base_prefix)"',
+            f'icacls $py /grant "{LOCAL_SERVICE_SID}:(OI)(CI)RX"']),
         f'icacls "{data_dir}" /grant "{LOCAL_SERVICE_SID}:(OI)(CI)M"',
         f'nssm install Footscan "{exe}" "{" ".join(args)}"',
         f'nssm set Footscan ObjectName "{LOCAL_SERVICE}"',

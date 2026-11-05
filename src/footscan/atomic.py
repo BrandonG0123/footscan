@@ -40,11 +40,35 @@ def temporary_name(path: Path) -> Path:
     return path.with_name(f".{path.name}.{secrets.token_hex(4)}.tmp")
 
 
-def is_temporary(path: Path) -> bool:
-    """One of ``write_utf8``'s temporary files: left behind only if the process was killed mid-write, and
-    never a file anyone made."""
-    name = Path(path).name
-    return name.startswith(".") and name.endswith(".tmp")
+LEFT_BEHIND_AFTER_S = 60.0  # far longer than writing any of these small files takes
+
+
+def is_temporary(path: Path, left_behind: bool = False) -> bool:
+    """One of ``write_utf8``'s temporary files, never a file anyone made. ``left_behind``: and older than
+    LEFT_BEHIND_AFTER_S, so not one another request is writing right now (a killed write left it)."""
+    path = Path(path)
+    if not (path.name.startswith(".") and path.name.endswith(".tmp")):
+        return False
+    if not left_behind:
+        return True
+    try:
+        return time.time() - path.stat().st_mtime > LEFT_BEHIND_AFTER_S
+    except OSError:  # finished (swapped in) meanwhile
+        return False
+
+
+def read_utf8(path: Path, retry_for_s: float | None = None) -> str:
+    """The file's text (UTF-8), tried again for a moment while it fails with PermissionError: on Windows,
+    opening a file in the instant another thread swaps a new one in over it is refused (a sharing
+    violation). Elsewhere, and after RETRY_FOR_S, the error is raised."""
+    deadline = time.monotonic() + (RETRY_FOR_S if retry_for_s is None else retry_for_s)
+    while True:
+        try:
+            return Path(path).read_text(encoding="utf-8")
+        except PermissionError:
+            if not RETRIES or time.monotonic() >= deadline:
+                raise
+            time.sleep(RETRY_EVERY_S)
 
 
 def write_utf8(path: Path, text: str) -> None:

@@ -194,7 +194,7 @@ def now_iso() -> str:
 
 
 def read_json(path: Path) -> dict:
-    return json.loads(path.read_text(encoding="utf-8"))
+    return json.loads(atomic.read_utf8(path))  # also while a write swaps it (Windows refuses the open then)
 
 
 def write_json(path: Path, obj: dict) -> None:
@@ -616,6 +616,11 @@ def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check
                 self.send_json({"error": f"invalid input: {e}"}, HTTPStatus.BAD_REQUEST)
             except FileNotFoundError:
                 self.send_json({"error": "not found"}, HTTPStatus.NOT_FOUND)
+            except PermissionError:
+                # a file kept open past the retries (Windows: antivirus, a backup, another program): answer,
+                # so the phone shows a message and tries again, instead of a dropped connection
+                self.send_json({"error": "a file the studio needs is in use by another program; try again in a "
+                                         "moment"}, HTTPStatus.SERVICE_UNAVAILABLE)
             except (TypeError, OverflowError, AttributeError) as e:
                 # Input of the wrong shape (a list where a number was expected, ...):
                 # answer, rather than dropping the connection.
@@ -1095,12 +1100,13 @@ def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check
                         check = check_completeness(captures_dir, staged, meta)
                         if check and check.get("problems"):
                             if not [f for f in d.iterdir()
-                                    if f.name != "capture.json" and f != staged and not atomic.is_temporary(f)]:
+                                    if f.name != "capture.json" and f != staged
+                                    and not atomic.is_temporary(f, left_behind=True)]:
                                 shutil.rmtree(d, ignore_errors=True)
                             raise IncompleteScan(check["problems"])
                         new = {f.name for f in staged.iterdir()}
                         for f in staged.iterdir():  # kept: the new model takes the old one's place
-                            f.replace(d / f.name)
+                            atomic.replace(f, d / f.name)  # while a download reads the old one, on Windows
                         for f in d.iterdir():
                             if f.is_file() and is_model_file(f.name) and f.name not in new:
                                 f.unlink()  # e.g. original.obj, replaced by an original.usdz
@@ -1343,8 +1349,8 @@ def make_insole(folder: Path, meta: dict, length_mm: float | None = None, shoe: 
         (tmp / "insole-summary.html").rename(tmp / "summary.html")  # fixed names, so the studio can link them
         old = folder / f"insole.old-{secrets.token_hex(4)}"
         if out.exists():
-            out.rename(old)
-        tmp.rename(out)
+            atomic.replace(out, old)  # tried again while a download has a file in it open (Windows)
+        atomic.replace(tmp, out)
         shutil.rmtree(old, ignore_errors=True)
     except OSError as e:  # e.g. the disk filled while writing: a failed build, handled like any other
         return dict(error=f"couldn't save the insole files ({e})")
@@ -1627,10 +1633,10 @@ def serve(host: str = "127.0.0.1", port: int = 8765, https: bool = False, public
     """Run the site. ``public``: reachable from the internet through a tunnel or
     proxy, so nothing is trusted for being "local" and only the studio key
     opens the studio."""
-    def read_only_checkout(what: Path, detail: str = "") -> SystemExit:
-        return SystemExit(f"can't write {what}{detail}: this account may only read the checkout (the Windows "
-                          f"service runs as Local Service). Start footscan serve{' --https' if https else ''} once "
-                          f"as yourself to make it, then start the service.")
+    def read_only_checkout(what: Path) -> SystemExit:
+        return SystemExit(f"can't write {what}: this account may only read the checkout (the Windows service "
+                          f"runs as Local Service). Start footscan serve{' --https' if https else ''} once as "
+                          f"yourself to make it, then start the service.")
 
     try:
         studio_key = load_studio_key(ROOT / ".studio_key")
@@ -1644,9 +1650,12 @@ def serve(host: str = "127.0.0.1", port: int = 8765, https: bool = False, public
             cert_path, key_path = ensure_cert(ROOT / ".certs")
         except PermissionError:
             raise read_only_checkout(ROOT / ".certs") from None
-        except subprocess.CalledProcessError as e:  # openssl couldn't write the certificate there
+        except subprocess.CalledProcessError as e:  # openssl failed: for any reason, so say what it said
             said = (e.stderr or b"").decode("utf-8", "replace").strip().splitlines()
-            raise read_only_checkout(ROOT / ".certs", f" (openssl: {said[-1]})" if said else "") from None
+            raise SystemExit(f"openssl couldn't make the certificate in {ROOT / '.certs'}"
+                             + (f": {said[-1]}" if said else "") + ". If this is the Windows service (Local "
+                             "Service may only read the checkout), start footscan serve --https once as yourself "
+                             "to make it.") from None
         cert_fp = cert_fingerprint(cert_path)
     handler = make_handler(data_dir=(data_dir or DATA_DIR).resolve(), studio_key=studio_key,
                            secure_cookie=https or public, local_check=never_local if public else is_loopback,

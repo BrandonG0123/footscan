@@ -45,6 +45,12 @@ class Busy(Exception):
 
 
 ERROR_ACCESS_DENIED = 5
+# A build writes its status at every stage; none goes this long without one (dense reconstruction, the
+# longest, takes minutes). A judgment, not measured on the tank.
+SILENT_BUILD_S = 6 * 3600.0
+# How far the clock may have been set forward since the computer started (NTP fixing a slow clock) before a
+# status written just after the start would look older than the start.
+CLOCK_SLACK_S = 600.0
 
 
 @functools.cache
@@ -56,10 +62,12 @@ def _kernel32():
     return k32
 
 
-def _windows_pid_alive(pid: int, k32=None, last_error=None) -> bool:
+def _windows_pid_alive(pid: int, k32=None, last_error=None, unheard_for_s: float | None = None) -> bool:
     """Windows: ask for the process's exit code. Opening it is refused (access denied) when another account
     started it (``footscan reconstruct`` in the owner's PowerShell, seen by the Local Service studio): it
-    exists, so it's running. Any other refusal (no such process) is not."""
+    exists, so it's running, unless its build hasn't written its status for longer than any build takes
+    (``unheard_for_s`` > SILENT_BUILD_S): then the number belongs to another account's process now (Windows
+    hands numbers out again soon). Any other refusal (no such process) is not running."""
     import ctypes
 
     if k32 is None:
@@ -67,7 +75,7 @@ def _windows_pid_alive(pid: int, k32=None, last_error=None) -> bool:
     PROCESS_QUERY_LIMITED_INFORMATION, STILL_ACTIVE = 0x1000, 259
     handle = k32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
     if not handle:
-        return last_error() == ERROR_ACCESS_DENIED
+        return last_error() == ERROR_ACCESS_DENIED and not (unheard_for_s is not None and unheard_for_s > SILENT_BUILD_S)
     try:
         code = ctypes.c_ulong()
         return bool(k32.GetExitCodeProcess(handle, ctypes.byref(code))) and code.value == STILL_ACTIVE
@@ -91,20 +99,20 @@ def booted_at() -> float | None:
 
 def pid_alive(pid, since=None) -> bool:
     """Is a process with this id still running? ``since``: when that process last wrote its status (``at``).
-    A process from before the computer last started has stopped, whatever has its number now: Windows hands
-    numbers out again soon, and one now held by another account (a system service) can't be asked, so it
-    would look alive for good. (Windows' Fast Startup shutdown keeps the start time; a restart or a power
-    cut resets it.)"""
+    A process from before the computer last started (allowing CLOCK_SLACK_S for the clock being set forward
+    since) has stopped, whatever has its number now: Windows hands numbers out again soon, and one now held
+    by another account (a system service) can't be asked, so it would look alive for good. (Windows' Fast
+    Startup shutdown keeps the start time; a restart or a power cut resets it.)"""
     if not isinstance(pid, int) or pid <= 0:
         return False
     if isinstance(since, (int, float)):
         boot = booted_at()
-        if boot is not None and since < boot:
+        if boot is not None and since < boot - CLOCK_SLACK_S:
             return False
     if os.name == "nt":
         # On Windows os.kill(pid, 0) is not a harmless check: signal 0 is
         # CTRL_C_EVENT, which would interrupt the build. Ask Windows instead.
-        return _windows_pid_alive(pid)
+        return _windows_pid_alive(pid, unheard_for_s=time.time() - since if isinstance(since, (int, float)) else None)
     try:
         os.kill(pid, 0)  # signal 0: "does it exist?", sends nothing
     except ProcessLookupError:
@@ -158,10 +166,7 @@ class ReconRunner:
                 raise Busy(f"another 3D model is being built ({self.folder.name}); try again when it finishes")
             st = folder / "recon" / "status.json"
             if st.exists():
-                try:
-                    cur = json.loads(st.read_text(encoding="utf-8"))
-                except (ValueError, OSError):  # garbled, not UTF-8 (both ValueErrors), or gone meanwhile
-                    cur = {}
+                cur = read_json_or_none(st) or {}
                 if cur.get("state") == "running" and pid_alive(cur.get("pid"), cur.get("at")):
                     raise Busy("this model is already being built")
             out = folder / "recon"
@@ -191,9 +196,8 @@ def summary(folder: Path, runner: ReconRunner | None = None) -> dict:
     out = folder / "recon"
     if not (out / "status.json").exists():
         return dict(state="none")
-    try:
-        status = json.loads((out / "status.json").read_text(encoding="utf-8"))
-    except (ValueError, OSError):  # garbled, not UTF-8 (both ValueErrors), or gone meanwhile
+    status = read_json_or_none(out / "status.json")
+    if status is None:
         return dict(state="running", stage="starting")  # being written this instant
     # A process that died without writing "done"/"failed" (killed, crashed).
     # The process id survives a restart of the web server; the runner doesn't.

@@ -1439,7 +1439,10 @@ def test_a_build_from_before_the_computer_last_started_has_stopped(monkeypatch):
     from footscan import recon_jobs
 
     monkeypatch.setattr(recon_jobs, "booted_at", lambda: 1000.0)
-    assert recon_jobs.pid_alive(os.getpid(), since=999.0) is False
+    early = 1000.0 - recon_jobs.CLOCK_SLACK_S
+    assert recon_jobs.pid_alive(os.getpid(), since=early - 1) is False
+    # just before the start as the clock now reads: the clock may have been set forward since (NTP)
+    assert recon_jobs.pid_alive(os.getpid(), since=999.0) is True
     assert recon_jobs.pid_alive(os.getpid(), since=1001.0) is True
     assert recon_jobs.pid_alive(os.getpid()) is True  # no time written: asked as before
 
@@ -1476,7 +1479,9 @@ def test_a_studio_that_cant_write_its_certificate_says_how_to_make_it(monkeypatc
 
     monkeypatch.setattr(server, "load_studio_key", lambda path: "k")
     monkeypatch.setattr(server, "ensure_cert", refused)
-    with pytest.raises(SystemExit, match="Start footscan serve --https once as yourself"):
+    # openssl can fail for other reasons too (a broken openssl.cnf on a Mac): what it said comes first
+    said = "Start footscan serve --https once as yourself" if failure == "permission" else "Can't open key.pem for writing"
+    with pytest.raises(SystemExit, match=said):
         server.serve(https=True)
 
 
@@ -1555,6 +1560,70 @@ def test_a_build_another_account_started_counts_as_running_on_windows():
 
     assert recon_jobs._windows_pid_alive(1234, NoOpen(), lambda: recon_jobs.ERROR_ACCESS_DENIED) is True
     assert recon_jobs._windows_pid_alive(1234, NoOpen(), lambda: 87) is False  # ERROR_INVALID_PARAMETER: gone
+
+
+def test_a_build_silent_for_longer_than_any_build_takes_has_stopped_even_if_its_number_cant_be_asked():
+    """Crashed, and its number given to another account's process in the same boot: access denied, but a build
+    writes its status at every stage, so one unheard of for SILENT_BUILD_S is not that build."""
+    from footscan import recon_jobs
+
+    class NoOpen:
+        def OpenProcess(self, *a):
+            return 0
+
+    denied = lambda: recon_jobs.ERROR_ACCESS_DENIED  # noqa: E731
+    assert recon_jobs._windows_pid_alive(1234, NoOpen(), denied, unheard_for_s=60.0) is True
+    assert recon_jobs._windows_pid_alive(1234, NoOpen(), denied, unheard_for_s=recon_jobs.SILENT_BUILD_S + 1) is False
+
+
+def test_a_read_refused_while_a_write_swaps_the_file_is_tried_again(tmp_path, monkeypatch):
+    """Windows refuses an open in the instant another thread replaces the file (a sharing violation)."""
+    from pathlib import Path as P
+
+    from footscan import atomic
+
+    f = tmp_path / "capture.json"
+    f.write_text("{}", encoding="utf-8")
+    real, calls = P.read_text, []
+
+    def busy_once(self, *a, **k):
+        calls.append(1)
+        if len(calls) == 1:
+            raise PermissionError(13, "sharing violation", str(self))
+        return real(self, *a, **k)
+
+    monkeypatch.setattr(atomic, "RETRIES", True)
+    monkeypatch.setattr(P, "read_text", busy_once)
+    assert atomic.read_utf8(f) == "{}" and len(calls) == 2
+
+
+def test_a_file_kept_open_past_the_retries_gets_an_answer_not_a_dropped_connection(servers, monkeypatch):
+    from footscan import server
+
+    op, _phone, _data = servers
+
+    def busy(path):
+        raise PermissionError(13, "Access is denied", str(path))
+
+    monkeypatch.setattr(server, "list_captures", busy)
+    st, raw, _ = call(f"{op}/api/captures")
+    assert st == 503 and "in use by another program" in json.loads(raw)["error"]
+
+
+def test_a_temporary_file_another_request_is_writing_now_still_counts(tmp_path):
+    """Only one left behind (older than a minute) is ignored when a refused upload's capture is removed; one
+    being written right now (a calipers save) keeps the folder."""
+    import os
+    import time
+
+    from footscan import atomic
+
+    t = atomic.temporary_name(tmp_path / "calipers.json")
+    t.write_text("{}", encoding="utf-8")
+    assert not atomic.is_temporary(t, left_behind=True)
+    old = time.time() - atomic.LEFT_BEHIND_AFTER_S - 5
+    os.utime(t, (old, old))
+    assert atomic.is_temporary(t, left_behind=True)
 
 
 def test_a_studio_that_cant_write_its_key_says_how_to_make_it(monkeypatch):

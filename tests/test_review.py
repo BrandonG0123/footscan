@@ -7,6 +7,7 @@ make_insole, so the packets read exactly what the studio writes.
 import json
 import plistlib
 import shutil
+import sys
 import zipfile
 
 import numpy as np
@@ -368,6 +369,16 @@ def test_the_windows_service_runs_nssm_from_where_only_an_administrator_can_chan
     first = next(i for i, ln in enumerate(lines) if ln.startswith('$env:Path = "C:\\Program Files\\nssm;"'))
     install = next(i for i, ln in enumerate(lines) if ln.startswith("nssm install Footscan"))
     assert copy < first < install
+
+
+def test_windows_service_commands_made_on_another_computer_ask_the_checkouts_own_python(tmp_path, monkeypatch):
+    """Made on the Mac for the tank: the Mac's Python folder is no use there, so the commands ask the
+    checkout's .venv for its Python, as DEPLOY-TANK.md does, and grant that."""
+    monkeypatch.setattr(service.os, "name", "posix")
+    lines = service.render("windows", tmp_path / "footscan", tmp_path / "data")["content"].splitlines()
+    ask = next(i for i, ln in enumerate(lines) if ln.startswith("$py = & "))
+    assert "python.exe" in lines[ask] and "sys.base_prefix" in lines[ask]
+    assert lines[ask + 1].startswith("icacls $py /grant") and not any(sys.base_prefix in ln for ln in lines)
 
 
 def test_pasting_the_windows_service_commands_again_leaves_the_running_nssm_alone(tmp_path):
