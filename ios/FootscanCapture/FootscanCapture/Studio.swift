@@ -212,14 +212,16 @@ struct StudioClient {
 
     enum Failure: LocalizedError {
         /// `incomplete`: the studio found part of the foot missing (toes, heel) and didn't keep the scan;
-        /// each line says what's missing and how to scan again.
+        /// each line says what's missing and how to scan again, and `advice` what to change, step by step
+        /// (empty from a studio that doesn't send it).
         /// `unreachable`: none of the studio's addresses answered as the studio, in the order they were tried.
         /// `dropped`: the studio answered, then the connection failed partway through sending.
-        case refused(String), unreachable([Missed], pinned: Bool), incomplete([String]), dropped(host: String)
+        case refused(String), unreachable([Missed], pinned: Bool), incomplete([String], advice: [RetakeAdvice]),
+             dropped(host: String)
         var errorDescription: String? {
             switch self {
             case .refused(let why): "The studio said no: \(why)"
-            case .incomplete(let why): "Scan again: the studio didn't keep this scan. \(why.joined(separator: " "))"
+            case .incomplete(let why, _): "Scan again: the studio didn't keep this scan. \(why.joined(separator: " "))"
             case .unreachable(let misses, let pinned): Self.explain(misses, pinned: pinned)
             case .dropped(let host): "The connection to the studio at \(host) dropped partway through sending. Try again; the scan is still on this phone."
             }
@@ -263,7 +265,12 @@ struct StudioClient {
 
         /// What a refusal (an answer outside 200-299) means, from the studio's JSON answer.
         static func from(status: Int, json: [String: Any]) -> Failure {
-            if let missing = json["incomplete"] as? [String], !missing.isEmpty { return .incomplete(missing) }
+            if let missing = json["incomplete"] as? [String], !missing.isEmpty {
+                let advice = json["retake"].flatMap { JSONSerialization.isValidJSONObject($0) ? $0 : nil }
+                    .flatMap { try? JSONSerialization.data(withJSONObject: $0) }
+                    .flatMap { try? JSONDecoder().decode([RetakeAdvice].self, from: $0) }
+                return .incomplete(missing, advice: advice ?? [])
+            }
             return .refused(json["error"] as? String ?? "HTTP \(status)")
         }
     }

@@ -111,6 +111,62 @@ def test_a_torn_scan_of_two_feet_that_were_apart_gets_the_usual_retake_advice():
     assert len(found) == 1 and "covering the whole foot" in found[0] and "other foot" not in found[0]
 
 
+def _every_refusal():
+    """One line of each kind of refusal a sole scan can get on arrival, from the checks themselves (fed the
+    measures and decisions that set each one off), with the code its steps should come under."""
+    import inspect
+
+    from footscan import server
+
+    whole = dict(length_mm=250.0, width_mm=100.0, toe_end=0.3, heel_end=0.4)
+    out = [
+        (completeness.problems({**whole, "toe_end": 0.8})[0], "toes_missing"),
+        (completeness.problems({**whole, "heel_end": 0.8})[0], "heel_cut_off"),
+        (completeness.problems({**whole, "width_mm": 250.0})[0], "not_one_foot"),
+        (completeness.against_others(whole, [dict(foot="right", same_foot=False, capture_id="R1",
+                                                  length_mm=270.0)])[0], "shorter_than_other"),
+        (completeness.from_prep(dict(heel_back_above_floor_mm=40.0))[0], "heel_missing"),
+        (completeness.from_prep(dict(open_edges_near_floor_mm=153.0, two_feet=dict(touching=True)))[0],
+         "feet_touching"),
+        (completeness.from_prep(dict(open_edges_near_floor_mm=153.0))[0], "torn"),
+        (completeness.from_prep(dict(ball_sides_above_floor_mm=dict(minus_x=0.0, plus_x=8.6)))[0],
+         "forefoot_rolled"),
+    ]
+    # two come from elsewhere as text: the preparation's too-steep toes, and a preparation that failed outright
+    assert 'info["toes_warning"] = (f"THE FRONT OF THE FOOT RISES' in inspect.getsource(foot_prep)
+    out.append((completeness.from_prep(dict(toes_warning="THE FRONT OF THE FOOT RISES 70 DEGREES past the ball"))[0],
+                "toes_curled"))
+    assert "THE STUDIO COULDN'T FIND THE WHOLE FOOT: {e}" in inspect.getsource(server.check_completeness)
+    out.append(("THE STUDIO COULDN'T FIND THE WHOLE FOOT: no floor. Scan again.", "foot_not_found"))
+    return out
+
+
+def test_every_refusal_comes_with_its_own_steps_for_the_next_scan():
+    """The phone shows these before the retake: each kind of refusal gets its own title and steps, not the
+    fallback."""
+    for line, code in _every_refusal():
+        advice = completeness.retake_advice(line)
+        assert advice["code"] == code, line
+        assert advice["title"] and advice["steps"] and all(s.endswith(".") for s in advice["steps"])
+    codes = [c for _, c, _, _ in completeness.RETAKE_STEPS]
+    assert len(set(codes)) == len(codes)
+
+
+def test_a_rolled_forefoot_is_fixed_by_checking_the_ball_is_level_not_by_turning_one_way():
+    """Which side of the ball looks higher depends on whether you look at the scan (sole down) or the foot
+    (sole up), so the steps don't name a side: a book across the ball touches both sides or it doesn't."""
+    line = completeness.from_prep(dict(ball_sides_above_floor_mm=dict(minus_x=0.0, plus_x=8.6)))[0]
+    assert "book" in line
+    steps = " ".join(completeness.retake_advice(line)["steps"])
+    assert "book" in steps and "big-toe side and the little-toe side" in steps
+
+
+def test_a_refusal_without_steps_of_its_own_keeps_its_own_words():
+    advice = completeness.retake_advice("THE SOLE IS GREEN: it shouldn't be. Scan again in daylight.")
+    assert advice == dict(code="other", title="The sole is green", steps=["Scan again in daylight."])
+    assert completeness.retake_advice("odd")["steps"] == ["Scan again."]
+
+
 @pytest.mark.parametrize("kind", ["sole_up", "sole_hanging"])
 def test_the_preparation_version_is_one_not_used_before(kind):
     """Earlier preparations stamped these; reusing one would make what they made look current. (The 29 Oct
