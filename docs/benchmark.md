@@ -199,6 +199,94 @@ mm cut off and the rest bent up 20 or 35 degrees, laying flat never hid the
 cut (test_completeness.py); the tips of 2190's toes still curl up 14 mm,
 which the one joint doesn't straighten.
 
+Toes that curl as well (30 Oct): the benchmark also bends the tips a second
+time, at 220 mm from the heel. Laying flat at up to three joints instead of
+one (SYNTHETIC, outline length vs true, right / left; the sole's heights and
+the floor unchanged):
+
+| case | one joint | up to three |
+|---|---|---|
+| sole up, toes up 20, tips 30 more | -7.9 / -8.0 | -5.3 / -5.3 |
+| sole up, toes up 30, tips 40 more | -13.2 / -13.2 | -7.7 / -7.8 |
+| legs flat, toes up 20, tips 30 more | -7.9 / -7.9 | -5.3 / -5.3 |
+
+Toes bent once read exactly as before.
+
+On the real scans (Brandon's Mac, 1 Nov, `scripts/accuracy_eval.py` at
+cf80fda before and 3e55ae1 after, each commit's own copy; still no ruler
+length, so this says what changed, not that it's more accurate):
+
+| scan | joints laid (deg, at mm from the heel) | toe tip up, mm | outline L x W, mm | footprint length, mm |
+|---|---|---|---|---|
+| 2349 right, sole up | 10.8 at 192.1 | 0.6 -> 0.6 | 243.7 x 89.8, unchanged | 240.8, unchanged |
+| 89df left, sole up | 12.8 at 167.9, 13.1 at 195.8 | 6.0 -> 0.1 | 229.7 x 79.9 -> 229.2 x 79.9 | 224.7 -> 224.3 |
+| 2190 left, legs flat | 21.5 at 183.1, 48.4 at 198.5 | 14.4 -> -0.1 | 219.5 x 108.2 -> 225.3 x 108.4 | 204.9 -> 218.0 |
+
+89df came out 0.5 mm *shorter* with its tips laid flat. Each joint turns
+the toes about a centre `TOES_JOINT_UP_MM` (10 mm) above the floor; a
+point below that centre moves down and slightly back as it turns. 89df's
+tips sat 6 mm up, below the centre, so pressing them to the floor pulled
+the end of the toe back a little. Whether a real toe does that depends on
+where its joint really is, the same open question as the first joint. The
+left foot now reads 14.5 mm shorter than the right (14.0 before). 2190 is
+still refused on arrival (torn near the floor, both feet in the scan,
+forefoot rolled 21 mm), so its 48-degree second bend may be a torn edge
+rather than a toe; no insole is made from it.
+
+Codex reviews (1 Nov) found that toes bent once about a line well above
+the skin read as a first joint shallower than the toes (the skin stretched
+under the bend), then the rest of the same bend as a second joint a few mm
+on, and laid flat at both read long. Skipping a joint under 12 mm past the
+last was tried and taken out again: two bends 10-15 mm apart at the skin
+read the same way, and need both joints. SYNTHETIC, curved_foot, right,
+refined to 2 mm, sole up, outline vs 250 mm, toe tip height in brackets:
+
+| toes bent | both joints laid (as now) | under 12 mm apart skipped |
+|---|---|---|
+| 60 degrees about a line 18 mm up at 200 mm | +11.9 (4.5 up) | +4.6 (20.1 up) |
+| 50 degrees about a line 18 mm up at 185 mm | +10.0 (1.3) | +7.8 (17.8) |
+| 45 degrees about a line 18 mm up at 200 mm | +8.7 (1.2) | +8.2 (10.0) |
+| 20 at 185 mm, then 30 at 195 | -5.9 (1.3) | -7.8 (15.7) |
+| 15 at 185 mm, then 40 at 200 | -6.7 (1.9) | -14.6 (23.4) |
+| 25 at 195 mm, then 25 at 210 | -6.2 (1.7) | -7.7 (12.9) |
+
+Seen from underneath, the two can't be told apart; which real toes do is
+the same question as `TOES_JOINT_UP_MM`, for a ruler length to settle.
+
+The same review found toes left well off the floor with nothing said:
+15 degrees at 200 mm then 65 more at 215 had only the first bend laid, the
+tip 10.6 mm up and the outline 224.2 mm of 250 (SYNTHETIC). Toes whose tip
+is still over 8 mm up after laying flat now get a warning and are refused
+on arrival (`TOES_STILL_UP_MM`). Laid flat, the SYNTHETIC tips above sat
+1.2-4.5 mm up and the real ones -0.1 to 0.6 mm.
+
+Still short, with no warning (SYNTHETIC, curved_foot, right, sole up,
+outline vs 250 mm): a curl that starts within about 25 mm of the tip
+(60 degrees from 230 mm: 12.0 mm short; 50 degrees from 235 mm after 20
+at 185: 10.4), too short past its bend to be told from a toe's rounded
+end, and a curl much steeper than the toes' first bend (20 at 185 then 70
+more at 215: 19.4 short; 15 at 180, 15 at 200, 70 at 222: 23.4). Their
+tips sit 1.0-6.1 mm up (1 Nov), under `TOES_STILL_UP_MM`'s 8 mm and
+close to what toes laid flat show (up to 4.5), and how far the foot reaches
+above the outline's 30 mm doesn't tell them apart either. 60 degrees from
+225 mm (14.9 short) leaves its tip 9.2 mm up and now gets the still-off-
+the-floor warning. What catches the rest is the length against the other
+foot's scan (12 mm, on arrival) and a ruler length.
+
+A third Codex review (4 Nov) found another of these: 15 degrees at 185 mm
+then 60 more at 230 reads 235.9 mm (14.5 short) with nothing said. The
+very front of that toe is 10.7 mm up, but the still-off-the-floor check
+takes the lowest point of the front 5 mm, which is 1.6 mm. Reading the tip
+nearer the front doesn't separate it from good scans, because a toe's end
+is rounded. SYNTHETIC, curved_foot, refined to 2 mm, sole up, prepared at
+549f2de: the lowest point in the front 2 mm is 8.3 mm up on this foot,
+but 8.8 on toes bent 20 degrees three times and laid flat (244.4 mm, as
+good as any here), 4.1 on toes bent 20 once, and 5.1 on the flat foot
+with 0.6 mm speckle. Over the front 1 mm it's 10.7 against 13.3, 13.1 and
+8.8. How far the outline reaches past the last point under 2 mm high is
+4.5 mm on this foot and 4.1-5.2 on those three. So it joins the near-tip
+curls above, left for the other-foot check and a ruler length.
+
 ## The part not measured yet: the capture
 
 The processing is not the weak link; the capture may be. The closest
