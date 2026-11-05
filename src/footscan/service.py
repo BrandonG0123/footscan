@@ -155,18 +155,20 @@ def _nssm(root, exe, args, log, port, python_home, data_dir) -> dict:
 
     Two things keep the service from being a way to take over the computer:
 
-    - nssm.exe itself runs as LocalSystem. winget puts it in the user's own folder, where the user (or anything
-      running as them) can replace it; so the commands copy it to Program Files, which only an administrator can
-      change, install the service from there, and put that folder first on the computer's own PATH, so a later
-      ``nssm`` in an Administrator PowerShell runs that copy too, not winget's.
+    - nssm.exe is the service's own program, and every ``nssm`` command is run in an Administrator PowerShell.
+      winget puts it in the user's own folder, where the user (or anything running as them) can replace it; so
+      the commands copy it to Program Files, which only an administrator can change, install the service from
+      there, and put that folder first on the computer's own PATH, so a later ``nssm`` in an Administrator
+      PowerShell runs that copy too, not winget's.
     - The studio runs as Local Service, not LocalSystem: the checkout and its .venv are the owner's to change (git
       pull, pip install), so whatever is in them runs with no more rights than a normal user. Local Service gets
       read access to the checkout and the Python it runs on, and write access to the data folder only.
     """
     content = "\n".join([
         "# Administrator PowerShell. NOT a medical device; Wi-Fi only (no tunnel, no port forwarding).",
-        "# nssm where only an administrator can change it (nssm runs with full control of the computer), first on",
-        "# the computer's PATH so every later Administrator PowerShell's nssm is this one",
+        "# nssm where only an administrator can change it (it is the service's program, and runs as administrator",
+        "# whenever you type nssm here), first on the computer's PATH so every later Administrator PowerShell's nssm",
+        "# is this one",
         f'New-Item -ItemType Directory -Force "{NSSM_DIR}" | Out-Null',
         f'Copy-Item (Get-Command nssm).Source "{NSSM_EXE}"',
         '$machine = [Environment]::GetEnvironmentVariable("Path", "Machine")',

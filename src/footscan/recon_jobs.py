@@ -41,6 +41,29 @@ class Busy(Exception):
     pass
 
 
+ERROR_ACCESS_DENIED = 5
+
+
+def _windows_pid_alive(pid: int, k32=None, last_error=None) -> bool:
+    """Windows: ask for the process's exit code. Opening it is refused (access denied) when another account
+    started it (``footscan reconstruct`` in the owner's PowerShell, seen by the Local Service studio): it
+    exists, so it's running. Any other refusal (no such process) is not."""
+    import ctypes
+
+    if k32 is None:
+        k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        last_error = ctypes.get_last_error
+    PROCESS_QUERY_LIMITED_INFORMATION, STILL_ACTIVE = 0x1000, 259
+    handle = k32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+    if not handle:
+        return last_error() == ERROR_ACCESS_DENIED
+    try:
+        code = ctypes.c_ulong()
+        return bool(k32.GetExitCodeProcess(handle, ctypes.byref(code))) and code.value == STILL_ACTIVE
+    finally:
+        k32.CloseHandle(handle)
+
+
 def pid_alive(pid) -> bool:
     """Is a process with this id still running?"""
     if not isinstance(pid, int) or pid <= 0:
@@ -48,18 +71,7 @@ def pid_alive(pid) -> bool:
     if os.name == "nt":
         # On Windows os.kill(pid, 0) is not a harmless check: signal 0 is
         # CTRL_C_EVENT, which would interrupt the build. Ask Windows instead.
-        import ctypes
-
-        PROCESS_QUERY_LIMITED_INFORMATION, STILL_ACTIVE = 0x1000, 259
-        k32 = ctypes.windll.kernel32
-        handle = k32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
-        if not handle:
-            return False
-        try:
-            code = ctypes.c_ulong()
-            return bool(k32.GetExitCodeProcess(handle, ctypes.byref(code))) and code.value == STILL_ACTIVE
-        finally:
-            k32.CloseHandle(handle)
+        return _windows_pid_alive(pid)
     try:
         os.kill(pid, 0)  # signal 0: "does it exist?", sends nothing
     except ProcessLookupError:

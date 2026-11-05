@@ -105,7 +105,7 @@ def cmd_calib_object(args) -> int:
 def cmd_reconstruct(args) -> int:
     from .recon import pipeline
 
-    calipers = json.loads(Path(args.calipers).read_text(encoding="utf-8")) if args.calipers else None
+    calipers = json.loads(Path(args.calipers).read_text(encoding="utf-8-sig")) if args.calipers else None
     report = pipeline.reconstruct(args.capture, calibration_object=args.calibration_object or bool(calipers),
                                   calipers=calipers)
     print(SAFETY_BANNER)
@@ -127,7 +127,7 @@ def cmd_reconstruct(args) -> int:
 def cmd_accuracy(args) -> int:
     from .recon import pipeline
 
-    calipers = json.loads(Path(args.calipers).read_text(encoding="utf-8")) if args.calipers else None
+    calipers = json.loads(Path(args.calipers).read_text(encoding="utf-8-sig")) if args.calipers else None
     report = pipeline.recompute_accuracy(args.capture, calipers)
     a = report["accuracy"]["surface_deviation"]
     print(f"accuracy vs calibration object: median {a['median_mm']} mm, 95th percentile {a['p95_mm']} mm")
@@ -137,7 +137,7 @@ def cmd_accuracy(args) -> int:
 def cmd_accuracy_mesh(args) -> int:
     from .recon import imported
 
-    calipers = json.loads(Path(args.calipers).read_text(encoding="utf-8")) if args.calipers else None
+    calipers = json.loads(Path(args.calipers).read_text(encoding="utf-8-sig")) if args.calipers else None
     try:
         mesh = imported.load_geometry(args.mesh)
     except ValueError as err:

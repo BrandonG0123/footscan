@@ -1352,6 +1352,7 @@ def test_a_json_file_is_swapped_in_even_while_a_reader_briefly_holds_the_old_one
         return real(src, dst)
 
     monkeypatch.setattr(atomic.os, "replace", held_for_a_moment)
+    monkeypatch.setattr(atomic, "RETRIES", True)  # as on Windows, wherever the test runs
     server.write_json(tmp_path / "capture.json", {"a": 1})
     assert server.read_json(tmp_path / "capture.json") == {"a": 1} and len(refusals) == 3
     refusals.clear()
@@ -1370,3 +1371,98 @@ def test_a_json_file_is_swapped_in_even_while_a_reader_briefly_holds_the_old_one
         server.write_json(tmp_path / "capture.json", {"a": 2})
     assert server.read_json(tmp_path / "capture.json") == {"a": 1}
     assert sorted(p.name for p in tmp_path.iterdir()) == ["capture.json", "status.json"]
+
+
+def test_a_capture_whose_insole_cant_be_checked_is_listed_as_stale_not_left_out(tmp_path, monkeypatch):
+    """Only a capture.json that can't be read is left out of the studio list. If what the insole was made from
+    can't be read (a shoe's capture.json garbled, a model mid-rebuild), the capture is still listed, its insole
+    marked stale."""
+    from footscan import server
+
+    d = tmp_path / "captures" / "A"
+    d.mkdir(parents=True)
+    server.write_json(d / "capture.json", {"capture_id": "A", "created": "1", "insole": {"made": "x"}})
+
+    def unreadable(folder, meta):
+        raise ValueError("not UTF-8")
+
+    monkeypatch.setattr(server, "insole_is_stale", unreadable)
+    [c] = server.list_captures(tmp_path / "captures")
+    assert c["capture_id"] == "A" and c["insole"]["stale"] is True
+
+
+def test_a_request_refused_for_two_lengths_still_gets_its_answer(servers):
+    """Content-Length 0 then 5 MB is refused (one length, please) before its body is read. The 5 MB is still
+    coming, so it's taken in before the close like any refused body, and the 400 isn't lost to a reset."""
+    import socket
+
+    op, _phone, _data = servers
+    host, port = op.removeprefix("http://").split(":")
+    body = b"x" * (6 * 1024 * 1024)
+    sock = socket.create_connection((host, int(port)), timeout=10)
+    head = (f"POST /api/captures HTTP/1.1\r\nHost: {host}\r\nContent-Type: application/json\r\n"
+            f"Content-Length: 0\r\nContent-Length: {len(body)}\r\n\r\n").encode()
+    errors = []
+
+    def send():
+        try:
+            sock.sendall(head + body)
+        except OSError as e:
+            errors.append(e)
+
+    sender = threading.Thread(target=send, daemon=True)
+    sender.start()
+    got = b""
+    try:
+        while chunk := sock.recv(65536):
+            got += chunk
+    except OSError as e:
+        errors.append(e)
+    finally:
+        sender.join(10)
+        sock.close()
+    assert got.startswith(b"HTTP/1.1 400"), got[:200]
+    assert errors == []
+
+
+def test_a_folder_that_cant_be_written_fails_at_once_off_windows(tmp_path, monkeypatch):
+    """Only Windows refuses to replace an open file; elsewhere PermissionError means the folder can't be written,
+    and waiting 2 s on every write (holding the request and its capture lock) changes nothing."""
+    import time
+
+    from footscan import atomic
+
+    def refused(src, dst):
+        raise PermissionError(13, "Permission denied", str(dst))
+
+    monkeypatch.setattr(atomic.os, "replace", refused)
+    monkeypatch.setattr(atomic, "RETRIES", False)
+    t0 = time.monotonic()
+    with pytest.raises(PermissionError):
+        atomic.write_utf8(tmp_path / "capture.json", "{}")
+    assert time.monotonic() - t0 < 0.5
+    assert list(tmp_path.iterdir()) == []  # no temporary file left behind
+
+
+def test_a_build_another_account_started_counts_as_running_on_windows():
+    """The Local Service studio can't open a build the owner started from their own PowerShell (access
+    denied). That build exists, so it's running: the studio mustn't call it failed and start a second one."""
+    from footscan import recon_jobs
+
+    class NoOpen:
+        def OpenProcess(self, *a):
+            return 0
+
+    assert recon_jobs._windows_pid_alive(1234, NoOpen(), lambda: recon_jobs.ERROR_ACCESS_DENIED) is True
+    assert recon_jobs._windows_pid_alive(1234, NoOpen(), lambda: 87) is False  # ERROR_INVALID_PARAMETER: gone
+
+
+def test_a_studio_that_cant_write_its_key_says_how_to_make_it(monkeypatch):
+    from footscan import server
+
+    def read_only(path):
+        raise PermissionError(13, "Access is denied", str(path))
+
+    monkeypatch.setattr(server, "load_studio_key", read_only)
+    with pytest.raises(SystemExit, match="Start footscan serve once as yourself"):
+        server.serve()

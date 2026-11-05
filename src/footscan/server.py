@@ -200,14 +200,9 @@ def read_json(path: Path) -> dict:
 def write_json(path: Path, obj: dict) -> None:
     """Written whole to this call's own temporary file, then swapped in (a reader sees the old file or the new),
     tried again for a moment while a reader has the old one open (Windows refuses the swap meanwhile)."""
-    from .atomic import replace
+    from . import atomic
 
-    tmp = path.with_name(f"{path.stem}.{secrets.token_hex(4)}.tmp")
-    tmp.write_text(json.dumps(obj, indent=2), encoding="utf-8")
-    try:
-        replace(tmp, path)
-    finally:
-        tmp.unlink(missing_ok=True)
+    atomic.write_utf8(path, json.dumps(obj, indent=2))
 
 
 # ---- validation ------------------------------------------------------------
@@ -454,6 +449,13 @@ def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check
             BaseHTTPRequestHandler.end_headers(self)
             return True
 
+        def finish(self):
+            """After the last request on this connection: if its body was left unread, take it in before the
+            connection closes (see linger), so the answer isn't lost to a reset. Plain and HTTPS alike."""
+            super().finish()
+            if self.body_left_unread():
+                linger(self.connection)
+
         def handle_one_request(self):
             self.connection.settimeout(KEEPALIVE_TIMEOUT_S)  # waiting for the next request: idle limit
             super().handle_one_request()
@@ -463,6 +465,7 @@ def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check
             # studio-key cookie in _extra_headers, which is only for the response that set it).
             self._body_read = False
             self._extra_headers = {}
+            self.__dict__.pop("headers", None)  # the request before's: a request line refused before its headers
             if not super().parse_request():
                 return False
             self.connection.settimeout(TRANSFER_TIMEOUT_S)
@@ -488,8 +491,9 @@ def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check
                 return False
             if self.headers.get_all("Transfer-Encoding") is not None:
                 return True
+            # every copy: a request refused for sending two (0 and then 5 MB) still has the 5 MB coming
             try:
-                return int(self.headers.get("Content-Length") or 0) > 0  # parse_request checked it's one whole number
+                return any(int(v) > 0 for v in self.headers.get_all("Content-Length") or [])
             except ValueError:
                 return True
 
@@ -1520,11 +1524,16 @@ def list_captures(captures_dir: Path) -> list[dict]:
     for f in captures_dir.glob("*/capture.json") if captures_dir.exists() else []:
         try:
             meta = read_json(f)
-            meta.pop("frames", None)
-            if meta.get("insole") and insole_is_stale(f.parent, meta):
-                meta["insole"] = {**meta["insole"], "stale": True}
         except (ValueError, OSError):  # garbled or not UTF-8, or removed since the glob saw it (a refused upload)
             continue
+        meta.pop("frames", None)
+        if meta.get("insole"):
+            try:
+                stale = insole_is_stale(f.parent, meta)
+            except (ValueError, OSError):  # what it was made from can't be read (or is mid-rebuild): not current
+                stale = True
+            if stale:
+                meta["insole"] = {**meta["insole"], "stale": True}
         out.append(meta)
     return sorted(out, key=lambda m: m.get("created", ""), reverse=True)
 
@@ -1545,14 +1554,14 @@ class StudioServer(ThreadingHTTPServer):
 
     def finish_request(self, request, client_address):
         if self.ssl_context is None:
-            return self._serve(request, client_address)
+            return super().finish_request(request, client_address)
         request.settimeout(TLS_HANDSHAKE_TIMEOUT_S)
         try:
             tls = self.ssl_context.wrap_socket(request, server_side=True)  # the handshake, in this thread
         except OSError:  # ssl.SSLError, a timeout, or the phone hanging up: drop just this connection
             return
         try:
-            self._serve(tls, client_address)
+            super().finish_request(tls, client_address)
         finally:
             # The plain socket handed over its file descriptor to `tls`, so close that one here.
             try:
@@ -1560,13 +1569,6 @@ class StudioServer(ThreadingHTTPServer):
             except OSError:
                 pass
             tls.close()
-
-    def _serve(self, conn, client_address):
-        """Serve the connection's requests; if the last one's body was left unread, take it in before closing."""
-        handler = self.RequestHandlerClass(conn, client_address, self)
-        if handler.body_left_unread():
-            linger(conn)
-
 
 def linger(conn, seconds: float = LINGER_S, limit: int = LINGER_BYTES) -> None:
     """Say we're done sending, then read and drop what the client is still sending (see LINGER_S)."""
@@ -1620,7 +1622,12 @@ def serve(host: str = "127.0.0.1", port: int = 8765, https: bool = False, public
     """Run the site. ``public``: reachable from the internet through a tunnel or
     proxy, so nothing is trusted for being "local" and only the studio key
     opens the studio."""
-    studio_key = load_studio_key(ROOT / ".studio_key")
+    try:
+        studio_key = load_studio_key(ROOT / ".studio_key")
+    except PermissionError:
+        raise SystemExit(f"can't write the studio key {ROOT / '.studio_key'}: this account may only read the "
+                         f"checkout (the Windows service runs as Local Service). Start footscan serve once as "
+                         f"yourself to make it, then start the service.") from None
     if allow_indexing is None:
         allow_indexing = not public  # on the internet, hidden from search engines unless asked otherwise
     cert_fp = None

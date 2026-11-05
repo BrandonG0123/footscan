@@ -71,8 +71,8 @@ paths, and the numbered steps to install it. It installs nothing itself.
 
 - **Windows** (tank): a service through NSSM, plus a firewall rule for Private
   networks only. The commands copy `nssm.exe` to `C:\Program Files\nssm` first:
-  the service runs it with full control of the computer, so it must not sit in
-  your own folder, where winget puts it. (A service installed from winget's copy: copy `nssm.exe` there, then point the
+  it is the service's own program, and every `nssm` you type later runs it as
+  administrator, so it must not sit in your own folder, where winget puts it. (A service installed from winget's copy: copy `nssm.exe` there, then point the
   service at it with
   `Set-ItemProperty HKLM:\SYSTEM\CurrentControlSet\Services\Footscan ImagePath '"C:\Program Files\nssm\nssm.exe"'`
   and `nssm restart Footscan`; its settings stay. The quotes inside the value
@@ -191,6 +191,13 @@ three `icacls` lines from `footscan service --system windows`, then
 `SERVICE_START_NAME : NT AUTHORITY\LocalService`. Open the studio and make an
 insole to check it still works; if `server.log` says *Access is denied*, a
 folder it needs wasn't granted (not yet tried on tank).
+
+Local Service can only read the checkout, so the studio can't make a new
+`.studio_key` or certificate there. To change the key (or the certificate),
+`nssm stop Footscan`, delete `.studio_key` (or `.certs`), start `footscan serve
+--host 0.0.0.0 --https` once as yourself to make new ones, stop it, then `nssm
+start Footscan` and pair the phone again. If the service can't write the key,
+`server.log` says so.
 
 **On Windows, use these steps instead: they stop the service first.** The running
 service holds `.venv\Scripts\footscan.exe` open, so `pip install -e .` can't

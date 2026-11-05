@@ -360,7 +360,8 @@ def test_the_windows_service_opens_the_port_on_private_networks_only(tmp_path):
 
 
 def test_the_windows_service_runs_nssm_from_where_only_an_administrator_can_change_it(tmp_path):
-    """The service runs nssm.exe as LocalSystem; winget leaves it in the user's own folder, so the commands copy it
+    """nssm.exe is the service's program and runs as administrator whenever nssm is typed; winget leaves it in the
+    user's own folder, so the commands copy it
     to Program Files and put that copy first before `nssm install` records which nssm the service runs."""
     lines = service.render("windows", tmp_path / "footscan", tmp_path / "data")["content"].splitlines()
     copy = next(i for i, ln in enumerate(lines) if ln.startswith("Copy-Item") and "Program Files\\nssm" in ln)

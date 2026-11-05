@@ -158,3 +158,13 @@ def test_a_damaged_file_that_is_not_utf8_is_skipped_like_bad_json(tmp_path):
     (folder / "landmarks").mkdir(parents=True)
     (folder / "landmarks" / "pick-1.json").write_bytes('{"note": "Zoë"}'.encode("cp1252"))
     assert landmarks.list_picks(folder) == []
+
+
+def test_a_calipers_file_saved_with_a_byte_order_mark_is_read(tmp_path, capsys):
+    """Notepad's "UTF-8 with BOM" and PowerShell 5's Set-Content -Encoding UTF8 start the file with one."""
+    from footscan import cli
+
+    cal = tmp_path / "calipers.json"
+    cal.write_bytes(b"\xef\xbb\xbf" + json.dumps({"width_mm": 40.0}).encode())
+    assert cli.main(["accuracy-mesh", str(tmp_path / "missing.obj"), "--calipers", str(cal)]) == 1
+    assert "missing.obj" in capsys.readouterr().err
