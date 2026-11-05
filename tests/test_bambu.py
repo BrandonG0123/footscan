@@ -280,7 +280,7 @@ def test_the_plain_3mf_keeps_clear_of_the_x1_no_print_corner_too(tmp_path):
     path = _plain_3mf(tmp_path, "long.3mf")
     m = read_3mf(path)
     placed = bambu.placed_vertices(m["transform"], m["vertices"])
-    (x0, y0), (x1, y1) = BAMBU_NO_PRINT_CORNER
+    x1, y1 = np.max(BAMBU_NO_PRINT_CORNER, axis=0)
     assert not np.any((placed[:, 0] < x1 + 3) & (placed[:, 1] < y1 + 3))
     assert placed[:, :2].min() >= 3.0 - 1e-6 and placed[:, :2].max() <= 253.0 + 1e-6
     assert np.isclose(np.ptp(m["vertices"][:, 0]), 275.0, atol=0.01)  # turned and moved only
@@ -352,3 +352,41 @@ def test_bambus_preset_index_is_read_once_per_project(tmp_path, profiles, monkey
     monkeypatch.setattr(bambu.Path, "read_text", counting)
     bambu.tpu_project([_plain_3mf(tmp_path, "l.3mf")], tmp_path / "p.3mf", profiles, bed_type="High Temp Plate", **X1C)
     assert len(reads) == 1
+
+
+def test_a_project_saved_again_in_bambu_studio_is_never_replaced(tmp_path, profiles):
+    """Bambu Studio keeps the Designer when it saves a project, but writes that day's ModificationDate, which
+    this leaves empty: a project saved again there (perhaps with supports or seams painted) is refused."""
+    left = _plain_3mf(tmp_path, "left-insole.3mf")
+    out = tmp_path / "pair.3mf"
+    bambu.tpu_project([left], out, profiles, bed_type="High Temp Plate", **X1C)
+    bambu.tpu_project([left], out, profiles, bed_type="High Temp Plate", **X1C)  # still as written: replaced
+    resaved = tmp_path / "resaved.3mf"
+    with zipfile.ZipFile(out) as z, zipfile.ZipFile(resaved, "w") as w:
+        for n in z.namelist():
+            data = z.read(n)
+            if n == "3D/3dmodel.model":
+                data = data.replace(b'<metadata name="ModificationDate"></metadata>',
+                                    b'<metadata name="ModificationDate">2026-11-05</metadata>')
+                assert b"2026-11-05" in data
+            w.writestr(n, data)
+    before = resaved.read_bytes()
+    with pytest.raises(ValueError, match="isn't a project this wrote"):
+        bambu.tpu_project([left], resaved, profiles, bed_type="High Temp Plate", **X1C)
+    assert resaved.read_bytes() == before
+
+
+def test_the_same_insole_twice_is_refused(tmp_path, profiles):
+    left = _plain_3mf(tmp_path, "left-insole.3mf")
+    with pytest.raises(ValueError, match="given twice"):
+        bambu.tpu_project([left, left], tmp_path / "pair.3mf", profiles, bed_type="High Temp Plate", **X1C)
+
+
+def test_an_l_shaped_no_print_area_from_a_profile_isnt_turned_into_a_box(profiles):
+    """fdm_bbl_3dp_001_common's area is a corner plus a strip up the left edge; a box round it would refuse
+    insoles that fit."""
+    V = _insole_like(length=200.0, width=80.0).vertices
+    l_shape = ["0x0", "28x0", "28x28", "8x28", "8x256", "0x256"]
+    at = bambu.place_on_bed(V, ["0x0", "256x0", "256x256", "0x256"], l_shape)
+    placed = bambu.placed_vertices(at["transform"], V)
+    assert at["angle_deg"] == 0.0 and placed[:, 0].min() >= 8.0 + 3.0 - 1e-6

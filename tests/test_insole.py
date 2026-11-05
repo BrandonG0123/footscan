@@ -1032,17 +1032,52 @@ def test_the_bed_check_is_where_the_plain_3mf_is_placed(tmp_path):
     assert placed["room_mm"] >= 3.0  # clear of the corner and the edges
 
 
-def test_only_the_x1_bed_has_its_no_print_corner():
-    """The 18 x 28 mm corner is the X1/P1's: a footprint that reaches the corner of another printer's bed lies
-    straight there, and on the X1's own bed it doesn't."""
-    square = np.c_[[0, 170, 170, 0], [0, 0, 170, 170]]
-    assert insole.bed_fit_shape(square, 180.0)["how"] == "straight"
-    assert insole.bed_fit_shape(square * 245 / 170, 256.0)["how"] != "straight"
+def test_the_no_print_corner_is_the_printers_not_the_beds_size():
+    """The 18 x 28 mm corner is the X1/P1's. An A1 has the same 256 mm bed and no such corner: a footprint
+    reaching the bed's corner lies straight on it, and on the X1 it doesn't."""
+    square = np.c_[[0, 245, 245, 0], [0, 0, 245, 245]]
+    assert insole.bed_fit_shape(square, 256.0)["how"] != "straight"                 # X1 (the default)
+    assert insole.bed_fit_shape(square, 256.0, exclude=())["how"] == "straight"     # A1: none
+    assert insole.InsoleParams(bed_exclude=()).bed_exclude == ()
+
+
+def test_an_l_shaped_no_print_area_is_kept_as_its_shape_not_a_box_round_it():
+    """Some Bambu profiles' areas are a corner plus a strip beside it (0-28 x 0-28 and 0-8 x 28-256): a box round
+    that would block a 28 mm strip down the whole edge."""
+    l_shape = ((0, 0), (28, 0), (28, 28), (8, 28), (8, 256), (0, 256))
+    area = insole._no_print_area(l_shape)
+    strip = np.c_[np.full(50, 20.0), np.linspace(60, 200, 50)]  # x = 20, beside the strip, above the corner
+    assert insole._room_on_bed(strip, np.array([0.0, 0.0]), np.array([256.0, 256.0]), area) == pytest.approx(12.0)
+
+
+def test_an_overlap_with_the_no_print_area_is_ranked_by_how_deep_it_goes():
+    """A placement a little into the area must rank above one far into it (it was -1 mm whatever the depth)."""
+    area = insole._no_print_area(insole.BAMBU_NO_PRINT_CORNER)
+    lo, hi = np.array([0.0, 0.0]), np.array([256.0, 256.0])
+    shallow = np.c_[np.linspace(17, 60, 30), np.full(30, 27.0)]   # 1 mm into it
+    deep = np.c_[np.linspace(5, 60, 30), np.full(30, 10.0)]       # 10 mm in
+    assert insole._room_on_bed(shallow, lo, hi, area) > insole._room_on_bed(deep, lo, hi, area)
+    assert insole._room_on_bed(deep, lo, hi, area) < -5
+
+
+def test_the_plain_3mf_is_placed_by_the_reports_own_search_not_a_second_one(tmp_path, monkeypatch):
+    import trimesh
+
+    oval = trimesh.creation.cylinder(radius=0.5, height=1.0, sections=96)
+    oval.apply_scale([300.0, 100.0, 6.0])
+    oval.apply_translation([147.0, 0, 3.0])
+    fit = insole.bed_fit_shape(np.asarray(oval.vertices)[:, :2], 256.0)
+    monkeypatch.setattr(insole, "place_on_bed", lambda *a, **k: pytest.fail("searched again"))
+    insole.write_3mf(oval, tmp_path / "x.3mf", "x", "NOT A MEDICAL DEVICE. test", bed_mm=256.0, placement=fit)
+    c, s = insole.read_3mf(tmp_path / "x.3mf")["transform"][:2]
+    assert fit["angle_deg"] == pytest.approx(np.degrees(np.arctan2(s, c)) % 360, abs=0.01)
 
 
 def test_a_footprint_lying_right_over_a_no_print_area_overlaps_it():
     """No outline point is inside the area when the footprint covers it whole; that is still an overlap."""
     t = np.linspace(0, 2 * np.pi, 400, endpoint=False)
     ring = np.c_[100 + 60 * np.cos(t), 100 + 60 * np.sin(t)]
-    assert insole._room_on_bed(ring, np.array([0.0, 0.0]), np.array([256.0, 256.0]), ((90, 90), (110, 110))) < 0
-    assert insole._room_on_bed(ring, np.array([0.0, 0.0]), np.array([256.0, 256.0]), ((0, 0), (18, 28))) > 0
+    middle = insole._no_print_area(((90, 90), (110, 90), (110, 110), (90, 110)))
+    assert insole._room_on_bed(ring, np.array([0.0, 0.0]), np.array([256.0, 256.0]), middle) < 0
+    corner = insole._no_print_area(insole.BAMBU_NO_PRINT_CORNER)
+    assert insole._room_on_bed(ring, np.array([0.0, 0.0]), np.array([256.0, 256.0]), corner) > 0

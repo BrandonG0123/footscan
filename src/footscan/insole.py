@@ -104,7 +104,10 @@ class InsoleParams:
     target_length_mm: float | None = None  # if set, the outline reaches this length (a shoe's insole), see build()
     shoe_outline: tuple | None = None   # if set, the outline is this shoe's own insole's ((x, y), ...) mm, heel at
                                         # the origin (recon/shoe.py), fitted round the foot; see build()
-    bed_mm: float = 256.0           # printer bed (Bambu X1/P1/A1); for the fit check only
+    bed_mm: float = 256.0           # printer bed (Bambu X1/P1/A1): where the plain 3MF is placed, and the fit check
+    # the printer's no-print area (its profile's bed_exclude_area, (x, y) points, mm): the X1/P1's wipe corner by
+    # default (the owner's X1 Carbon); () for a printer with none, such as an A1
+    bed_exclude: tuple = ((0.0, 0.0), (18.0, 0.0), (18.0, 28.0), (0.0, 28.0))
 
 
 class InsoleError(ValueError):
@@ -386,7 +389,7 @@ def build(foot_mesh, foot: str, params: InsoleParams | None = None) -> Insole:
                   seen_under_arch=round(arch_seen, 3)),
         max_fill_mm=round(float(fill[in_sil].max()), 2),
         max_fill_at_mm=dict(x=round(float(X[peak]), 1), y=round(float(Y[peak]), 1)),
-        bed_fit=bed_fit_shape(np.asarray(mesh.vertices)[:, :2], p.bed_mm),
+        bed_fit=bed_fit_shape(np.asarray(mesh.vertices)[:, :2], p.bed_mm, exclude=p.bed_exclude),
         shoe_fit=shoe_fit,
         warnings=warnings,
         frame="mm; x forward from the back of the heel, y toward the foot's left, z up; bottom at z = 0",
@@ -394,7 +397,7 @@ def build(foot_mesh, foot: str, params: InsoleParams | None = None) -> Insole:
     return Insole(mesh=mesh, foot=foot, params=p, report=report, sole=m)
 
 
-def bed_fit_shape(xy, bed: float, clearance: float = 3.0) -> dict:
+def bed_fit_shape(xy, bed: float, clearance: float = 3.0, exclude=None) -> dict:
     """Does this footprint (points, mm) fit a square bed, and turned how? The answer the plain 3MF is placed
     by (``place_on_bed``, the same search with the same no-print corner), so what the report, the studio and
     the review packet say is where the file lies when the slicer opens it.
@@ -403,15 +406,20 @@ def bed_fit_shape(xy, bed: float, clearance: float = 3.0) -> dict:
     and toes leave the bed's corners free, so a longer insole fits along the
     diagonal than a rectangle of the same length would. Straight whenever it
     fits (easiest to check by eye), else the turn that leaves the most room.
-    ``spare_mm``: the room left past ``clearance`` at the closest point (edge
-    or corner); ``short_by_mm``: how far short of ``clearance`` it is.
+    ``exclude``: the printer's no-print area (points, mm; default the X1/P1
+    corner, ``()`` for none). ``margin_mm``: the room left past ``clearance``
+    at the closest point (an edge or the no-print area); ``short_by_mm``: how
+    far short of ``clearance`` the closest point is. ``shift_mm``: where
+    write_3mf moves it after turning, so it needn't search again.
     """
-    at = place_on_bed(xy, (0.0, 0.0), (bed, bed), no_print_corner(bed), clearance)
-    deg, spare = at["angle_deg"], at["room_mm"] - clearance
-    if spare < 0:
-        return dict(fits=False, how="too long for this bed", angle_deg=deg, short_by_mm=round(-spare, 1), bed_mm=bed)
-    how = "straight" if deg == 0.0 else f"turned {deg:g} degrees"
-    return dict(fits=True, how=how, angle_deg=deg, spare_mm=round(spare, 1), bed_mm=bed)
+    exclude = BAMBU_NO_PRINT_CORNER if exclude is None else exclude
+    at = place_on_bed(xy, (0.0, 0.0), (bed, bed), exclude, clearance)
+    deg, margin = at["angle_deg"], at["room_mm"] - clearance
+    out = dict(angle_deg=deg, shift_mm=[round(v, 4) for v in at["shift"]], bed_mm=bed,
+               exclude=[list(map(float, p)) for p in exclude])
+    if margin < 0:
+        return dict(fits=False, how="too long for this bed", short_by_mm=round(-margin, 1), **out)
+    return dict(fits=True, how="straight" if deg == 0.0 else f"turned {deg:g} degrees", margin_mm=round(margin, 1), **out)
 
 
 def bed_fit(length: float, width: float, bed: float, clearance: float = 3.0) -> dict:
@@ -449,14 +457,9 @@ THREEMF_CORE = "http://schemas.microsoft.com/3dmanufacturing/core/2015/02"
 
 # The corner of the bed a Bambu X1 or P1 keeps for its nozzle wipe and flow check (``bed_exclude_area`` in its
 # printer profile: 0,0 to 18,28 mm, front left). Nothing may be printed there, so the plain 3MF keeps clear of it
-# too: Bambu Studio opens that file where it was placed.
-BAMBU_NO_PRINT_CORNER = ((0.0, 0.0), (18.0, 28.0))
-BAMBU_X1_BED_MM = 256.0  # the X1 and P1 bed, the one with that corner
-
-
-def no_print_corner(bed_mm: float):
-    """The no-print corner of a ``bed_mm`` bed: the X1/P1's on its 256 mm bed, none known on any other."""
-    return BAMBU_NO_PRINT_CORNER if float(bed_mm) == BAMBU_X1_BED_MM else None
+# too: Bambu Studio opens that file where it was placed. Other printers have their own (an A1: none), given as
+# InsoleParams.bed_exclude.
+BAMBU_NO_PRINT_CORNER = InsoleParams.bed_exclude
 
 
 def _bed_outline(xy, step: float = 0.5) -> np.ndarray:
@@ -472,26 +475,56 @@ def _bed_outline(xy, step: float = 0.5) -> np.ndarray:
     return np.vstack(pts)
 
 
-def _room_on_bed(outline: np.ndarray, lo, hi, exclude) -> float:
-    """Smallest gap (mm) from a placed outline to the bed's edge or the no-print corner; < 0 = overlaps.
+def _no_print_area(points):
+    """A printer's no-print area (points, mm) prepared for _room_on_bed, or None for none."""
+    import shapely
 
-    An overlap with the corner is an outline point inside it, or the corner inside the outline (an insole
-    lying right over a corner that isn't against the bed's edge has no outline point in it)."""
+    P = np.asarray(points, float).reshape(-1, 2) if points is not None and len(points) else None
+    if P is None or len(P) < 3:
+        return None
+    poly = shapely.Polygon(P)
+    return dict(poly=poly, edge=poly.exterior, lo=P.min(0), hi=P.max(0), corners=P)
+
+
+def _inside_convex(outline: np.ndarray, pts: np.ndarray) -> np.ndarray:
+    """Which of ``pts`` lie inside the convex outline (its points in order round it)."""
+    a, b = outline, np.roll(outline, -1, axis=0)
+    cross = ((b - a)[None, :, 0] * (pts[:, None, 1] - a[None, :, 1])
+             - (b - a)[None, :, 1] * (pts[:, None, 0] - a[None, :, 0]))
+    return np.all(cross >= 0, axis=1) | np.all(cross <= 0, axis=1)
+
+
+def _room_on_bed(outline: np.ndarray, lo, hi, area) -> float:
+    """Smallest gap (mm) from a placed outline to the bed's edge or the no-print area; < 0 = overlaps, by how
+    deep the outline reaches into it (so a placement a little into the area ranks above one far into it).
+
+    ``area`` from _no_print_area. Only outline points near the area are measured exactly; an area lying wholly
+    inside the outline (one that isn't against the bed's edge) counts as an overlap too."""
     import shapely
 
     gap = float(min((outline - lo).min(), (hi - outline).min()))
-    if exclude is not None:
-        elo, ehi = np.asarray(exclude[0], float), np.asarray(exclude[1], float)
-        outside = np.maximum(np.maximum(elo - outline, outline - ehi), 0.0)
-        inside = np.all((outline > elo) & (outline < ehi), axis=1)
-        covered = shapely.Polygon(outline).contains(shapely.Point(*((elo + ehi) / 2)))
-        gap = min(gap, -1.0 if inside.any() or covered else float(np.linalg.norm(outside, axis=1).min()))
+    if area is None:
+        return gap
+    box = np.maximum(np.maximum(area["lo"] - outline, outline - area["hi"]), 0.0)
+    box_d = np.linalg.norm(box, axis=1)  # never more than the distance to the area itself
+    near = box_d <= max(gap, 0.0) + 1e-9
+    if near.any():
+        pts = outline[near]
+        x, y = pts[:, 0], pts[:, 1]
+        inside = shapely.contains_xy(area["poly"], x, y)
+        d = np.where(inside, -shapely.distance(area["edge"], shapely.points(pts)),
+                     shapely.distance(area["poly"], shapely.points(pts)))
+        gap = min(gap, float(d.min()))
+    if _inside_convex(outline, area["corners"]).all():  # the area under the insole, no outline point in it
+        depth = float(np.linalg.norm(outline[:, None, :] - area["corners"][None], axis=2).min())
+        gap = min(gap, -depth)
     return gap
 
 
 def place_on_bed(xy, lo, hi, exclude=None, clearance: float = 3.0) -> dict:
     """Where a footprint (points, mm) goes on a bed from ``lo`` to ``hi`` (x, y), clear of ``exclude`` (a
-    no-print corner, (lo, hi)): turned about z, then moved so its middle is the bed's middle. Never scaled.
+    no-print area, its points; None or () for none): turned about z, then moved so its middle is the bed's
+    middle. Never scaled.
 
     Straight (0 degrees) when that leaves ``clearance`` all round, as that's easiest to check by eye;
     otherwise the half-degree turn that leaves the most room. -> angle_deg, cos/sin, shift (x, y) to apply
@@ -499,14 +532,15 @@ def place_on_bed(xy, lo, hi, exclude=None, clearance: float = 3.0) -> dict:
     outline0 = _bed_outline(xy)
     lo, hi = np.asarray(lo, float), np.asarray(hi, float)
     centre = (lo + hi) / 2
+    area = _no_print_area(exclude)
     best = None
-    # centred, a half turn lies on the same spot: with no corner, 0-180 degrees tries every placement
-    for deg in np.arange(0.0, 360.0 if exclude is not None else 180.0, 0.5):
+    # centred, a half turn lies on the same spot: with no no-print area, 0-180 degrees tries every placement
+    for deg in np.arange(0.0, 360.0 if area is not None else 180.0, 0.5):
         a = np.radians(deg)
         c, s = np.cos(a), np.sin(a)
         turned = outline0 @ np.array([[c, s], [-s, c]])
         shift = centre - (turned.min(0) + turned.max(0)) / 2
-        room = _room_on_bed(turned + shift, lo, hi, exclude)
+        room = _room_on_bed(turned + shift, lo, hi, area)
         if best is None or room > best["room_mm"]:
             best = dict(angle_deg=float(deg), cos=float(c), sin=float(s), shift=(float(shift[0]), float(shift[1])),
                         room_mm=float(room))
@@ -515,24 +549,32 @@ def place_on_bed(xy, lo, hi, exclude=None, clearance: float = 3.0) -> dict:
     return best
 
 
-def write_3mf(mesh, path: Path, title: str, notes: str, bed_mm: float = 256.0) -> None:
+def write_3mf(mesh, path: Path, title: str, notes: str, bed_mm: float = 256.0, exclude=None,
+              placement: dict | None = None) -> None:
     """A plain 3MF (core spec): one object, millimetres, placed in the middle of the bed.
 
     Slicers (Bambu Studio, Orca, Prusa) open this as geometry; it carries no
     printer or filament settings. If it doesn't fit straight, it is turned
     to whichever angle leaves the most room to the bed's edges and, on a
-    Bambu X1/P1's 256 mm bed, its no-print corner (``place_on_bed``), so a
-    long insole opened as it is doesn't sit over the corner the printer
-    wipes its nozzle in. Only turned and moved, never scaled. Too long for
-    the bed even so, it is written at the turn that comes closest, and the
-    report's ``bed_fit`` (the same search) says it doesn't fit.
+    printer's no-print area (``exclude``, default the X1/P1 corner;
+    ``place_on_bed``), so a long insole opened as it is doesn't sit over the
+    corner the printer wipes its nozzle in. Only turned and moved, never
+    scaled. Too long for the bed even so, it is written at the turn that
+    comes closest, and the report's ``bed_fit`` (the same search) says it
+    doesn't fit. ``placement``: that bed_fit, for this mesh on this bed, so
+    the search isn't run again.
     """
     import zipfile
     from xml.sax.saxutils import escape
 
     V = np.asarray(mesh.vertices, dtype=float)
     F = np.asarray(mesh.faces, dtype=int)
-    at = place_on_bed(V[:, :2], (0.0, 0.0), (bed_mm, bed_mm), no_print_corner(bed_mm))
+    exclude = BAMBU_NO_PRINT_CORNER if exclude is None else exclude
+    if placement and placement.get("bed_mm") == bed_mm and placement.get("exclude") == [list(map(float, p)) for p in exclude]:
+        a = np.radians(placement["angle_deg"])
+        at = dict(cos=float(np.cos(a)), sin=float(np.sin(a)), shift=tuple(placement["shift_mm"]))
+    else:
+        at = place_on_bed(V[:, :2], (0.0, 0.0), (bed_mm, bed_mm), exclude)
     c, s = at["cos"], at["sin"]
     # build transform (3MF: 3 x 4, row vectors): rotate about z, then move the turned footprint's
     # middle to the bed's middle, bottom on z = 0
@@ -587,9 +629,13 @@ def read_3mf(path: Path):
     ns = {"m": THREEMF_CORE}
     V = np.array([[float(v.get(k)) for k in "xyz"] for v in root.iterfind(".//m:vertex", ns)])
     F = np.array([[int(t.get(k)) for k in ("v1", "v2", "v3")] for t in root.iterfind(".//m:triangle", ns)])
-    item = root.find(".//m:build/m:item", ns)
+    objects = list(root.iterfind(".//m:resources/m:object", ns))
+    items = list(root.iterfind(".//m:build/m:item", ns))
+    item = items[0] if items else None
     return dict(names=names, unit=root.get("unit"), vertices=V, faces=F,
-                transform=[float(x) for x in item.get("transform").split()],
+                transform=[float(x) for x in item.get("transform").split()] if item is not None and item.get("transform") else None,
+                # one object with its own mesh and one build item: the file write_3mf writes
+                single=len(objects) == 1 and objects[0].find("m:mesh", ns) is not None and len(items) == 1,
                 metadata={m.get("name"): m.text for m in root.iterfind("m:metadata", ns)})
 
 
@@ -786,7 +832,8 @@ def write_outputs(insole: Insole, out_dir: Path, name: str, scan_label: str, syn
              "Walking-only break-in; no sport until a clinician has signed the summary sheet.")
     files = dict(threemf=out / f"{name}.3mf", stl=out / f"{name}.stl", summary=out / f"{name}-summary.html",
                  notes=out / "print-notes.txt", json=out / f"{name}.json")
-    write_3mf(insole.mesh, files["threemf"], title=f"{tag}{name}", notes=notes, bed_mm=insole.params.bed_mm)
+    write_3mf(insole.mesh, files["threemf"], title=f"{tag}{name}", notes=notes, bed_mm=insole.params.bed_mm,
+              exclude=insole.params.bed_exclude, placement=insole.report.get("bed_fit"))
     insole.mesh.export(files["stl"])
     files["summary"].write_text(summary_html(insole, scan_label, synthetic))
     files["notes"].write_text(PRINT_NOTES)

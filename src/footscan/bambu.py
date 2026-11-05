@@ -173,11 +173,13 @@ def project_config(profiles: Path, printer: str, process: str, filament: str, *,
                    changes: dict[str, str] | None = None, filament_changes: dict[str, str] | None = None,
                    colour: str = "#FFFFFF", app_version: str = DEFAULT_APP_VERSION) -> dict:
     """The project settings: printer + process + filament presets, the changes on top.
+    (Presets are looked up afresh for each project: the profile folder may have been updated since the last.)
 
     ``changes`` are process settings (default ``TPU_INSOLE_PROCESS``); ``filament_changes``
     are filament settings, e.g. a lower ``filament_max_volumetric_speed`` for a
     slower spool. Each is listed as changed in its own preset's slot.
     """
+    _names_in.cache_clear()  # (BBL.json's own cache follows the file's modification time)
     if bed_type not in BED_TYPES:
         raise ValueError(f"bed_type must be one of {BED_TYPES}, not {bed_type!r}")
     changes = TPU_INSOLE_PROCESS if changes is None else changes
@@ -240,9 +242,9 @@ def place_on_bed(vertices, printable_area, bed_exclude_area=(), clearance: float
 
     V = np.asarray(vertices, float)
     bed = _poly(printable_area)
+    # the area itself, not a box round it: some profiles' areas are L-shaped (a corner and a strip beside it)
     exclude = _poly(bed_exclude_area) if len(bed_exclude_area) else None
-    at = search(V[:, :2], bed.min(0), bed.max(0),
-                (exclude.min(0), exclude.max(0)) if exclude is not None else None, clearance)
+    at = search(V[:, :2], bed.min(0), bed.max(0), exclude, clearance)
     if at["room_mm"] < clearance:
         raise ValueError(f"doesn't fit this bed: best turn {at['angle_deg']:g} degrees leaves {at['room_mm']:.1f} mm "
                          f"(needs {clearance:g} mm)")
@@ -422,17 +424,12 @@ def _load_insole(mesh_path: Path):
             return ValueError(f"{mesh_path.name}: {why}; give the insole .3mf or .stl that footscan insole wrote")
 
         try:
-            with zipfile.ZipFile(mesh_path) as z:
-                root = ET.fromstring(z.read("3D/3dmodel.model"))
-        except (OSError, KeyError, zipfile.BadZipFile, ET.ParseError):
+            r = read_3mf(mesh_path)
+        except (OSError, KeyError, ValueError, zipfile.BadZipFile, ET.ParseError):
             raise refuse("not a 3MF file this can read") from None
-        ns = {"m": _CORE}
-        objects = list(root.iterfind(".//m:resources/m:object", ns))
-        items = list(root.iterfind(".//m:build/m:item", ns))
-        if len(objects) != 1 or objects[0].find("m:mesh", ns) is None or len(items) != 1:
+        if not r["single"]:
             raise refuse("it isn't one insole (a Bambu project, or several objects)")
-        r = read_3mf(mesh_path)
-        M = np.asarray(r["transform"], float).reshape(4, 3)[:3]
+        M = np.asarray(r["transform"] or [1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0], float).reshape(4, 3)[:3]
         if not (np.allclose(M @ M.T, np.eye(3), atol=1e-4) and np.linalg.det(M) > 0 and abs(M[2, 2] - 1) < 1e-4):
             raise refuse("its placement mirrors, scales or tilts it")
         return r["vertices"], r["faces"], r["metadata"].get("Title") or mesh_path.stem, r["metadata"].get("Description") or ""
@@ -445,21 +442,26 @@ def _load_insole(mesh_path: Path):
 def check_output(out: Path, inputs) -> None:
     """Refuse an output that would destroy something: one of the inputs, a file that isn't a .3mf, or a .3mf
     that isn't a project this wrote (an insole 3MF, or any other Bambu Studio project). Replacing an earlier
-    insole project is fine; once saved again in Bambu Studio it may no longer say it's footscan's (refused)."""
+    insole project is fine until it's saved again in Bambu Studio (it may hold changes made there): refused."""
     out = Path(out)
     if out.suffix.lower() != ".3mf":
         raise ValueError(f"the project to write must be a .3mf file, not {out.name!r}")
     if any(Path(i).resolve() == out.resolve() for i in inputs):
         raise ValueError(f"{out.name} is one of the insole files: name a new file for the project")
+    if len({Path(i).resolve() for i in inputs}) < len(inputs):
+        raise ValueError("the same insole file is given twice: give the left and the right")
     if out.exists():
         import xml.etree.ElementTree as ET
 
         try:
             with zipfile.ZipFile(out) as z:
                 root = ET.fromstring(z.read("3D/3dmodel.model"))
-                ours = "Metadata/project_settings.config" in z.namelist() and any(
-                    m.get("name") == "Designer" and (m.text or "") == "footscan"
-                    for m in root.iterfind(f"{{{_CORE}}}metadata"))
+                meta = {m.get("name"): (m.text or "") for m in root.iterfind(f"{{{_CORE}}}metadata")}
+                # Bambu Studio keeps the Designer when it saves a project but writes that day's date as its
+                # ModificationDate (Format_bbs_3mf.cpp, _add_model_file_to_archive), which this leaves empty:
+                # a project saved again in the app, maybe with someone's changes, isn't replaced
+                ours = ("Metadata/project_settings.config" in z.namelist() and meta.get("Designer") == "footscan"
+                        and not meta.get("ModificationDate"))
         except (OSError, KeyError, zipfile.BadZipFile, ET.ParseError):
             ours = False
         if not ours:  # an insole file, or a project of something else saved in Bambu Studio

@@ -143,7 +143,8 @@ def checks(ins_dir: Path, meta: dict, report: dict, mesh, spec: dict, other: dic
     # The bed from the spec (the printer actually used), not the generator's default
     from .insole import bed_fit_shape
 
-    bed = bed_fit_shape(np.asarray(mesh.vertices)[:, :2], float(spec["bed_mm"]))
+    bed = bed_fit_shape(np.asarray(mesh.vertices)[:, :2], float(spec["bed_mm"]),
+                        exclude=report["params"].get("bed_exclude"))  # the printer's no-print area, as built
     add("bed", bed["fits"], f"{bed['how']} on a {spec['bed_mm']:g} mm bed")
 
     # The 3MF is what Bambu Studio opens: millimetres, a placement that only turns and moves it (no
