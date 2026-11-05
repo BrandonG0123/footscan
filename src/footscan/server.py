@@ -1638,6 +1638,10 @@ def tailnet_ip() -> str | None:
         try:
             out = subprocess.run([exe, "ip", "-4"], capture_output=True, text=True, encoding="utf-8",
                                  errors="replace", timeout=3).stdout
+        except subprocess.TimeoutExpired:
+            # tailscaled is stuck: every program asks the same one (the Mac's /usr/local/bin/tailscale is a
+            # script, not a link, so it isn't seen as the app's own program), and each would wait as long
+            break
         except (OSError, subprocess.SubprocessError):
             continue
         if ip := first_tailnet_ip(out.split()):

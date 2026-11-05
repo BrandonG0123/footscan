@@ -35,7 +35,10 @@ final class StudioConnection {
             status = error.localizedDescription
             return false
         }
-        StudioStore.save(reached.link, key: parsed.key)
+        guard StudioStore.save(reached.link, key: parsed.key) else {
+            status = "The studio answered, but this phone couldn't keep its key (the iPhone's Keychain refused it). Try again; if it keeps happening, restart the phone."
+            return false
+        }
         link = reached.link
         key = parsed.key
         connections += 1

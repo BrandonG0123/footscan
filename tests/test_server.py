@@ -801,6 +801,26 @@ def test_the_tailscale_command_runs_once_when_path_finds_an_install_location(mon
     assert srv.tailnet_ip() is None and ran == [win]
 
 
+def test_a_stuck_tailscaled_is_waited_on_once_not_once_per_program(monkeypatch):
+    """The Mac's command-line tailscale is a script, not a link to the app's program, so both are on the list;
+    when the first times out, the second would only wait on the same stuck tailscaled."""
+    import subprocess
+
+    import footscan.server as srv
+
+    mac_cli, wrapper = "/Applications/Tailscale.app/Contents/MacOS/Tailscale", "/usr/local/bin/tailscale"
+    ran = []
+    monkeypatch.setattr(srv.shutil, "which", lambda name: wrapper)
+    monkeypatch.setattr(srv.Path, "is_file", lambda self: self in (Path(mac_cli), Path(wrapper)))
+
+    def run(cmd, **kw):
+        ran.append(cmd[0])
+        raise subprocess.TimeoutExpired(cmd, 3)
+
+    monkeypatch.setattr(srv.subprocess, "run", run)
+    assert srv.tailnet_ip() is None and ran == [wrapper]
+
+
 def test_a_tailscale_exit_node_doesnt_hide_the_home_network_address(monkeypatch):
     """With an exit node (or a subnet route over 10/8) the route toward a private address goes through
     Tailscale, so the connect code's home address would be the Tailscale one and the phone at home without

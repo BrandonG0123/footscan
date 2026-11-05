@@ -101,9 +101,13 @@ enum StudioStore {
         return (link, key)
     }
 
-    static func save(_ link: StudioLink, key: String) {
+    /// false when the key couldn't be kept in the Keychain: then nothing is saved (a link with the old studio's
+    /// key would be refused on every send, after saying "Connected").
+    @discardableResult
+    static func save(_ link: StudioLink, key: String) -> Bool {
+        guard writeKey(key) else { return false }
         saveLink(link)
-        writeKey(key)
+        return true
     }
 
     /// The studio's addresses (which to try first) without touching its key in the Keychain.
@@ -154,15 +158,18 @@ enum StudioStore {
 
     /// Changed in place when there is one (never a moment with no key, which a delete-then-add has: an app
     /// stopped between the two would come back "Not connected"); added when there isn't.
-    private static func writeKey(_ key: String) {
+    /// Any other failure to change it (an item an older build wrote with other attributes) falls back to
+    /// replacing it. -> whether the Keychain now holds this key.
+    private static func writeKey(_ key: String) -> Bool {
         let match = [kSecClass: kSecClassGenericPassword, kSecAttrService: service] as CFDictionary
         let update = [kSecValueData: Data(key.utf8),
                       kSecAttrAccessible: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly] as CFDictionary
-        if SecItemUpdate(match, update) == errSecItemNotFound {
-            SecItemAdd([kSecClass: kSecClassGenericPassword, kSecAttrService: service,
-                        kSecAttrAccessible: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
-                        kSecValueData: Data(key.utf8)] as CFDictionary, nil)
-        }
+        let updated = SecItemUpdate(match, update)
+        if updated == errSecSuccess { return true }
+        if updated != errSecItemNotFound { SecItemDelete(match) }
+        return SecItemAdd([kSecClass: kSecClassGenericPassword, kSecAttrService: service,
+                           kSecAttrAccessible: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
+                           kSecValueData: Data(key.utf8)] as CFDictionary, nil) == errSecSuccess
     }
 }
 
@@ -283,6 +290,9 @@ struct StudioClient {
         /// What each address needs, in plain words: away from home the home-network address can't answer,
         /// the Tailscale one needs Tailscale on, and a different certificate means a different server.
         static func explain(_ misses: [Missed], pinned: Bool) -> String {
+            guard !misses.isEmpty else { // no address was tried: still say something to do
+                return "The studio isn't answering. Check Footscan is running on the studio computer, then show its connect code and scan it again."
+            }
             var lines: [String] = []
             for m in misses {
                 let host = StudioLink.host(of: m.address)

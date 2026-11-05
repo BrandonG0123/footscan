@@ -181,6 +181,8 @@ struct ConnectionTestFailures {
         #expect(failure.isUnreachable) // sent again once the studio is back
         #expect(!failure.offersReconnect) // it answered: no need to scan its code again
         #expect(StudioClient.Failure.unreachable([], pinned: true).offersReconnect)
+        // no address tried at all still says what to do, not a blank line
+        #expect(StudioClient.Failure.unreachable([], pinned: true).errorDescription?.contains("Check Footscan is running") == true)
         #expect(failure.errorDescription?.contains("same Wi-Fi") == false)
     }
 
