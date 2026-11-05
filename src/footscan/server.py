@@ -364,7 +364,9 @@ def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check
                  public: bool = False, cert_fingerprint: str | None = None):
     runner = recon_jobs.ReconRunner()
     # This computer's Tailscale address, asked of the tailscale command at most once a minute: a stuck
-    # tailscaled costs 3 s a try, and each "Show the connect code" asks for it.
+    # tailscaled costs 3 s a try, and each "Show the connect code" asks for it. No address is asked again
+    # sooner (TAILNET_RETRY_S): a service started at boot can ask before Tailscale is up. One asks at a time,
+    # and the rest wait for that answer instead of each running the command.
     tailnet = dict(at=None, ip=None)
     tailnet_lock = threading.Lock()
 
@@ -372,7 +374,8 @@ def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check
         import time
 
         with tailnet_lock:
-            if tailnet["at"] is None or time.monotonic() - tailnet["at"] > TAILNET_CACHE_S:
+            keep = TAILNET_CACHE_S if tailnet["ip"] else TAILNET_RETRY_S
+            if tailnet["at"] is None or time.monotonic() - tailnet["at"] > keep:
                 tailnet.update(at=time.monotonic(), ip=tailnet_ip())
             return tailnet["ip"]
     captures_dir = data_dir / "captures"
@@ -1168,6 +1171,7 @@ def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check
         def do_DELETE(self):
             self.route("DELETE")
 
+    Handler.tailnet_cached = staticmethod(tailnet_cached)  # serve() prints it at start, and fills the cache
     return Handler
 
 
@@ -1604,6 +1608,7 @@ TAILNET = ipaddress.ip_network("100.64.0.0/10")  # the addresses Tailscale gives
 
 
 TAILNET_CACHE_S = 60.0
+TAILNET_RETRY_S = 10.0
 
 
 def tailnet_ip() -> str | None:
@@ -1652,12 +1657,27 @@ def first_tailnet_ip(texts) -> str | None:
 
 
 def lan_ip() -> str | None:
+    """This computer's address on its own network (192.168.x.x and the like), the one phones on the same Wi-Fi
+    reach: the address it would send from toward a private address (nothing is sent). With a Tailscale exit
+    node or a subnet route over 10/8, that is the Tailscale address instead; then a private address of this
+    computer's own is used, or None if it has none."""
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
             s.connect(("10.255.255.255", 1))
-            return s.getsockname()[0]
+            ip = s.getsockname()[0]
     except OSError:
         return None
+    if ipaddress.ip_address(ip) not in TAILNET:
+        return ip
+    try:
+        found = socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET)
+    except OSError:
+        return None
+    for *_rest, (addr, *_port) in found:
+        a = ipaddress.ip_address(addr)
+        if a.is_private and a not in TAILNET and not a.is_loopback and not a.is_link_local:
+            return addr
+    return None
 
 
 def serve(host: str = "127.0.0.1", port: int = 8765, https: bool = False, public: bool = False,
@@ -1689,10 +1709,11 @@ def serve(host: str = "127.0.0.1", port: int = 8765, https: bool = False, public
     if host == "0.0.0.0" and (ip := lan_ip()):
         print(f"scan page for phones on this Wi-Fi: {scheme}://{ip}:{port}/")
         print(f"studio on YOUR phone (keep this private): {scheme}://{ip}:{port}/studio/?key={studio_key}")
-        if https and (ts := tailnet_ip()):
-            print(f"over Tailscale, from anywhere (the connect code includes it): {scheme}://{ts}:{port}/")
     else:
         print(f"scan page: {scheme}://localhost:{port}/")
+    # the same answer the connect code gives (and its cache), also with no Wi-Fi address
+    if https and host in ("0.0.0.0", "::") and (ts := handler.tailnet_cached()):
+        print(f"over Tailscale, from anywhere (the connect code includes it): {scheme}://{ts}:{port}/")
     print("", flush=True)
     try:
         httpd.serve_forever()

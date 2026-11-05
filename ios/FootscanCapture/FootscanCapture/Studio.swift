@@ -130,12 +130,18 @@ enum StudioStore {
         for item in items where item.name == "alt" {
             // one address in the clear would send the key in the clear: refuse the whole code
             guard let text = item.value, let alt = URL(string: text), alt.scheme == "https", alt.host() != nil else { return nil }
-            if alt != url && !alternates.contains(alt) { alternates.append(alt) }
+            // the same studio address written another way (a trailing slash, capitals) is the same address
+            if !([url] + alternates).contains(where: { sameAddress($0, alt) }) { alternates.append(alt) }
         }
         // Every address is tried at once with the key. Without a pinned certificate, any host with a trusted
         // certificate could be named as an "alternate" and be sent the key: only the address the code names.
         if fp == nil { alternates = [] }
         return (StudioLink(url: url, fingerprint: fp, alternates: alternates), key)
+    }
+
+    /// Same host (any case) and port: the same address of the studio, however the URL is written.
+    static func sameAddress(_ a: URL, _ b: URL) -> Bool {
+        a.host()?.lowercased() == b.host()?.lowercased() && (a.port ?? 443) == (b.port ?? 443)
     }
 
     private static func readKey() -> String? {
@@ -301,13 +307,17 @@ struct StudioClient {
                     lines.append("Nothing answered at \(host).")
                 }
             }
-            if !misses.isEmpty && misses.allSatisfy({ $0.miss == .noRoute }) {
+            let noRouteAnywhere = !misses.isEmpty && misses.allSatisfy({ $0.miss == .noRoute })
+            if noRouteAnywhere {
                 // the phone's own connection: every address fails this way abroad with Data Roaming off, in
                 // Airplane Mode, or with Mobile Data switched off for this app. (Only the home address failing
-                // so is Local Network access, below.)
+                // so may be Local Network access, below.)
                 lines.append("Check this phone's own connection: Airplane Mode off, Wi-Fi or mobile data on, Data Roaming on if you're abroad, and mobile data allowed for Footscan (Settings > Cellular).")
             }
-            if misses.contains(where: { $0.miss == .noRoute && StudioAddressKind(host: StudioLink.host(of: $0.address)) == .homeNetwork }) {
+            // Local Network access stops only the home address. When an address elsewhere had no route either,
+            // it's the phone's own connection, and asking about Local Network would send them the wrong way.
+            let elsewhereNoRoute = misses.contains(where: { $0.miss == .noRoute && StudioAddressKind(host: StudioLink.host(of: $0.address)) != .homeNetwork })
+            if !elsewhereNoRoute && misses.contains(where: { $0.miss == .noRoute && StudioAddressKind(host: StudioLink.host(of: $0.address)) == .homeNetwork }) {
                 lines.append("If the phone just asked to find devices on your local network, tap Allow and test again (Settings > Privacy & Security > Local Network).")
             }
             if misses.contains(where: { $0.miss == .noAnswer && StudioAddressKind(host: StudioLink.host(of: $0.address)) == .homeNetwork }) {
@@ -377,32 +387,56 @@ struct StudioClient {
         _ = try await send(request("api/studio"), timeout: timeout)
     }
 
+    /// How long a home-network address is waited for after another address answered first: at home it
+    /// answers within a moment, and then it's the better way (straight over the Wi-Fi, where a Tailscale
+    /// path may go round through a relay).
+    static let homeGrace: Duration = .seconds(1)
+
     /// Which of the studio's addresses answers now, with the key accepted? Every address is tried at once, so
     /// one that can't answer from here (the home-network address, away from home) costs no extra wait. Returns
-    /// a client for the first that answers; if none does, says why for each.
+    /// a client for the home-network address if it answers, else for the first that does (waiting at most
+    /// `homeGrace` for the home address once another has answered); if none does, says why for each.
     func reach(timeout: TimeInterval = 8) async throws -> StudioClient {
         let addresses = link.addresses
-        return try await withThrowingTaskGroup(of: StudioClient.self) { group in
+        let home = addresses.filter { StudioAddressKind(host: StudioLink.host(of: $0)) == .homeNetwork }
+        return try await withThrowingTaskGroup(of: StudioClient?.self) { group in
             for address in addresses {
                 let client = StudioClient(link: link.using(address), key: key)
                 group.addTask { try await client.hello(timeout: timeout); return client }
             }
             var misses: [Missed] = []
+            var answered: StudioClient?
+            var homeWaiting = home.count  // home addresses not heard from yet
             while !group.isEmpty {
                 do {
-                    if let client = try await group.next() {
+                    guard let result = try await group.next() else { break }
+                    guard let client = result else { break }  // the grace time ran out: the first answer it is
+                    let isHome = home.contains(client.link.url)
+                    if isHome || homeWaiting == 0 {
                         group.cancelAll()
                         return client
                     }
+                    if answered == nil {
+                        answered = client
+                        group.addTask { try? await Task.sleep(for: Self.homeGrace); return nil }
+                    }
                 } catch Failure.unreachable(let missed, _) {
+                    homeWaiting -= missed.filter { home.contains($0.address) }.count
                     misses += missed
+                    if let answered, homeWaiting == 0 {
+                        group.cancelAll()
+                        return answered
+                    }
                 } catch {
                     // the studio answered but said no (a wrong key): that's the answer, now, without waiting
-                    // for the other addresses to time out
+                    // for the other addresses to time out (unless another address already let us in)
                     group.cancelAll()
+                    if let answered { return answered }
                     throw error
                 }
             }
+            group.cancelAll()
+            if let answered { return answered }
             misses.sort { (addresses.firstIndex(of: $0.address) ?? 0) < (addresses.firstIndex(of: $1.address) ?? 0) }
             throw Failure.unreachable(misses, pinned: link.fingerprint != nil)
         }
@@ -414,7 +448,13 @@ struct StudioClient {
     /// Make a research capture for this scan and upload its model, at whichever address answers.
     func upload(_ scan: Scan, record: ScanRecord) async throws -> Sent {
         // A quick hello first: a studio that isn't there fails in seconds, not after a long upload timeout.
-        let here = try await reach(timeout: 6)
+        let here: StudioClient
+        do {
+            here = try await reach(timeout: 6)
+        } catch is CancellationError {
+            // stopped during the hello (the system ending background time): the scan waits to go again
+            throw Failure.dropped(host: link.host)
+        }
         do {
             return try await here.uploadHere(scan, record: record)
         } catch Failure.unreachable {

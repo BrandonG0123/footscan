@@ -759,14 +759,12 @@ def test_tailnet_address_is_found_through_the_mac_app_when_the_command_isnt_on_p
         return subprocess.CompletedProcess(cmd, 0, "100.88.1.2\n", "")
 
     monkeypatch.setattr(srv.subprocess, "run", run)
-    monkeypatch.setattr(srv.socket, "getaddrinfo", lambda *a, **k: [])  # the computer's name gives only LAN addresses
     assert srv.tailnet_ip() == "100.88.1.2" and ran == [mac_cli]
 
 
-def test_a_stopped_tailscale_means_no_tailnet_address_even_if_another_100_64_address_is_there(monkeypatch, tmp_path):
-    """Tailscale stopped: its command runs and gives no address. A 100.64.0.0/10 address the computer has then is
-    someone else's (Cloudflare WARP gives 100.96.0.0/12), and must not go in the connect code as Tailscale."""
-    import socket
+def test_a_stopped_tailscale_means_no_tailnet_address(monkeypatch, tmp_path):
+    """Tailscale stopped: its command runs and gives no address, and that is the answer. (The computer's own
+    addresses aren't looked at: a 100.64.0.0/10 one then is someone else's, such as Cloudflare WARP's.)"""
     import subprocess
 
     import footscan.server as srv
@@ -776,8 +774,6 @@ def test_a_stopped_tailscale_means_no_tailnet_address_even_if_another_100_64_add
     monkeypatch.setattr(srv.shutil, "which", lambda name: str(exe))
     monkeypatch.setattr(srv.subprocess, "run",
                         lambda cmd, **k: subprocess.CompletedProcess(cmd, 1, "", "Tailscale is stopped.\n"))
-    monkeypatch.setattr(srv.socket, "getaddrinfo",
-                        lambda *a, **k: [(socket.AF_INET, 0, 0, "", ("100.96.0.7", 0))])
     assert srv.tailnet_ip() is None
     # with no tailscale command anywhere (WARP on, Tailscale not installed), still none
     monkeypatch.setattr(srv.shutil, "which", lambda name: None)
@@ -802,8 +798,56 @@ def test_the_tailscale_command_runs_once_when_path_finds_an_install_location(mon
         raise subprocess.TimeoutExpired(cmd, 3)
 
     monkeypatch.setattr(srv.subprocess, "run", run)
-    monkeypatch.setattr(srv.socket, "getaddrinfo", lambda *a, **k: [])
     assert srv.tailnet_ip() is None and ran == [win]
+
+
+def test_a_tailscale_exit_node_doesnt_hide_the_home_network_address(monkeypatch):
+    """With an exit node (or a subnet route over 10/8) the route toward a private address goes through
+    Tailscale, so the connect code's home address would be the Tailscale one and the phone at home without
+    Tailscale couldn't reach the studio. The computer's own private address is used instead."""
+    import socket
+
+    import footscan.server as srv
+
+    class Routed:
+        def __init__(self, *a):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def connect(self, addr):
+            pass
+
+        def getsockname(self):
+            return ("100.113.53.83", 50000)
+
+    monkeypatch.setattr(srv.socket, "socket", Routed)
+    monkeypatch.setattr(srv.socket, "getaddrinfo", lambda *a, **k: [
+        (socket.AF_INET, 0, 0, "", ("100.113.53.83", 0)), (socket.AF_INET, 0, 0, "", ("127.0.0.1", 0)),
+        (socket.AF_INET, 0, 0, "", ("192.168.11.233", 0))])
+    assert srv.lan_ip() == "192.168.11.233"
+    monkeypatch.setattr(srv.socket, "getaddrinfo", lambda *a, **k: [(socket.AF_INET, 0, 0, "", ("100.113.53.83", 0))])
+    assert srv.lan_ip() is None  # only the Tailscale address: no home address to offer
+
+
+def test_no_tailscale_address_is_asked_again_after_ten_seconds_not_a_minute(monkeypatch):
+    """A service started at boot may ask before Tailscale is up; that "none" mustn't stand for a minute."""
+    import time
+
+    import footscan.server as srv
+
+    answers = iter([None, "100.88.1.2"])
+    monkeypatch.setattr(srv, "tailnet_ip", lambda: next(answers))
+    cached = srv.make_handler().tailnet_cached
+    now = time.monotonic()
+    monkeypatch.setattr(time, "monotonic", lambda: now)
+    assert cached() is None
+    monkeypatch.setattr(time, "monotonic", lambda: now + srv.TAILNET_RETRY_S + 1)
+    assert cached() == "100.88.1.2"
 
 
 def test_only_addresses_in_tailscales_range_count_as_tailnet():

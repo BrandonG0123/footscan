@@ -155,6 +155,18 @@ struct ConnectionTestFailures {
         // at home with Local Network access refused and Tailscale off: the phone's connection is fine
         let localOnly = StudioClient.Failure.explain([.init(address: home, miss: .noRoute), .init(address: tailnet, miss: .noAnswer)], pinned: true)
         #expect(!localOnly.contains("this phone's own connection") && localOnly.contains("Local Network"))
+        // no route to either address: Local Network access can't stop the Tailscale one, so it isn't the cause
+        #expect(!text.contains("Local Network"))
+        // a code with only the home address and no route there: it may be either, so both are said
+        let homeOnly = StudioClient.Failure.explain([.init(address: home, miss: .noRoute)], pinned: true)
+        #expect(homeOnly.contains("this phone's own connection") && homeOnly.contains("Local Network"))
+    }
+
+    @Test func theSameAddressWrittenAnotherWayIsntTriedTwice() throws {
+        let code = "footscan-capture://connect?url=https://192.168.11.233:8766/&key=k&fp=" + String(repeating: "a", count: 64)
+            + "&alt=https://192.168.11.233:8766&alt=https://100.101.102.103:8766&alt=https://100.101.102.103:8766/"
+        let parsed = try #require(StudioStore.parse(code))
+        #expect(parsed.link.alternates == [URL(string: "https://100.101.102.103:8766")!])
     }
 
     @Test func theAddressKindsHaveOneLabelEverywhere() {
