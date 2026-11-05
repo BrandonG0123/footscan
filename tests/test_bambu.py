@@ -45,6 +45,7 @@ def profiles(tmp_path):
     _write(root / "filament" / "Bambu TPU 95A HF @BBL X1C.json",
            {"name": "Bambu TPU 95A HF @BBL X1C", "from": "system", "instantiation": "true", "filament_id": "GFU00",
             "filament_type": ["TPU"], "nozzle_temperature": ["230", "230"], "hot_plate_temp": ["35"],
+            "filament_max_volumetric_speed": ["3.6", "3.6"],
             "filament_extruder_variant": ["Direct Drive Standard", "Direct Drive High Flow"],
             "compatible_printers": ["Bambu Lab X1 Carbon 0.4 nozzle"]})
     return root
@@ -196,7 +197,7 @@ def test_a_slower_spool_lowers_the_filament_flow_limit_and_lists_it_as_a_filamen
 
 def _plain_3mf(tmp_path, name, mesh=None):
     path = tmp_path / name
-    write_3mf(mesh if mesh is not None else _insole_like(), path, name, "NOT A MEDICAL DEVICE. test")
+    write_3mf(mesh if mesh is not None else _insole_like(), path, name, f"Footscan first-fit insole (test). {bambu.SAFETY_NOTE}")
     return path
 
 
@@ -250,7 +251,38 @@ def test_a_project_from_an_stl_still_says_it_is_not_a_medical_device(tmp_path, p
     # from footscan's 3MF, its own note is kept, not repeated
     out3 = tmp_path / "from-3mf.3mf"
     bambu.tpu_project(_plain_3mf(tmp_path, "r.3mf"), out3, profiles, bed_type="High Temp Plate", **X1C)
-    assert bambu.read_project(out3)["metadata"]["Description"].count("NOT A MEDICAL DEVICE") == 1
+    assert bambu.read_project(out3)["metadata"]["Description"].count(bambu.SAFETY_NOTE) == 1
+
+
+def test_max_flow_only_ever_lowers_the_filaments_own_limit(tmp_path, profiles):
+    """25 typed for 2.5 would let soft TPU be pushed faster than its profile allows (it buckles)."""
+    with pytest.raises(ValueError, match="only lowers the filament's own limit"):
+        bambu.project_config(profiles, X1C["printer"], X1C["process"], X1C["filament"], bed_type="High Temp Plate",
+                             filament_changes={"filament_max_volumetric_speed": "25"})
+
+
+def test_only_the_whole_safety_note_counts_as_the_projects_safety_note(tmp_path, profiles):
+    """A 3MF whose notes only say "NOT A MEDICAL DEVICE" still gets the break-in and clinician lines."""
+    src = tmp_path / "r.3mf"
+    write_3mf(_insole_like(), src, title="r", notes="NOT A MEDICAL DEVICE. test")
+    out = tmp_path / "p.3mf"
+    bambu.tpu_project(src, out, profiles, bed_type="High Temp Plate", **X1C)
+    description = bambu.read_project(out)["metadata"]["Description"]
+    assert "Walking-only break-in" in description and "clinician" in description
+
+
+def test_an_stl_of_synthetic_geometry_keeps_its_label_and_two_insoles_for_one_foot_are_refused(tmp_path, profiles):
+    """An STL carries no notes: the <name>.json footscan insole writes beside it says synthetic and which foot."""
+    for name, foot in (("left", "right"), ("right", "right")):
+        _insole_like().export(tmp_path / f"{name}.stl")
+        (tmp_path / f"{name}.json").write_text(json.dumps({"synthetic": True, "foot": foot}), encoding="utf-8")
+    out = tmp_path / "p.3mf"
+    bambu.tpu_project(tmp_path / "right.stl", out, profiles, bed_type="High Temp Plate", **X1C)
+    meta = bambu.read_project(out)["metadata"]
+    assert meta["Title"].startswith("SYNTHETIC TEST GEOMETRY") and "(right foot)" in meta["Description"]
+    with pytest.raises(ValueError, match="both insoles are for the right foot"):
+        bambu.tpu_project([tmp_path / "left.stl", tmp_path / "right.stl"], tmp_path / "pair.3mf", profiles,
+                          bed_type="High Temp Plate", **X1C)
 
 
 def test_presets_kept_in_bambus_sub_folders_are_found_through_its_index(tmp_path, profiles):

@@ -409,7 +409,10 @@ def bed_fit_shape(xy, bed: float, clearance: float = 3.0, exclude=None) -> dict:
     ``exclude``: the printer's no-print area (points, mm; default the X1/P1
     corner, ``()`` for none). ``margin_mm``: the room left past ``clearance``
     at the closest point (an edge or the no-print area); ``short_by_mm``: how
-    far short of ``clearance`` the closest point is. ``shift_mm``: where
+    far short of ``clearance`` the closest point is. Both are measured at that
+    one point: a footprint centred between two edges has the same gap at each
+    end, so an insole 20 mm too long for the bed is short by about 10 mm at
+    each end, not 20. ``shift_mm``: where
     write_3mf moves it after turning, so it needn't search again.
     """
     exclude = BAMBU_NO_PRINT_CORNER if exclude is None else exclude

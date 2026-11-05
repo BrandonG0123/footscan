@@ -41,6 +41,7 @@ from __future__ import annotations
 
 import functools
 import json
+import re
 import zipfile
 from pathlib import Path
 from xml.sax.saxutils import escape, quoteattr
@@ -204,6 +205,13 @@ def project_config(profiles: Path, printer: str, process: str, filament: str, *,
     for key, value in changes.items():
         cfg[key] = _set_everywhere(p[key], value)
     for key, value in filament_changes.items():
+        if key == "filament_max_volumetric_speed":
+            # only ever lowered: above the spool's own profile, soft TPU is pushed faster than it melts and
+            # buckles in the extruder (a typo, 25 for 2.5, would do it)
+            own = [float(v) for v in (f[key] if isinstance(f[key], list) else [f[key]]) if str(v).strip()]
+            if own and float(value) > min(own):
+                raise ValueError(f"--max-flow only lowers the filament's own limit ({min(own):g} mm^3/s in "
+                                 f"{filament!r}), not {float(value):g}")
         cfg[key] = _set_everywhere(f[key], value)
 
     variants = f.get("filament_extruder_variant") or []
@@ -436,7 +444,19 @@ def _load_insole(mesh_path: Path):
     import trimesh
 
     m = trimesh.load(mesh_path, force="mesh")
-    return np.asarray(m.vertices), np.asarray(m.faces), mesh_path.stem, ""
+    # an STL has no notes; footscan insole writes <name>.json beside it, which says which foot and whether
+    # the shape is synthetic test geometry (labelled so in the project, as the 3MF is)
+    notes, name = "", mesh_path.stem
+    try:
+        report = json.loads(mesh_path.with_suffix(".json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        report = {}
+    if isinstance(report, dict):
+        tag = "SYNTHETIC TEST GEOMETRY, not a foot. " if report.get("synthetic") else ""
+        foot = report.get("foot") if report.get("foot") in ("left", "right") else None
+        notes = tag + (f"Footscan first-fit insole ({foot} foot)." if foot else "")
+        name = tag + name
+    return np.asarray(m.vertices), np.asarray(m.faces), name, notes.strip()
 
 
 def check_output(out: Path, inputs) -> None:
@@ -483,7 +503,7 @@ def tpu_project(mesh_paths, out: Path, profiles: Path, *, printer: str, process:
     check_output(out, mesh_paths)
     cfg = project_config(profiles, printer, process, filament, bed_type=bed_type,
                          filament_changes=filament_changes, app_version=app_version)
-    parts, report, descriptions = [], [], []
+    parts, report, descriptions, feet = [], [], [], []
     for mp in mesh_paths:
         V, F, name, description = _load_insole(mp)
         placement = place_on_bed(V, cfg["printable_area"], cfg.get("bed_exclude_area") or [])
@@ -494,9 +514,14 @@ def tpu_project(mesh_paths, out: Path, profiles: Path, *, printer: str, process:
                            room_mm=placement["room_mm"]))
         if description and description not in descriptions:
             descriptions.append(description)
+        feet.append(m.group(1) if (m := re.search(r"\((left|right) foot\)", description)) else None)
+    if len(feet) == 2 and feet[0] is not None and feet[0] == feet[1]:
+        raise ValueError(f"both insoles are for the {feet[0]} foot: give the left and the right")
     title = parts[0]["name"] if len(parts) == 1 else " + ".join(p["name"] for p in parts)
-    if not any("NOT A MEDICAL DEVICE" in d for d in descriptions):  # e.g. from an STL, which has no notes
-        descriptions.insert(0, SAFETY_NOTE)
+    # the whole note, not just its first words: a 3MF whose notes only say "NOT A MEDICAL DEVICE" would
+    # otherwise lose the break-in and clinician lines (docs/SAFETY.md)
+    if not any(SAFETY_NOTE in d for d in descriptions):  # e.g. from an STL, which has no notes
+        descriptions.append(SAFETY_NOTE)
     write_project(parts, out, cfg, title=title, description=" ".join(descriptions))
     return dict(path=str(out), plates=report, printer=printer, process=process, filament=filament,
                 bed_type=bed_type, changed=sorted(TPU_INSOLE_PROCESS), filament_changed=filament_changes or {},

@@ -85,8 +85,11 @@ twice, is refused. For a different spool pick its profile with `--filament`
 (e.g. `"Bambu TPU 95A @BBL X1C"`, Bambu's standard, not-HF TPU; presets in
 Bambu's sub-folders, such as the P1P's, are found through Bambu's own
 `BBL.json` index) and slow the whole print with `--max-flow 2.5` (mm³/s,
-more than 0 and at most 200), which caps every speed at what the spool can
-melt.
+more than 0 and no more than the filament profile's own limit, which it only
+ever lowers), which caps every speed at what the spool can melt. Two insoles
+for the same foot are refused (the 3MF's notes, or the `.json` beside an STL,
+say which foot); an STL of synthetic test geometry keeps that label in the
+project, from the same `.json`.
 
 The project's notes always carry the not-a-medical-device line (no posting;
 walking-only break-in; no sport until a clinician has signed the summary
@@ -336,7 +339,9 @@ the parameters; an empty list for a printer with no such corner, such as an
 A1), and the 3MF is placed at that angle. The report's bed line (the studio,
 the review packet's `bed` check) is that same search, so it names the angle
 the file lies at and its `margin_mm`, the room left at the tightest point;
-an outline that can't fit says how far it is short (`short_by_mm`). Full
+an outline that can't fit says how far it is short there (`short_by_mm`). Both
+are at one point: centred between two edges, an insole 20 mm too long is short
+by about 10 mm at each end. Full
 detail in `src/footscan/insole.py`.
 
 ## What's been checked
