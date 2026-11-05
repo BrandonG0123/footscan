@@ -210,7 +210,7 @@ def test_leaving_off_the_project_name_never_overwrites_an_insole_file(tmp_path, 
     for out in (right, tmp_path / "pair.stl"):
         with pytest.raises(SystemExit):
             bambu.main([str(left), "-o", str(out), "--profiles", str(profiles)])
-    with pytest.raises(ValueError, match="isn't a Bambu project"):
+    with pytest.raises(ValueError, match="isn't a project this wrote"):
         bambu.tpu_project([left], right, profiles, bed_type="High Temp Plate", **X1C)
     assert right.read_bytes() == before and not (tmp_path / "pair.stl").exists()
 
@@ -284,3 +284,71 @@ def test_the_plain_3mf_keeps_clear_of_the_x1_no_print_corner_too(tmp_path):
     assert not np.any((placed[:, 0] < x1 + 3) & (placed[:, 1] < y1 + 3))
     assert placed[:, :2].min() >= 3.0 - 1e-6 and placed[:, :2].max() <= 253.0 + 1e-6
     assert np.isclose(np.ptp(m["vertices"][:, 0]), 275.0, atol=0.01)  # turned and moved only
+
+
+def test_another_bambu_project_is_never_replaced_by_an_insole_project(tmp_path, profiles):
+    """Every Bambu Studio project has Metadata/project_settings.config, so that alone let -o replace someone's
+    unrelated project. Only a project this wrote (Designer footscan) may be replaced."""
+    left = _plain_3mf(tmp_path, "left-insole.3mf")
+    other = tmp_path / "bracket.3mf"
+    with zipfile.ZipFile(other, "w") as z:
+        z.writestr("3D/3dmodel.model", '<?xml version="1.0"?><model xmlns="http://schemas.microsoft.com/'
+                   '3dmanufacturing/core/2015/02"><metadata name="Application">BambuStudio-02.04.00.70</metadata>'
+                   '<resources/><build/></model>')
+        z.writestr("Metadata/project_settings.config", "{}")
+    before = other.read_bytes()
+    with pytest.raises(ValueError, match="isn't a project this wrote"):
+        bambu.tpu_project([left], other, profiles, bed_type="High Temp Plate", **X1C)
+    assert other.read_bytes() == before
+
+
+def test_only_a_plain_insole_3mf_is_read_as_an_insole(tmp_path, profiles):
+    """Reading only a 3MF's vertices is right for the file footscan insole writes and wrong for anything else:
+    a Bambu project (components, no mesh of its own) or a placement that mirrors or scales."""
+    left = _plain_3mf(tmp_path, "left-insole.3mf")
+    project = tmp_path / "pair.3mf"
+    bambu.tpu_project([left], project, profiles, bed_type="High Temp Plate", **X1C)
+    with pytest.raises(ValueError, match="isn't one insole"):
+        bambu.tpu_project([project], tmp_path / "again.3mf", profiles, bed_type="High Temp Plate", **X1C)
+
+    mirrored = tmp_path / "mirrored.3mf"
+    with zipfile.ZipFile(left) as z, zipfile.ZipFile(mirrored, "w") as w:
+        for n in z.namelist():
+            data = z.read(n)
+            if n == "3D/3dmodel.model":
+                text = data.decode()
+                start = text.index('transform="') + len('transform="')
+                end = text.index('"', start)
+                text = text[:start] + "-1 0 0 0 1 0 0 0 1 128 128 0" + text[end:]
+                data = text.encode()
+            w.writestr(n, data)
+    with pytest.raises(ValueError, match="mirrors, scales or tilts"):
+        bambu.tpu_project([mirrored], tmp_path / "m.3mf", profiles, bed_type="High Temp Plate", **X1C)
+
+
+def test_a_misspelt_preset_is_a_one_line_error_not_a_traceback(tmp_path, profiles, capsys):
+    src = _plain_3mf(tmp_path, "right-insole.3mf")
+    with pytest.raises(SystemExit):
+        bambu.main([str(src), "-o", str(tmp_path / "p.3mf"), "--profiles", str(profiles),
+                    "--filament", "Bambu TPU 95A HF @BBL X1"])
+    err = capsys.readouterr().err
+    assert "no filament preset called 'Bambu TPU 95A HF @BBL X1'" in err and "Traceback" not in err
+
+
+def test_bambus_preset_index_is_read_once_per_project(tmp_path, profiles, monkeypatch):
+    """BBL.json is hundreds of KB in a real install and a project asks it for every preset in each chain."""
+    index = profiles.parent / "BBL.json"
+    index.write_text(json.dumps({"filament_list": [{"name": "Bambu TPU 95A HF @BBL X1C",
+                                                    "sub_path": "filament/Bambu TPU 95A HF @BBL X1C.json"}]}))
+    bambu._index.cache_clear()
+    reads = []
+    real = bambu.Path.read_text
+
+    def counting(self, *a, **kw):
+        if self == index:
+            reads.append(self)
+        return real(self, *a, **kw)
+
+    monkeypatch.setattr(bambu.Path, "read_text", counting)
+    bambu.tpu_project([_plain_3mf(tmp_path, "l.3mf")], tmp_path / "p.3mf", profiles, bed_type="High Temp Plate", **X1C)
+    assert len(reads) == 1

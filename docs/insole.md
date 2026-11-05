@@ -74,9 +74,11 @@ profile folder of the Bambu Studio that will open the file, and
 
 Give it both insoles (`left.3mf right.3mf -o pair.3mf`) for one project with
 the left on plate 1 and the right on plate 2 (at most two). The project is
-always the `-o` file: it must be a new `.3mf` or an earlier Bambu project, never
-one of the insole files or a plain insole 3MF, so a forgotten name can't
-overwrite an insole. For a different spool pick its profile with `--filament`
+always the `-o` file: it must be a new `.3mf` or an earlier project this made,
+never one of the insole files, a plain insole 3MF or any other Bambu Studio
+project, so a forgotten name can't overwrite an insole or someone's other
+work. The insole files must be the plain 3MF or STL `footscan insole` wrote; a
+Bambu project, or a 3MF whose placement mirrors or scales, is refused. For a different spool pick its profile with `--filament`
 (e.g. `"Bambu TPU 95A @BBL X1C"`, Bambu's standard, not-HF TPU; presets in
 Bambu's sub-folders, such as the P1P's, are found through Bambu's own
 `BBL.json` index) and slow the whole print with `--max-flow 2.5` (mm³/s,
@@ -86,8 +88,8 @@ melt.
 The project's notes always carry the not-a-medical-device line (no posting;
 walking-only break-in; no sport until a clinician has signed the summary
 sheet), from an STL too, which has no notes of its own. The plain 3MF from
-`footscan insole` is placed by the same search, so it also keeps clear of the
-X1/P1 no-print corner when opened as it is.
+`footscan insole` is placed by the same search, so on the X1/P1's 256 mm bed
+it also keeps clear of the no-print corner when opened as it is.
 
 
 ## From the iPhone app
@@ -323,8 +325,11 @@ edge measured at every grid point), so the edge tucks under a shoe's
 curving sides instead of riding up them. The heel keeps its full base.
 
 On the bed: the outline is turned in 0.5 degree steps to find the angle
-where it fits the 256 mm bed with the most room to spare, and the 3MF is
-placed at that angle. Full detail in `src/footscan/insole.py`.
+where it fits the 256 mm bed with the most room to spare, clear of the edges
+by 3 mm and of the X1/P1's 18 x 28 mm no-print corner, and the 3MF is placed
+at that angle. The report's bed line (the studio, the review packet's `bed`
+check) is that same search, so it names the angle the file lies at. Full
+detail in `src/footscan/insole.py`.
 
 ## What's been checked
 

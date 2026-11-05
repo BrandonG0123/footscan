@@ -39,6 +39,7 @@ an X1/P1 uses for its nozzle wipe and flow check). Nothing is scaled.
 """
 from __future__ import annotations
 
+import functools
 import json
 import zipfile
 from pathlib import Path
@@ -107,22 +108,43 @@ def preset_path(profiles: Path, kind: str, name: str) -> Path:
     profiles = Path(profiles)
     index = profiles.parent / f"{profiles.name}.json"
     if index.is_file():
-        listed = json.loads(index.read_text(encoding="utf-8")).get(f"{kind}_list") or []
-        for entry in listed:
-            if entry.get("name") == name and entry.get("sub_path"):
-                path = profiles / entry["sub_path"]
-                if path.is_file():
-                    return path
+        sub_path = _index(str(index), index.stat().st_mtime_ns).get((kind, name))
+        if sub_path and (profiles / sub_path).is_file():
+            return profiles / sub_path
     path = profiles / kind / f"{name}.json"
     if path.is_file():
         return path
-    for path in sorted((profiles / kind).rglob("*.json")) if (profiles / kind).is_dir() else []:
+    found = _names_in(str(profiles / kind)).get(name)
+    if found:
+        return Path(found)
+    raise FileNotFoundError(f"no {kind} preset called {name!r} in {profiles / kind}")
+
+
+@functools.lru_cache(maxsize=4)
+def _index(index: str, mtime_ns: int) -> dict:
+    """BBL.json read once (it's large, and one project asks it for a dozen presets): (kind, name) -> sub_path.
+    ``mtime_ns`` is only there so an index Bambu Studio updated is read again."""
+    out = {}
+    for key, listed in json.loads(Path(index).read_text(encoding="utf-8")).items():
+        if key.endswith("_list") and isinstance(listed, list):
+            for entry in listed:
+                if isinstance(entry, dict) and entry.get("name") and entry.get("sub_path"):
+                    out.setdefault((key[: -len("_list")], entry["name"]), entry["sub_path"])
+    return out
+
+
+@functools.lru_cache(maxsize=8)
+def _names_in(folder: str) -> dict:
+    """Every preset file under ``folder`` by its "name" (with no index: each file read once, not per preset)."""
+    out = {}
+    for path in sorted(Path(folder).rglob("*.json")) if Path(folder).is_dir() else []:
         try:
-            if json.loads(path.read_text(encoding="utf-8")).get("name") == name:
-                return path
+            name = json.loads(path.read_text(encoding="utf-8")).get("name")
         except (OSError, ValueError):
             continue
-    raise FileNotFoundError(f"no {kind} preset called {name!r} in {profiles / kind}")
+        if isinstance(name, str):
+            out.setdefault(name, str(path))
+    return out
 
 
 def flatten_preset(profiles: Path, kind: str, name: str) -> dict:
@@ -387,11 +409,32 @@ SAFETY_NOTE = ("NOT A MEDICAL DEVICE. No posting. Walking-only break-in; no spor
 
 
 def _load_insole(mesh_path: Path):
+    """An insole file -> (vertices, faces, name, notes). A 3MF must be the plain one ``footscan insole``
+    writes: one object with its own mesh, placed by a turn about z (no mirror, no scale). Any other 3MF
+    (a Bambu project, several objects) is refused, since reading only its vertices would be wrong."""
+    import xml.etree.ElementTree as ET
+
     mesh_path = Path(mesh_path)
     if mesh_path.suffix.lower() == ".3mf":
         from .insole import read_3mf
 
+        def refuse(why):
+            return ValueError(f"{mesh_path.name}: {why}; give the insole .3mf or .stl that footscan insole wrote")
+
+        try:
+            with zipfile.ZipFile(mesh_path) as z:
+                root = ET.fromstring(z.read("3D/3dmodel.model"))
+        except (OSError, KeyError, zipfile.BadZipFile, ET.ParseError):
+            raise refuse("not a 3MF file this can read") from None
+        ns = {"m": _CORE}
+        objects = list(root.iterfind(".//m:resources/m:object", ns))
+        items = list(root.iterfind(".//m:build/m:item", ns))
+        if len(objects) != 1 or objects[0].find("m:mesh", ns) is None or len(items) != 1:
+            raise refuse("it isn't one insole (a Bambu project, or several objects)")
         r = read_3mf(mesh_path)
+        M = np.asarray(r["transform"], float).reshape(4, 3)[:3]
+        if not (np.allclose(M @ M.T, np.eye(3), atol=1e-4) and np.linalg.det(M) > 0 and abs(M[2, 2] - 1) < 1e-4):
+            raise refuse("its placement mirrors, scales or tilts it")
         return r["vertices"], r["faces"], r["metadata"].get("Title") or mesh_path.stem, r["metadata"].get("Description") or ""
     import trimesh
 
@@ -401,21 +444,27 @@ def _load_insole(mesh_path: Path):
 
 def check_output(out: Path, inputs) -> None:
     """Refuse an output that would destroy something: one of the inputs, a file that isn't a .3mf, or a .3mf
-    that isn't a Bambu project already (a plain insole 3MF, for one). Replacing an earlier project is fine."""
+    that isn't a project this wrote (an insole 3MF, or any other Bambu Studio project). Replacing an earlier
+    insole project is fine; once saved again in Bambu Studio it may no longer say it's footscan's (refused)."""
     out = Path(out)
     if out.suffix.lower() != ".3mf":
         raise ValueError(f"the project to write must be a .3mf file, not {out.name!r}")
     if any(Path(i).resolve() == out.resolve() for i in inputs):
         raise ValueError(f"{out.name} is one of the insole files: name a new file for the project")
     if out.exists():
+        import xml.etree.ElementTree as ET
+
         try:
             with zipfile.ZipFile(out) as z:
-                is_project = "Metadata/project_settings.config" in z.namelist()
-        except (OSError, zipfile.BadZipFile):
-            is_project = False
-        if not is_project:
-            raise ValueError(f"{out.name} already exists and isn't a Bambu project (an insole file?): "
-                             f"name a new file for the project")
+                root = ET.fromstring(z.read("3D/3dmodel.model"))
+                ours = "Metadata/project_settings.config" in z.namelist() and any(
+                    m.get("name") == "Designer" and (m.text or "") == "footscan"
+                    for m in root.iterfind(f"{{{_CORE}}}metadata"))
+        except (OSError, KeyError, zipfile.BadZipFile, ET.ParseError):
+            ours = False
+        if not ours:  # an insole file, or a project of something else saved in Bambu Studio
+            raise ValueError(f"{out.name} already exists and isn't a project this wrote: name a new file for the "
+                             f"project")
 
 
 def tpu_project(mesh_paths, out: Path, profiles: Path, *, printer: str, process: str, filament: str,
@@ -474,17 +523,16 @@ def main(argv=None) -> int:
     ap.add_argument("--app-version", default=DEFAULT_APP_VERSION,
                     help="Bambu Studio version to write (not newer than the app that will open it)")
     a = ap.parse_args(argv)
-    if len(a.files) > MAX_PARTS:
-        ap.error(f"at most {MAX_PARTS} insole files (one per plate: a left and a right); the project is -o")
     if a.max_flow is not None and not 0 < a.max_flow <= MAX_FLOW_LIMIT:
         ap.error(f"--max-flow must be more than 0 and at most {MAX_FLOW_LIMIT:g} mm^3/s, not {a.max_flow:g}")
-    try:
-        check_output(a.output, a.files)
-    except ValueError as e:
-        ap.error(str(e))
     fil = {"filament_max_volumetric_speed": f"{a.max_flow:g}"} if a.max_flow is not None else None
-    info = tpu_project(a.files, a.output, a.profiles, printer=a.printer, process=a.process, filament=a.filament,
-                       bed_type=a.bed_type, filament_changes=fil, app_version=a.app_version)
+    try:  # tpu_project's refusals (file count, output, presets, the bed) are one-line errors, not tracebacks
+        info = tpu_project(a.files, a.output, a.profiles, printer=a.printer, process=a.process, filament=a.filament,
+                           bed_type=a.bed_type, filament_changes=fil, app_version=a.app_version)
+    except (ValueError, FileNotFoundError) as e:
+        ap.error(str(e))
+    except KeyError as e:
+        ap.error(f"not in this preset: {e}")
     print(json.dumps(info, indent=2))
     return 0
 

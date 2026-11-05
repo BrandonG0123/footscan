@@ -709,12 +709,12 @@ def test_lengthening_for_a_shoe_keeps_the_foot_shaped_part_and_extends_only_the_
 
 def test_the_bed_check_uses_the_insoles_own_outline():
     """A foot-shaped outline narrow at both ends fits a square bed's diagonal far better than a rectangle
-    of the same length: an oval 270 x 106 mm fits a 256 mm bed turned about 45 degrees; a 270 x 250
-    slab doesn't fit at all."""
+    of the same length: an oval 270 x 106 mm fits a 256 mm bed along a diagonal (the one that keeps its ends
+    out of the X1's no-print corner); a 270 x 250 slab doesn't fit at all."""
     t = np.linspace(0, 2 * np.pi, 400, endpoint=False)
     oval = np.c_[135 * np.cos(t), 53 * np.sin(t)]
     fit = insole.bed_fit_shape(oval, 256.0)
-    assert fit["fits"] and 40 <= fit["angle_deg"] <= 50
+    assert fit["fits"] and 40 <= fit["angle_deg"] % 90 <= 50
     assert insole.bed_fit_shape(np.c_[[0, 270, 270, 0], [0, 0, 250, 250]], 256.0)["fits"] is False
     small = insole.bed_fit_shape(oval * 0.5, 256.0)
     assert small["how"] == "straight" and small["angle_deg"] == 0.0
@@ -1011,3 +1011,38 @@ def test_a_scan_torn_near_the_floor_is_flagged():
     assert not foot_prep.plausibility(dict(info, open_edges_near_floor_mm=0.0), report, "right")
     warned = foot_prep.plausibility(dict(info, open_edges_near_floor_mm=208.0), report, "right")
     assert len(warned) == 1 and warned[0].startswith("THE SCAN IS TORN NEAR THE FLOOR: 208 mm")
+
+
+def test_the_bed_check_is_where_the_plain_3mf_is_placed(tmp_path):
+    """The report's bed_fit (the CLI line, the studio, the review packet's bed check) comes from the same search
+    the plain 3MF is placed by, so it can't say "turned 45 degrees" while the file lies at 135 to keep its toe
+    out of the X1's no-print corner. SYNTHETIC 330 x 100 mm oval."""
+    import trimesh
+
+    oval = trimesh.creation.cylinder(radius=0.5, height=1.0, sections=96)
+    oval.apply_scale([330.0, 100.0, 6.0])
+    oval.apply_translation([162.0, 0, 3.0])
+    fit = insole.bed_fit_shape(np.asarray(oval.vertices)[:, :2], 256.0)
+    path = tmp_path / "long.3mf"
+    insole.write_3mf(oval, path, "long", "NOT A MEDICAL DEVICE. test", bed_mm=256.0)
+    c, s = insole.read_3mf(path)["transform"][:2]
+    assert fit["fits"] and fit["angle_deg"] == pytest.approx(np.degrees(np.arctan2(s, c)) % 360, abs=0.01)
+    placed = insole.place_on_bed(np.asarray(oval.vertices)[:, :2], (0, 0), (256, 256),
+                                 insole.BAMBU_NO_PRINT_CORNER)
+    assert placed["room_mm"] >= 3.0  # clear of the corner and the edges
+
+
+def test_only_the_x1_bed_has_its_no_print_corner():
+    """The 18 x 28 mm corner is the X1/P1's: a footprint that reaches the corner of another printer's bed lies
+    straight there, and on the X1's own bed it doesn't."""
+    square = np.c_[[0, 170, 170, 0], [0, 0, 170, 170]]
+    assert insole.bed_fit_shape(square, 180.0)["how"] == "straight"
+    assert insole.bed_fit_shape(square * 245 / 170, 256.0)["how"] != "straight"
+
+
+def test_a_footprint_lying_right_over_a_no_print_area_overlaps_it():
+    """No outline point is inside the area when the footprint covers it whole; that is still an overlap."""
+    t = np.linspace(0, 2 * np.pi, 400, endpoint=False)
+    ring = np.c_[100 + 60 * np.cos(t), 100 + 60 * np.sin(t)]
+    assert insole._room_on_bed(ring, np.array([0.0, 0.0]), np.array([256.0, 256.0]), ((90, 90), (110, 110))) < 0
+    assert insole._room_on_bed(ring, np.array([0.0, 0.0]), np.array([256.0, 256.0]), ((0, 0), (18, 28))) > 0

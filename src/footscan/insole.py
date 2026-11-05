@@ -395,32 +395,23 @@ def build(foot_mesh, foot: str, params: InsoleParams | None = None) -> Insole:
 
 
 def bed_fit_shape(xy, bed: float, clearance: float = 3.0) -> dict:
-    """Does this footprint (points, mm) fit a square bed, and turned how? Tries every half degree.
+    """Does this footprint (points, mm) fit a square bed, and turned how? The answer the plain 3MF is placed
+    by (``place_on_bed``, the same search with the same no-print corner), so what the report, the studio and
+    the review packet say is where the file lies when the slicer opens it.
 
     The insole's own outline, not a rectangle round it: a foot's rounded heel
     and toes leave the bed's corners free, so a longer insole fits along the
     diagonal than a rectangle of the same length would. Straight whenever it
     fits (easiest to check by eye), else the turn that leaves the most room.
+    ``spare_mm``: the room left past ``clearance`` at the closest point (edge
+    or corner); ``short_by_mm``: how far short of ``clearance`` it is.
     """
-    from scipy.spatial import ConvexHull
-
-    P = np.asarray(xy, float)[:, :2]
-    P = P[ConvexHull(P).vertices]
-    usable = bed - 2 * clearance
-    best = None
-    for deg in np.arange(0.0, 180.0, 0.5):
-        a = np.radians(deg)
-        R = np.array([[np.cos(a), -np.sin(a)], [np.sin(a), np.cos(a)]])
-        span = np.ptp(P @ R.T, axis=0)
-        spare = usable - span.max()
-        if deg == 0.0 and spare >= 0:
-            return dict(fits=True, how="straight", angle_deg=0.0, spare_mm=round(float(spare), 1), bed_mm=bed)
-        if best is None or spare > best[1]:
-            best = (float(deg), float(spare))
-    deg, spare = best
+    at = place_on_bed(xy, (0.0, 0.0), (bed, bed), no_print_corner(bed), clearance)
+    deg, spare = at["angle_deg"], at["room_mm"] - clearance
     if spare < 0:
         return dict(fits=False, how="too long for this bed", angle_deg=deg, short_by_mm=round(-spare, 1), bed_mm=bed)
-    return dict(fits=True, how=f"turned {deg:g} degrees", angle_deg=deg, spare_mm=round(spare, 1), bed_mm=bed)
+    how = "straight" if deg == 0.0 else f"turned {deg:g} degrees"
+    return dict(fits=True, how=how, angle_deg=deg, spare_mm=round(spare, 1), bed_mm=bed)
 
 
 def bed_fit(length: float, width: float, bed: float, clearance: float = 3.0) -> dict:
@@ -460,9 +451,15 @@ THREEMF_CORE = "http://schemas.microsoft.com/3dmanufacturing/core/2015/02"
 # printer profile: 0,0 to 18,28 mm, front left). Nothing may be printed there, so the plain 3MF keeps clear of it
 # too: Bambu Studio opens that file where it was placed.
 BAMBU_NO_PRINT_CORNER = ((0.0, 0.0), (18.0, 28.0))
+BAMBU_X1_BED_MM = 256.0  # the X1 and P1 bed, the one with that corner
 
 
-def footprint_outline(xy, step: float = 0.5) -> np.ndarray:
+def no_print_corner(bed_mm: float):
+    """The no-print corner of a ``bed_mm`` bed: the X1/P1's on its 256 mm bed, none known on any other."""
+    return BAMBU_NO_PRINT_CORNER if float(bed_mm) == BAMBU_X1_BED_MM else None
+
+
+def _bed_outline(xy, step: float = 0.5) -> np.ndarray:
     """The footprint's convex outline (points, mm), with points every ``step`` mm along it."""
     from scipy.spatial import ConvexHull
 
@@ -476,13 +473,19 @@ def footprint_outline(xy, step: float = 0.5) -> np.ndarray:
 
 
 def _room_on_bed(outline: np.ndarray, lo, hi, exclude) -> float:
-    """Smallest gap (mm) from a placed outline to the bed's edge or the no-print corner; < 0 = overlaps."""
+    """Smallest gap (mm) from a placed outline to the bed's edge or the no-print corner; < 0 = overlaps.
+
+    An overlap with the corner is an outline point inside it, or the corner inside the outline (an insole
+    lying right over a corner that isn't against the bed's edge has no outline point in it)."""
+    import shapely
+
     gap = float(min((outline - lo).min(), (hi - outline).min()))
     if exclude is not None:
         elo, ehi = np.asarray(exclude[0], float), np.asarray(exclude[1], float)
         outside = np.maximum(np.maximum(elo - outline, outline - ehi), 0.0)
         inside = np.all((outline > elo) & (outline < ehi), axis=1)
-        gap = min(gap, -1.0 if inside.any() else float(np.linalg.norm(outside, axis=1).min()))
+        covered = shapely.Polygon(outline).contains(shapely.Point(*((elo + ehi) / 2)))
+        gap = min(gap, -1.0 if inside.any() or covered else float(np.linalg.norm(outside, axis=1).min()))
     return gap
 
 
@@ -493,11 +496,12 @@ def place_on_bed(xy, lo, hi, exclude=None, clearance: float = 3.0) -> dict:
     Straight (0 degrees) when that leaves ``clearance`` all round, as that's easiest to check by eye;
     otherwise the half-degree turn that leaves the most room. -> angle_deg, cos/sin, shift (x, y) to apply
     after turning, room_mm (the gap left; below ``clearance`` when nothing fits)."""
-    outline0 = footprint_outline(xy)
+    outline0 = _bed_outline(xy)
     lo, hi = np.asarray(lo, float), np.asarray(hi, float)
     centre = (lo + hi) / 2
     best = None
-    for deg in np.arange(0.0, 360.0, 0.5):
+    # centred, a half turn lies on the same spot: with no corner, 0-180 degrees tries every placement
+    for deg in np.arange(0.0, 360.0 if exclude is not None else 180.0, 0.5):
         a = np.radians(deg)
         c, s = np.cos(a), np.sin(a)
         turned = outline0 @ np.array([[c, s], [-s, c]])
@@ -516,17 +520,19 @@ def write_3mf(mesh, path: Path, title: str, notes: str, bed_mm: float = 256.0) -
 
     Slicers (Bambu Studio, Orca, Prusa) open this as geometry; it carries no
     printer or filament settings. If it doesn't fit straight, it is turned
-    to whichever angle leaves the most room to the bed's edges and to a
-    Bambu X1/P1's no-print corner (``place_on_bed``), so a long insole
-    opened as it is doesn't sit over the corner the printer wipes its
-    nozzle in. Only turned and moved, never scaled.
+    to whichever angle leaves the most room to the bed's edges and, on a
+    Bambu X1/P1's 256 mm bed, its no-print corner (``place_on_bed``), so a
+    long insole opened as it is doesn't sit over the corner the printer
+    wipes its nozzle in. Only turned and moved, never scaled. Too long for
+    the bed even so, it is written at the turn that comes closest, and the
+    report's ``bed_fit`` (the same search) says it doesn't fit.
     """
     import zipfile
     from xml.sax.saxutils import escape
 
     V = np.asarray(mesh.vertices, dtype=float)
     F = np.asarray(mesh.faces, dtype=int)
-    at = place_on_bed(V[:, :2], (0.0, 0.0), (bed_mm, bed_mm), BAMBU_NO_PRINT_CORNER)
+    at = place_on_bed(V[:, :2], (0.0, 0.0), (bed_mm, bed_mm), no_print_corner(bed_mm))
     c, s = at["cos"], at["sin"]
     # build transform (3MF: 3 x 4, row vectors): rotate about z, then move the turned footprint's
     # middle to the bed's middle, bottom on z = 0
