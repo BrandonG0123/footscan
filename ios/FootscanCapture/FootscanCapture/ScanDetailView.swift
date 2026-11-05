@@ -365,12 +365,12 @@ struct AccuracyCard: View {
                 Text(error).font(.subheadline).foregroundStyle(Color.fsWarn)
             } else {
                 LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], alignment: .leading, spacing: 12) {
-                    stat("Typical error", mm(acc.median_mm, signed: false))
-                    stat("Worst 5%", mm(acc.p95_mm, signed: false))
-                    stat("Too big (+) / small (−)", mm(acc.signed_mean_mm))
-                    stat("Captured within 1 mm", acc.within_1mm.map { "\(Int(($0 * 100).rounded()))%" } ?? "—")
-                    stat("Length", mm(acc.length_mm))
-                    stat("Width", mm(acc.width_mm))
+                    statRow("Typical error", mm(acc.median_mm, signed: false))
+                    statRow("Worst 5%", mm(acc.p95_mm, signed: false))
+                    statRow("Too big (+) / small (−)", mm(acc.signed_mean_mm))
+                    statRow("Captured within 1 mm", acc.within_1mm.map { "\(Int(($0 * 100).rounded()))%" } ?? "—")
+                    statRow("Length", mm(acc.length_mm))
+                    statRow("Width", mm(acc.width_mm))
                 }
                 Text(acc.reference == "calipers"
                      ? "Compared with your caliper readings of the print."
@@ -381,7 +381,7 @@ struct AccuracyCard: View {
         .card()
     }
 
-    private func stat(_ k: String, _ v: String) -> some View {
+    private func statRow(_ k: String, _ v: String) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(k).font(.caption).foregroundStyle(Color.fsMuted)
             Text(v).font(.system(.title3, design: .rounded, weight: .semibold).monospacedDigit())

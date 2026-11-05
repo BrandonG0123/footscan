@@ -21,8 +21,16 @@ struct ConnectCodes {
     }
 
     @Test func aPublicAddressNeedsNoFingerprint() throws {
-        let parsed = try #require(StudioStore.parse("footscan-capture://connect?url=https://footscan.example.dev&key=k"))
+        let parsed = try #require(StudioStore.parse("footscan-capture://connect?url=https://footscan.example.dev&key=k",
+                                                    allowPublic: true))
         #expect(parsed.link.fingerprint == nil)
+    }
+
+    @Test func theAppStoreBuildPairsOnlyWithAStudioWhoseCertificateItPins() {
+        // a public studio could be the developer's: scans sent there would be collected data (docs/PRIVACY.md)
+        #expect(StudioStore.parse("footscan-capture://connect?url=https://footscan.example.dev&key=k", allowPublic: false) == nil)
+        let pin = String(repeating: "a", count: 64)
+        #expect(StudioStore.parse("footscan-capture://connect?url=https://192.168.1.20:8765&key=k&fp=\(pin)", allowPublic: false) != nil)
     }
 
     @Test(arguments: [
@@ -40,14 +48,15 @@ struct ConnectCodes {
     }
 
     @Test func spacesRoundACodeAreIgnored() {
-        #expect(StudioStore.parse("  footscan-capture://connect?url=https://h&key=k \n") != nil)
+        #expect(StudioStore.parse("  footscan-capture://connect?url=https://h&key=k \n", allowPublic: true) != nil)
     }
 }
 
 // MARK: - the studio's key after the app is deleted
 
-// Uses the real settings and Keychain of the app the tests run in, and puts back whatever was there.
-@Suite("Studio key storage", .serialized)
+// Uses the real settings and Keychain of the app the tests run in, and puts back whatever was there. It's the
+// only test that touches them (the others parse codes or build messages), so it needs no ordering of its own.
+@Suite("Studio key storage")
 struct StudioKeyStorage {
     @Test func aKeyLeftFromAnEarlierInstallIsDeletedNotReused() throws {
         let before = StudioStore.load()
@@ -55,12 +64,18 @@ struct StudioKeyStorage {
         let link = StudioLink(url: URL(string: "https://192.168.1.20:8765")!, fingerprint: nil)
 
         StudioStore.save(link, key: "old-key")
+        StudioStore.removeLeftoverKey() // a paired studio: nothing is left over
         #expect(StudioStore.load()?.key == "old-key")
         // Deleting the app clears its settings, but iOS keeps the Keychain item.
-        UserDefaults.standard.removeObject(forKey: "studio.link")
+        UserDefaults.standard.removeObject(forKey: StudioStore.linkKey)
         #expect(StudioStore.load() == nil)
+        // Reading doesn't delete anything; the launch-time cleanup does.
+        UserDefaults.standard.set(try JSONEncoder().encode(link), forKey: StudioStore.linkKey)
+        #expect(StudioStore.load()?.key == "old-key")
+        UserDefaults.standard.removeObject(forKey: StudioStore.linkKey)
+        StudioStore.removeLeftoverKey()
         // The key went with it: the address coming back doesn't bring the old password back.
-        UserDefaults.standard.set(try JSONEncoder().encode(link), forKey: "studio.link")
+        UserDefaults.standard.set(try JSONEncoder().encode(link), forKey: StudioStore.linkKey)
         #expect(StudioStore.load() == nil)
     }
 }

@@ -23,22 +23,37 @@ struct StudioLink: Codable, Equatable {
 }
 
 enum StudioStore {
-    private static let linkKey = "studio.link"
+    static let linkKey = "studio.link"
     private static let service = "footscan.studio"
 
+    /// Studios at a public internet address (a real certificate, no fingerprint in the code) are someone else's
+    /// server, possibly the developer's own hosted studio: scans sent there would be data the developer
+    /// collects, which the privacy manifest and policy say never happens. So the App Store build pairs only
+    /// with a studio on a computer the person runs, whose own certificate the code pins (on home Wi-Fi or
+    /// over Tailscale); development builds still accept public addresses, for the developer's own testing.
+    #if DEBUG
+    static let acceptsPublicStudios = true
+    #else
+    static let acceptsPublicStudios = false
+    #endif
+
+    /// The saved studio and its key, or nil. Reads only.
     static func load() -> (link: StudioLink, key: String)? {
         guard let data = UserDefaults.standard.data(forKey: linkKey),
-              let link = try? JSONDecoder().decode(StudioLink.self, from: data) else {
-            // iOS keeps Keychain items after the app is deleted, but not its settings. A key with no studio
-            // address is left from an earlier install (or a cut-off clear()): delete it, so deleting the app
-            // removes the studio's password too, as the privacy policy (docs/PRIVACY.md) says. Only when the
-            // key can be read: before the phone's first unlock after a restart the settings can read as empty
-            // too, and the key is unreadable then, so a real pairing is never thrown away.
-            if readKey() != nil { deleteKey() }
-            return nil
-        }
-        guard let key = readKey() else { return nil }
+              let link = try? JSONDecoder().decode(StudioLink.self, from: data),
+              let key = readKey() else { return nil }
         return (link, key)
+    }
+
+    /// Run once at launch. iOS keeps Keychain items after the app is deleted, but not its settings, so a key
+    /// with no studio address is left from an earlier install (or a cut-off clear()): delete it, so a deleted
+    /// app's studio password is gone the next time the app is installed and opened (the privacy policy,
+    /// docs/PRIVACY.md, says so; Disconnect before deleting removes it at once). Only when the key can be read:
+    /// before the phone's first unlock after a restart the settings can read as empty too, and the key is
+    /// unreadable then, so a real pairing is never thrown away.
+    static func removeLeftoverKey() {
+        guard UserDefaults.standard.data(forKey: linkKey) == nil, readKey() != nil else { return }
+        deleteKey()
     }
 
     static func save(_ link: StudioLink, key: String) {
@@ -55,8 +70,9 @@ enum StudioStore {
         SecItemDelete([kSecClass: kSecClassGenericPassword, kSecAttrService: service] as CFDictionary)
     }
 
-    /// Parse a connect code. Only https studios are accepted.
-    static func parse(_ text: String) -> (link: StudioLink, key: String)? {
+    /// Parse a connect code. Only https studios are accepted, and (``allowPublic`` false, as in the App Store
+    /// build) only ones whose certificate the code pins: see ``acceptsPublicStudios``.
+    static func parse(_ text: String, allowPublic: Bool = acceptsPublicStudios) -> (link: StudioLink, key: String)? {
         guard let comps = URLComponents(string: text.trimmingCharacters(in: .whitespacesAndNewlines)),
               comps.scheme == "footscan-capture", comps.host == "connect" else { return nil }
         let q = Dictionary((comps.queryItems ?? []).map { ($0.name, $0.value ?? "") }, uniquingKeysWith: { a, _ in a })
@@ -64,6 +80,7 @@ enum StudioStore {
               let key = q["key"], !key.isEmpty else { return nil }
         let fp = q["fp"].flatMap { $0.isEmpty ? nil : $0.lowercased() }
         if let fp, fp.count != 64 || !fp.allSatisfy(\.isHexDigit) { return nil }
+        if fp == nil && !allowPublic { return nil }
         return (StudioLink(url: url, fingerprint: fp), key)
     }
 

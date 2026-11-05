@@ -3,7 +3,7 @@
 > Footscan is not a medical device. It does not diagnose, treat or prevent any condition.
 > See [SAFETY.md](SAFETY.md).
 
-This policy covers the Footscan iPhone app. Last changed: 3 November 2026.
+This policy covers the Footscan iPhone app. Last changed: 5 November 2026.
 
 ## The short version
 
@@ -37,9 +37,10 @@ yourself instead. Photos + mat scans go to the studio as they are taken. Everyth
 encrypted (HTTPS) connection. For a studio on your home network, the app checks it is talking to that
 exact computer.
 
-The studio is software run by you, or by someone you chose, on their own computer. If you connect to a
-studio through an internet address, your scans also pass through whatever service that studio uses to be
-reachable (for example a tunnel provider). Once a scan is at the studio, it is kept there, under the
+The studio is software run by you, or by someone you chose, on their own computer. The App Store version
+of the app connects only to a studio on a computer like that, reached over your Wi-Fi or a private network
+such as Tailscale, and checks it is that very computer (its certificate); it doesn't connect to a studio at
+a public internet address, so it can't send your scans to the app's developer or anyone else's server. Once a scan is at the studio, it is kept there, under the
 control of whoever runs it, not the app's developer.
 
 ## Deleting your data
@@ -47,8 +48,10 @@ control of whoever runs it, not the app's developer.
 - One scan: open it and tap **Delete this scan**.
 - Every scan on the phone: Settings, then **Delete all scans**.
 - The studio connection: Settings, then Studio, then **Disconnect**. This removes the studio's address and key.
-- Everything: delete the app. If the Keychain still holds an old studio key, the app deletes it the next
-  time it is installed and opened.
+- Everything: tap **Disconnect** (above) first, which removes the studio's key at once, then delete the
+  app. iOS keeps an app's Keychain items after the app is deleted, so a key left by deleting without
+  disconnecting stays on the phone (and in its encrypted backups) until the app is installed and opened
+  again, when the app deletes it.
 - Scans already sent to a studio stay there until they are deleted in that studio.
 
 ## Children
