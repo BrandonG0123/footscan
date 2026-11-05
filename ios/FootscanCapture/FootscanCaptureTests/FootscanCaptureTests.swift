@@ -40,11 +40,12 @@ struct ConnectCodes {
 
     @Test func ownNetworkAddressesAreTheHomeNetworkAndTailscaleOnly() {
         for own in ["https://192.168.11.233:8766", "https://10.0.0.5", "https://172.20.1.1", "https://169.254.3.4",
-                    "https://100.64.0.1", "https://mac-mini.local:8766", "https://[fd7a:115c:a1e0::1]:8766"] {
+                    "https://100.64.0.1", "https://mac-mini.local:8766", "https://[fd7a:115c:a1e0::1]:8766",
+                    "https://mac.local.:8766", "https://[fe90::1]", "https://[::ffff:192.168.1.5]"] {
             #expect(StudioStore.isOwnNetwork(URL(string: own)!), "\(own)")
         }
         for other in ["https://172.32.0.1", "https://100.128.0.1", "https://8.8.8.8", "https://footscan.example.dev",
-                      "https://fd.example.com", "https://[2001:db8::1]"] {
+                      "https://fd.example.com", "https://[2001:db8::1]", "https://[fd::1]", "https://[fc0::5]"] {
             #expect(!StudioStore.isOwnNetwork(URL(string: other)!), "\(other)")
         }
     }

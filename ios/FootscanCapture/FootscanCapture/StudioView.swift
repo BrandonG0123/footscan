@@ -25,9 +25,14 @@ final class StudioConnection {
     /// Try a connect code; save it only if the studio answers to it.
     func connect(_ text: String) async -> Bool {
         guard let parsed = StudioStore.parse(text) else {
-            status = StudioStore.parse(text, allowPublic: true) != nil
-                ? "This app connects only to a studio on your own computer, over your Wi-Fi or Tailscale, not to one at a public internet address. Show the connect code in the studio on that computer and scan it."
-                : "That isn't a Footscan studio code. In the studio, open Import 3D and tap Show the connect code."
+            if let other = StudioStore.parse(text, allowPublic: true) {
+                status = other.link.fingerprint != nil
+                    // the person's own computer, at an address that isn't its home-network or Tailscale one
+                    ? "This code names \(other.link.host), which isn't an address on your home network or Tailscale. This app connects to your studio only at one of those: start Footscan on that computer on your Wi-Fi (or with Tailscale on), show the connect code again and scan it."
+                    : "This app connects only to a studio on your own computer, over your Wi-Fi or Tailscale, not to one at a public internet address. Show the connect code in the studio on that computer and scan it."
+            } else {
+                status = "That isn't a Footscan studio code. In the studio, open Import 3D and tap Show the connect code."
+            }
             return false
         }
         status = "Checking \(parsed.link.host)…"

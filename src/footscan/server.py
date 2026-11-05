@@ -60,6 +60,7 @@ import datetime as dt
 import hashlib
 import hmac
 import http.cookies
+import ipaddress
 import json
 import mimetypes
 import re
@@ -69,6 +70,7 @@ import socket
 import ssl
 import subprocess
 import threading
+import urllib.parse
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -353,6 +355,27 @@ def capture_lock(capture_id: str) -> threading.Lock:
 # studio on the person's own computer whose certificate the code pins (docs/PRIVACY.md).
 PUBLIC_PAIRING_NOTE = ("This code pairs only with a development build of the Footscan app. The App Store version "
                        "connects only to a studio on your own computer, over your Wi-Fi or Tailscale.")
+
+
+OWN_NETWORK_NOTE = ("This address isn't on a home network or Tailscale, so the App Store version of the Footscan "
+                    "app won't take this code (development builds will). Connect this computer to your Wi-Fi, or "
+                    "turn on Tailscale, and show the code again.")
+
+
+def own_network(host: str) -> bool:
+    """The app's own-network rule (StudioStore.isOwnNetwork in ios/.../Studio.swift): a private or link-local
+    IP, Tailscale's 100.64/10, or a .local name. The App Store build pairs only with a studio at one."""
+    host = host.strip("[]").rstrip(".").lower()
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        return host.endswith(".local")
+    if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped:
+        ip = ip.ipv4_mapped
+    if ip.version == 4:
+        return any(ip in ipaddress.ip_network(n) for n in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16",
+                                                            "169.254.0.0/16", "100.64.0.0/10"))  # last: Tailscale
+    return ip in ipaddress.ip_network("fc00::/7") or ip in ipaddress.ip_network("fe80::/10")
 
 
 def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check=is_loopback,
@@ -672,7 +695,11 @@ def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check
                 return dict(available=False,
                             reason="Phones can't reach this studio yet. Restart footscan with "
                                    "--host 0.0.0.0 --https, then open this page again.")
-            return dict(available=True, url=info["scan_url"].rstrip("/"), key=studio_key, fingerprint=cert_fingerprint)
+            url = info["scan_url"].rstrip("/")
+            out = dict(available=True, url=url, key=studio_key, fingerprint=cert_fingerprint)
+            if not own_network(urllib.parse.urlsplit(url).hostname or ""):
+                out["note"] = OWN_NETWORK_NOTE  # the App Store build will refuse it: say so where it's shown
+            return out
 
         def insole_api(self, method: str, d: Path, rest: list[str]):
             """First-fit insole from a foot capture: POST makes it, GET <file> downloads it."""

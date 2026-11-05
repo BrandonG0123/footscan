@@ -49,7 +49,13 @@ enum StudioStore {
     /// An address only the person's own network or Tailscale reaches: a private or link-local IP (10/8,
     /// 172.16/12, 192.168/16, 169.254/16, IPv6 fc00::/7 and fe80::/10), Tailscale's 100.64/10, or a .local name.
     static func isOwnNetwork(_ url: URL) -> Bool {
-        guard let host = url.host()?.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: "[]")) else { return false }
+        guard var host = url.host()?.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: "[]")) else { return false }
+        if host.hasSuffix(".") { host.removeLast() } // "mac.local." is "mac.local"
+        if host.hasPrefix("::ffff:") { // an IPv4 address written as IPv6: ::ffff:192.168.1.5, or ::ffff:c0a8:105
+            host.removeFirst(7)
+            let g = host.split(separator: ":").compactMap { UInt16($0, radix: 16) }
+            if g.count == 2 { host = "\(g[0] >> 8).\(g[0] & 0xff).\(g[1] >> 8).\(g[1] & 0xff)" }
+        }
         let parts = host.split(separator: ".", omittingEmptySubsequences: false)
         let octets = parts.compactMap { UInt8($0) }
         if parts.count == 4, octets.count == 4 {
@@ -58,7 +64,12 @@ enum StudioStore {
             default: return false
             }
         }
-        if host.contains(":") { return host.hasPrefix("fc") || host.hasPrefix("fd") || host.hasPrefix("fe80:") }
+        if host.contains(":") {
+            // the first 16 bits, as a number (leading zeros may be left out: "fd::1" is 00fd::1)
+            guard let first = host.split(separator: ":", omittingEmptySubsequences: false).first,
+                  !first.isEmpty, let group = UInt16(first, radix: 16) else { return false }
+            return group & 0xfe00 == 0xfc00 || group & 0xffc0 == 0xfe80 // fc00::/7 unique-local, fe80::/10 link-local
+        }
         return host.hasSuffix(".local")
     }
 
@@ -82,10 +93,13 @@ enum StudioStore {
     /// ``load(allowPublic:)``) goes too, address and key: the app shows "Not connected" with no Disconnect
     /// for it, and its key would otherwise stay on the phone for good.
     static func removeLeftoverKey(allowPublic: Bool = acceptsPublicStudios) {
-        if let data = UserDefaults.standard.data(forKey: linkKey),
-           let link = try? JSONDecoder().decode(StudioLink.self, from: data), !accepts(link, allowPublic: allowPublic) {
-            clear()
-            return
+        if let data = UserDefaults.standard.data(forKey: linkKey) {
+            // one that no longer reads (another build's format, or damaged) can't be used or disconnected either
+            let link = try? JSONDecoder().decode(StudioLink.self, from: data)
+            if link.map({ !accepts($0, allowPublic: allowPublic) }) ?? true {
+                clear()
+                return
+            }
         }
         guard UserDefaults.standard.data(forKey: linkKey) == nil, readKey() != nil else { return }
         deleteKey()

@@ -232,7 +232,7 @@ def test_no_app_function_is_called_stat_so_the_file_date_check_cant_be_kept_gree
 
 
 # A bare /.../ regex literal holding a quote, right after = ( , : or [ (where a / can't be division).
-BARE_REGEX_WITH_QUOTE = re.compile(r'(?:^|[=(,:\[])\s*/(?![/*\s])[^/\n]*"[^/\n]*/', re.M)
+BARE_REGEX_WITH_QUOTE = re.compile(r'(?:^|[=(,:\[{!&|?]|\breturn|\bin|\bcase)\s*/(?![/*\s])[^/\n]*"[^/\n]*/', re.M)
 
 
 def test_no_bare_regex_literal_holds_a_quote_the_scan_would_read_as_a_string():
@@ -242,6 +242,9 @@ def test_no_bare_regex_literal_holds_a_quote_the_scan_would_read_as_a_string():
     it as #/.../#)."""
     assert BARE_REGEX_WITH_QUOTE.search('let r = /"/; let d = UserDefaults.standard')
     assert BARE_REGEX_WITH_QUOTE.search('x.firstMatch(of: /a"b/)')
+    assert BARE_REGEX_WITH_QUOTE.search('guard ok else { return /"/ }; let d = UserDefaults.standard')
+    assert BARE_REGEX_WITH_QUOTE.search('xs.map { /"/ }')
+    assert BARE_REGEX_WITH_QUOTE.search('let r = a ?? /"/')
     assert not BARE_REGEX_WITH_QUOTE.search('let half = width / 2; let s = "a/b"')
     assert not BARE_REGEX_WITH_QUOTE.search('let u = URL(string: "https://x/y")  // a "path"')
     for f in sorted(APP.rglob("*.swift")):
