@@ -363,6 +363,18 @@ def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check
                  submissions_per_hour: int = SUBMISSIONS_PER_HOUR, allow_indexing: bool = True,
                  public: bool = False, cert_fingerprint: str | None = None):
     runner = recon_jobs.ReconRunner()
+    # This computer's Tailscale address, asked of the tailscale command at most once a minute: a stuck
+    # tailscaled costs 3 s a try, and each "Show the connect code" asks for it.
+    tailnet = dict(at=None, ip=None)
+    tailnet_lock = threading.Lock()
+
+    def tailnet_cached() -> str | None:
+        import time
+
+        with tailnet_lock:
+            if tailnet["at"] is None or time.monotonic() - tailnet["at"] > TAILNET_CACHE_S:
+                tailnet.update(at=time.monotonic(), ip=tailnet_ip())
+            return tailnet["ip"]
     captures_dir = data_dir / "captures"
     submissions_dir = data_dir / "submissions"
     limiter = RateLimiter(submissions_per_hour)
@@ -676,11 +688,18 @@ def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check
                 return dict(available=False,
                             reason="Phones can't reach this studio yet. Restart footscan with "
                                    "--host 0.0.0.0 --https, then open this page again.")
+            if info["scan_url"] is None:  # no Wi-Fi address right now: the Tailscale one, if there is one
+                alt = self.other_addresses(None)
+                if not alt:
+                    return dict(available=False,
+                                reason="This computer has no network address a phone can reach right now (is its "
+                                       "Wi-Fi or network cable connected?). Open this page again once it has.")
+                return dict(available=True, url=alt[0], key=studio_key, fingerprint=cert_fingerprint, alt_urls=[])
             url = info["scan_url"].rstrip("/")
             return dict(available=True, url=url, key=studio_key, fingerprint=cert_fingerprint,
                         alt_urls=self.other_addresses(url))
 
-        def other_addresses(self, url: str) -> list[str]:
+        def other_addresses(self, url: str | None) -> list[str]:
             """This studio's other addresses for the phone, tried alongside the home-network one.
 
             The home-network address (192.168.x.x) only answers on the same Wi-Fi. With Tailscale on this
@@ -692,7 +711,7 @@ def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check
             host, port = self.server.server_address[:2]
             if host not in ("0.0.0.0", "::"):
                 return []  # bound to one address: no other address answers
-            ts = tailnet_ip()
+            ts = tailnet_cached()
             alt = f"https://{ts}:{port}" if ts else None
             return [alt] if alt and alt != url else []
 
@@ -1584,6 +1603,9 @@ def cert_fingerprint(cert_path: Path) -> str:
 TAILNET = ipaddress.ip_network("100.64.0.0/10")  # the addresses Tailscale gives its devices
 
 
+TAILNET_CACHE_S = 60.0
+
+
 def tailnet_ip() -> str | None:
     """This computer's Tailscale address (100.64.0.0/10), or None without Tailscale.
 
@@ -1591,14 +1613,13 @@ def tailnet_ip() -> str | None:
     started before Tailscale was installed; the Mac app, whose command sits inside the app), so the install
     locations are tried too, each program once however many of those name it.
 
-    Only if no tailscale command could be run at all does it fall back to the addresses this computer's name
-    resolves to. When the command ran and gave no address (Tailscale is stopped or logged out), there is none:
-    a 100.64.0.0/10 address the computer has then belongs to something else (Cloudflare WARP, a carrier's NAT),
-    and handing it to the phone as "Tailscale, from anywhere" would send it to the wrong place.
+    Only the tailscale command's answer counts. A 100.64.0.0/10 address the computer has otherwise (Tailscale
+    stopped or logged out, or not installed) belongs to something else (Cloudflare WARP, a carrier's NAT), and
+    handing it to the phone as "Tailscale, from anywhere" would send it to the wrong place.
     """
     candidates = [shutil.which("tailscale"), r"C:\Program Files\Tailscale\tailscale.exe",
                   "/Applications/Tailscale.app/Contents/MacOS/Tailscale"]
-    tried, ran = set(), False
+    tried = set()
     for exe in filter(None, candidates):
         if not Path(exe).is_file():
             continue
@@ -1614,16 +1635,9 @@ def tailnet_ip() -> str | None:
                                  errors="replace", timeout=3).stdout
         except (OSError, subprocess.SubprocessError):
             continue
-        ran = True
         if ip := first_tailnet_ip(out.split()):
             return ip
-    if ran:
-        return None
-    try:
-        names = [a[4][0] for a in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET)]
-    except OSError:
-        return None
-    return first_tailnet_ip(names)
+    return None
 
 
 def first_tailnet_ip(texts) -> str | None:

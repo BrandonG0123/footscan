@@ -59,6 +59,13 @@ struct StudioAddresses {
         #expect(parsed.link.fingerprint == fp) // one pin for every address: it's the same computer
     }
 
+    @Test func aCodeWithNoPinnedCertificateUsesOnlyTheAddressItNames() throws {
+        // every address is sent the key at once: without a pin, an "alternate" could be anyone's host
+        let code = "footscan-capture://connect?url=https://footscan.example.dev&key=k&alt=https://other.example.com"
+        let parsed = try #require(StudioStore.parse(code))
+        #expect(parsed.link.alternates.isEmpty && parsed.link.url.absoluteString == "https://footscan.example.dev")
+    }
+
     @Test func anAlternateInTheClearRefusesTheWholeCode() {
         #expect(StudioStore.parse("footscan-capture://connect?url=https://192.168.11.233:8766&key=k&alt=http://100.101.102.103:8766") == nil)
     }
@@ -110,9 +117,16 @@ struct ConnectionTestFailures {
     }
 
     @Test func aDifferentCertificateIsNotCalledUnreachable() {
-        let text = StudioClient.Failure.explain([.init(address: home, miss: .wrongCertificate)], pinned: true)
+        let text = StudioClient.Failure.explain([.init(address: tailnet, miss: .wrongCertificate)], pinned: true)
         #expect(text.contains("isn't the studio this phone connected to"))
         #expect(!text.contains("Check Footscan is running")) // something did answer
+    }
+
+    @Test func anotherDeviceAtTheHomeAddressOnAnotherWiFiIsSaidToBeAnotherWiFi() {
+        // a café's router using 192.168.11.x too: a printer there answers at the studio's home address
+        let text = StudioClient.Failure.explain([.init(address: home, miss: .wrongCertificate)], pinned: true)
+        #expect(text.contains("another Wi-Fi that uses the same addresses"))
+        #expect(!text.contains("Check Footscan is running"))
     }
 
     @Test func localNetworkAccessIsMentionedOnlyWhenThePhoneHadNoRouteHome() {
@@ -138,6 +152,9 @@ struct ConnectionTestFailures {
         #expect(!text.contains("answers from anywhere while Tailscale is on")) // it is on: that's not the problem
         let silent = StudioClient.Failure.explain([.init(address: tailnet, miss: .noAnswer)], pinned: true)
         #expect(!silent.contains("this phone's own connection"))
+        // at home with Local Network access refused and Tailscale off: the phone's connection is fine
+        let localOnly = StudioClient.Failure.explain([.init(address: home, miss: .noRoute), .init(address: tailnet, miss: .noAnswer)], pinned: true)
+        #expect(!localOnly.contains("this phone's own connection") && localOnly.contains("Local Network"))
     }
 
     @Test func theAddressKindsHaveOneLabelEverywhere() {
@@ -150,6 +167,8 @@ struct ConnectionTestFailures {
     @Test func aDropMidSendIsNotBlamedOnTheWiFiAndTheScanWaits() {
         let failure = StudioClient.Failure.dropped(host: "192.168.11.233")
         #expect(failure.isUnreachable) // sent again once the studio is back
+        #expect(!failure.offersReconnect) // it answered: no need to scan its code again
+        #expect(StudioClient.Failure.unreachable([], pinned: true).offersReconnect)
         #expect(failure.errorDescription?.contains("same Wi-Fi") == false)
     }
 

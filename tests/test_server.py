@@ -667,9 +667,11 @@ def _phone_ready_studio(tmp_path, monkeypatch, tailnet):
     monkeypatch.setattr(srv, "tailnet_ip", lambda: tailnet)
     handler = make_handler(WEB_DIR, tmp_path, local_check=lambda h: False, studio_key=KEY, secure_cookie=True,
                            cert_fingerprint="ab" * 32)
-    httpd = StudioServer(("0.0.0.0", 0), handler)
+    httpd = StudioServer(("127.0.0.1", 0), handler)  # listening on this computer only, while the tests run
+    port = httpd.server_address[1]
+    httpd.server_address = ("0.0.0.0", port)  # but answering as a studio bound to every address, as tank's is
     threading.Thread(target=httpd.serve_forever, daemon=True).start()
-    return httpd, f"http://127.0.0.1:{httpd.server_address[1]}"
+    return httpd, f"http://127.0.0.1:{port}"
 
 
 def test_pairing_offers_the_tailscale_address_too_so_the_phone_reaches_the_studio_away_from_home(tmp_path, monkeypatch):
@@ -691,6 +693,43 @@ def test_pairing_without_tailscale_offers_only_the_home_network_address(tmp_path
         assert p["available"] is True and p["alt_urls"] == []
     finally:
         httpd.shutdown()
+
+
+def test_pairing_with_no_wifi_address_offers_the_tailscale_one_instead_of_failing(tmp_path, monkeypatch):
+    """Reachable only over Tailscale (no Wi-Fi address): the connect code names the Tailscale address. With
+    neither, the page says so, instead of answering 500."""
+    import footscan.server as srv
+
+    httpd, url = _phone_ready_studio(tmp_path, monkeypatch, tailnet="100.101.102.103")
+    monkeypatch.setattr(srv, "lan_ip", lambda: None)
+    port = httpd.server_address[1]
+    try:
+        p = body(call(f"{url}/api/studio/pairing", headers={"X-Studio-Key": KEY}))
+        assert p["available"] is True and p["url"] == f"https://100.101.102.103:{port}" and p["alt_urls"] == []
+    finally:
+        httpd.shutdown()
+    httpd, url = _phone_ready_studio(tmp_path, monkeypatch, tailnet=None)
+    monkeypatch.setattr(srv, "lan_ip", lambda: None)
+    try:
+        st, raw, _ = call(f"{url}/api/studio/pairing", headers={"X-Studio-Key": KEY})
+        assert st == 200 and json.loads(raw)["available"] is False and "no network address" in json.loads(raw)["reason"]
+    finally:
+        httpd.shutdown()
+
+
+def test_the_tailscale_address_is_asked_for_at_most_once_a_minute(tmp_path, monkeypatch):
+    """Each Show the connect code asks for it; a stuck tailscaled costs 3 s a try."""
+    import footscan.server as srv
+
+    asked = []
+    httpd, url = _phone_ready_studio(tmp_path, monkeypatch, tailnet=None)
+    monkeypatch.setattr(srv, "tailnet_ip", lambda: asked.append(1) or "100.101.102.103")
+    try:
+        for _ in range(3):
+            assert body(call(f"{url}/api/studio/pairing", headers={"X-Studio-Key": KEY}))["alt_urls"]
+    finally:
+        httpd.shutdown()
+    assert len(asked) == 1
 
 
 def test_tailnet_address_is_read_from_the_tailscale_command(monkeypatch, tmp_path):
@@ -740,10 +779,10 @@ def test_a_stopped_tailscale_means_no_tailnet_address_even_if_another_100_64_add
     monkeypatch.setattr(srv.socket, "getaddrinfo",
                         lambda *a, **k: [(socket.AF_INET, 0, 0, "", ("100.96.0.7", 0))])
     assert srv.tailnet_ip() is None
-    # with no tailscale command anywhere, the computer's own addresses are still looked at
+    # with no tailscale command anywhere (WARP on, Tailscale not installed), still none
     monkeypatch.setattr(srv.shutil, "which", lambda name: None)
     monkeypatch.setattr(srv.Path, "is_file", lambda self: False)
-    assert srv.tailnet_ip() == "100.96.0.7"
+    assert srv.tailnet_ip() is None
 
 
 def test_the_tailscale_command_runs_once_when_path_finds_an_install_location(monkeypatch):

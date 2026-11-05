@@ -132,6 +132,9 @@ enum StudioStore {
             guard let text = item.value, let alt = URL(string: text), alt.scheme == "https", alt.host() != nil else { return nil }
             if alt != url && !alternates.contains(alt) { alternates.append(alt) }
         }
+        // Every address is tried at once with the key. Without a pinned certificate, any host with a trusted
+        // certificate could be named as an "alternate" and be sent the key: only the address the code names.
+        if fp == nil { alternates = [] }
         return (StudioLink(url: url, fingerprint: fp, alternates: alternates), key)
     }
 
@@ -264,6 +267,13 @@ struct StudioClient {
             }
         }
 
+        /// Worth offering "Reconnect to the studio" (scan its code again): no address answered. Not after a
+        /// drop mid-send, as the studio did answer: trying again is all it needs.
+        var offersReconnect: Bool {
+            if case .unreachable = self { return true }
+            return false
+        }
+
         /// What each address needs, in plain words: away from home the home-network address can't answer,
         /// the Tailscale one needs Tailscale on, and a different certificate means a different server.
         static func explain(_ misses: [Missed], pinned: Bool) -> String {
@@ -271,6 +281,10 @@ struct StudioClient {
             for m in misses {
                 let host = StudioLink.host(of: m.address)
                 switch (m.miss, StudioAddressKind(host: host)) {
+                case (.wrongCertificate, .homeNetwork) where pinned:
+                    // another Wi-Fi (a café's, a friend's) often uses the same private addresses: something
+                    // else there answers at the studio's home address
+                    lines.append("Something else answered at \(host), the studio's \(StudioAddressKind.homeNetwork.label!) address: this phone is probably on another Wi-Fi that uses the same addresses. The studio only answers there on the same Wi-Fi as the studio computer. If this phone is on that Wi-Fi, the studio was set up again: show its connect code and scan it again.")
                 case (.wrongCertificate, _):
                     lines.append(pinned
                         ? "Something answered at \(host), but it isn't the studio this phone connected to (its certificate is different). If the studio was set up again, show its connect code and scan it again."
@@ -287,9 +301,10 @@ struct StudioClient {
                     lines.append("Nothing answered at \(host).")
                 }
             }
-            if misses.contains(where: { $0.miss == .noRoute }) {
+            if !misses.isEmpty && misses.allSatisfy({ $0.miss == .noRoute }) {
                 // the phone's own connection: every address fails this way abroad with Data Roaming off, in
-                // Airplane Mode, or with Mobile Data switched off for this app
+                // Airplane Mode, or with Mobile Data switched off for this app. (Only the home address failing
+                // so is Local Network access, below.)
                 lines.append("Check this phone's own connection: Airplane Mode off, Wi-Fi or mobile data on, Data Roaming on if you're abroad, and mobile data allowed for Footscan (Settings > Cellular).")
             }
             if misses.contains(where: { $0.miss == .noRoute && StudioAddressKind(host: StudioLink.host(of: $0.address)) == .homeNetwork }) {
@@ -404,6 +419,9 @@ struct StudioClient {
             return try await here.uploadHere(scan, record: record)
         } catch Failure.unreachable {
             throw Failure.dropped(host: here.link.host) // it answered the hello: not a question of which Wi-Fi
+        } catch is CancellationError {
+            // the send itself was stopped (the system ending background time): the scan waits to go again
+            throw Failure.dropped(host: here.link.host)
         }
     }
 
