@@ -7,6 +7,7 @@ make_insole, so the packets read exactly what the studio writes.
 import json
 import plistlib
 import shutil
+import sys
 import zipfile
 
 import numpy as np
@@ -329,6 +330,16 @@ def test_every_service_serves_on_the_wifi_with_https_and_review_and_never_public
     assert "--public" not in r["content"]  # the internet is a separate step, with the owner's go-ahead
 
 
+def test_every_service_runs_the_studio_in_utf8_mode(tmp_path):
+    """Windows' default text encoding can't write characters like the √ in a report; UTF-8 mode fixes the whole
+    process, including libraries that open text files with the default."""
+    plist = plistlib.loads(service.render("macos", tmp_path / "f", tmp_path / "d")["content"].encode())
+    assert plist["EnvironmentVariables"] == {"PYTHONUTF8": "1"}
+    assert "Environment=PYTHONUTF8=1" in service.render("linux", tmp_path / "f", tmp_path / "d")["content"]
+    assert "nssm set Footscan AppEnvironmentExtra PYTHONUTF8=1" in service.render(
+        "windows", tmp_path / "f", tmp_path / "d")["content"]
+
+
 def test_the_macos_service_is_a_valid_launch_agent_that_restarts(tmp_path):
     r = service.render("macos", tmp_path / "foot scan", tmp_path / "data")
     plist = plistlib.loads(r["content"].encode())
@@ -347,6 +358,56 @@ def test_the_windows_service_opens_the_port_on_private_networks_only(tmp_path):
     r = service.render("windows", tmp_path / "footscan", tmp_path / "data")
     assert "nssm install Footscan" in r["content"] and "Scripts/footscan.exe" in r["content"].replace("\\", "/")
     assert "-Profile Private" in r["content"]
+
+
+def test_the_windows_service_runs_nssm_from_where_only_an_administrator_can_change_it(tmp_path):
+    """nssm.exe is the service's program and runs as administrator whenever nssm is typed; winget leaves it in the
+    user's own folder, so the commands copy it
+    to Program Files and put that copy first before `nssm install` records which nssm the service runs."""
+    lines = service.render("windows", tmp_path / "footscan", tmp_path / "data")["content"].splitlines()
+    copy = next(i for i, ln in enumerate(lines) if "Copy-Item" in ln and "Program Files\\nssm" in ln)
+    first = next(i for i, ln in enumerate(lines) if ln.startswith('$env:Path = "C:\\Program Files\\nssm;"'))
+    install = next(i for i, ln in enumerate(lines) if ln.startswith("nssm install Footscan"))
+    assert copy < first < install
+
+
+def test_windows_service_commands_made_on_another_computer_ask_the_checkouts_own_python(tmp_path, monkeypatch):
+    """Made on the Mac for the tank: the Mac's Python folder is no use there, so the commands ask the
+    checkout's .venv for its Python, as DEPLOY-TANK.md does, and grant that."""
+    monkeypatch.setattr(service.os, "name", "posix")
+    lines = service.render("windows", tmp_path / "footscan", tmp_path / "data")["content"].splitlines()
+    ask = next(i for i, ln in enumerate(lines) if ln.startswith("$py = & "))
+    assert "python.exe" in lines[ask] and "sys.base_prefix" in lines[ask]
+    assert lines[ask + 1].startswith("icacls $py /grant") and not any(sys.base_prefix in ln for ln in lines)
+
+
+def test_pasting_the_windows_service_commands_again_leaves_the_running_nssm_alone(tmp_path):
+    """The second time, (Get-Command nssm) is already the Program Files copy, which Copy-Item can't copy onto
+    itself or overwrite while a service runs from it; PowerShell would print the error and carry on."""
+    lines = service.render("windows", tmp_path / "footscan", tmp_path / "data")["content"].splitlines()
+    copy = next(ln for ln in lines if "Copy-Item" in ln)
+    assert copy.startswith('if (-not (Test-Path "C:\\Program Files\\nssm\\nssm.exe")) {')
+    assert "-ErrorAction Stop" in copy
+
+
+def test_the_windows_service_runs_the_studio_as_local_service_not_localsystem(tmp_path):
+    """The checkout and its .venv are the owner's to change, so the code the service starts must not run with
+    full control of the computer: it runs as Local Service, which may read the checkout and the Python the .venv
+    runs on and write only the data folder. And a later Administrator PowerShell's `nssm` must be the Program
+    Files copy, so that folder goes first on the computer's own PATH."""
+    r = service.render("windows", tmp_path / "footscan", tmp_path / "data", python_home=tmp_path / "py311")
+    lines = r["content"].splitlines()
+    install = next(i for i, ln in enumerate(lines) if ln.startswith("nssm install Footscan"))
+    account = lines.index('nssm set Footscan ObjectName "NT AUTHORITY\\LocalService"')
+    start = lines.index("nssm start Footscan")
+    assert install < account < start
+    grants = {ln.split('"')[1]: ln.split('"')[3] for ln in lines if ln.startswith("icacls ")}
+    assert grants == {str(tmp_path / "footscan"): "*S-1-5-19:(OI)(CI)RX", str(tmp_path / "py311"): "*S-1-5-19:(OI)(CI)RX",
+                      str(tmp_path / "data"): "*S-1-5-19:(OI)(CI)M"}
+    assert max(i for i, ln in enumerate(lines) if ln.startswith("icacls ")) < start
+    machine_path = next(ln for ln in lines if "SetEnvironmentVariable" in ln)
+    assert '"C:\\Program Files\\nssm;" + $machine, "Machine"' in machine_path and "-notcontains" in machine_path
+    assert any("LocalService" in step and "sc.exe qc" in step for step in r["steps"])
 
 
 def test_the_windows_service_refuses_a_data_folder_with_spaces(tmp_path):
@@ -368,3 +429,12 @@ def test_footscan_service_prints_only_the_file_on_stdout(capsys, tmp_path):
     assert cli.main(["service", "--system", "linux", "--data", str(tmp_path)]) == 0
     out = capsys.readouterr()
     assert out.out.startswith("[Unit]") and "systemctl --user" in out.err
+
+
+def test_a_review_spec_saved_with_a_byte_order_mark_still_loads(tmp_path):
+    """Windows PowerShell 5.1's Set-Content -Encoding UTF8 (and "UTF-8 with BOM" in editors) starts the file with a
+    byte-order mark; strict UTF-8 refused it, and every review round then wrote no packet."""
+    spec = tmp_path / "review-spec.json"
+    spec.write_bytes(b"\xef\xbb\xbf" + json.dumps({"shoe": "Test Shoe", "target_length_mm": 271.0}).encode())
+    got = review.load_spec(spec)
+    assert got["shoe"] == "Test Shoe" and got["target_length_mm"] == 271.0

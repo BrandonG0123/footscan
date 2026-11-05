@@ -3,7 +3,8 @@
 // The first time, the intro runs instead (OnboardingView). Before the first
 // scan of each kind, a short "get ready" list (PrepSheet); after that, Start
 // goes straight to the camera, and the model is built (and sent, with a
-// studio connected) by itself.
+// studio connected) by itself. A scan the studio refused has Scan again,
+// which shows what to change before the camera opens and while the box is set.
 import RealityKit
 import SwiftUI
 
@@ -57,11 +58,17 @@ struct HomeView: View {
     @State private var error: String?
     @State private var startAfterPrep: Subject?
     @State private var photoCapture: Subject?
+    /// Finding which of the studio's addresses answers before the camera page opens (up to 3 s): the button
+    /// says so and can't be tapped again meanwhile.
+    @State private var findingStudio: Subject?
+    /// Scanning again after a refusal: what to change, for the get-ready sheet and the camera.
+    @State private var retake: [RetakeAdvice] = []
 
     struct PrepRequest: Identifiable {
         let subject: Subject
         let mustTick: Bool
-        var id: String { subject.rawValue + (mustTick ? "!" : "") }
+        var retake: [RetakeAdvice] = []
+        var id: String { subject.rawValue + (mustTick ? "!" : "") + (retake.isEmpty ? "" : "+retake") }
     }
 
     /// What this phone can scan: sole and foam-print scans need Apple's 3D capture.
@@ -100,7 +107,7 @@ struct HomeView: View {
                         .accessibilityLabel("Settings")
                 }
             }
-            .navigationDestination(for: Scan.self) { ScanDetailView(scan: $0) }
+            .navigationDestination(for: Scan.self) { ScanDetailView(scan: $0, onScanAgain: scanAgain) }
             .refreshable { library.reload() }
         }
         .tint(.fsBrand)
@@ -109,9 +116,9 @@ struct HomeView: View {
         // The camera opens only once the get-ready sheet has fully gone:
         // presenting it while the sheet is still closing can lose it.
         .sheet(item: $prep, onDismiss: {
-            if let s = startAfterPrep { startAfterPrep = nil; begin(s) }
+            if let s = startAfterPrep { startAfterPrep = nil; begin(s) } else { retake = [] }
         }) { req in
-            PrepSheet(subject: req.subject, mustTick: req.mustTick) { startAfterPrep = req.subject }
+            PrepSheet(subject: req.subject, mustTick: req.mustTick, retake: req.retake) { startAfterPrep = req.subject }
                 .presentationDragIndicator(.visible)
         }
         .fullScreenCover(item: $photoCapture) { s in
@@ -123,14 +130,16 @@ struct HomeView: View {
             }
         }
         .fullScreenCover(item: $capturing) { scan in
-            CaptureView(scan: scan, onDone: { done in
+            CaptureView(scan: scan, retake: retake, onDone: { done in
                 capturing = nil
+                retake = []
                 if let s = done.record?.subject { settings.markPrepared(s) }
                 library.reload()
                 path = [done]
                 Task { await library.finish(done, settings: settings, studio: studio) }
             }, onCancel: {
                 capturing = nil
+                retake = []
                 library.reload()
             })
         }
@@ -202,13 +211,14 @@ struct HomeView: View {
             Button {
                 if method == .photos && studio.client == nil { showStudio = true } else { start() }
             } label: {
-                Label(method == .photos && studio.client == nil
-                      ? "Connect to your studio first"
+                Label(findingStudio != nil ? "Finding your studio…"
+                      : method == .photos && studio.client == nil ? "Connect to your studio first"
                       : "Scan \(subject.label.lowercased())",
                       systemImage: method == .photos && studio.client == nil ? "desktopcomputer" : "camera.viewfinder")
                     .contentTransition(.numericText())
             }
             .buttonStyle(PrimaryButtonStyle())
+            .disabled(findingStudio != nil)
             .animation(.smooth, value: subjectRaw)
             .animation(.smooth, value: method)
 
@@ -275,10 +285,12 @@ struct HomeView: View {
         for s in library.scans where library.work[s.folder] == nil {
             guard let r = s.record else { continue }
             if let p = library.problems[s.folder] { return (s, "\(r.subject.label) needs a look", p) }
-            if let missing = r.retake?.first, !library.scans.contains(where: { newer in
+            if r.retake != nil, !library.scans.contains(where: { newer in
                 newer.record.map { $0.subject == r.subject && $0.created > r.created } ?? false
             }) {
-                return (s, "Scan your \(r.subject.label.lowercased()) again", missing)
+                // what went wrong, in short; the steps to fix it are on the scan's page, with Scan again
+                let what = r.nextTime.map(\.title).joined(separator: ". ")
+                return (s, "Scan your \(r.subject.label.lowercased()) again", what + ". Tap to see what to change.")
             }
             if s.photoCount > 0 && !s.hasOBJ && CaptureMethod.lidarAvailable {
                 return (s, "Finish your \(r.subject.label.lowercased()) scan", "Its 3D model hasn't been built yet.")
@@ -348,21 +360,43 @@ struct HomeView: View {
             }
             .sensoryFeedback(.selection, trigger: settings.method)
         } else {
-            Label("This iPhone scans with photos on the printed mat (it can't run Apple's 3D capture). The studio on your Mac builds the model.",
+            Label("This iPhone scans with photos on the printed mat (it can't run Apple's 3D capture). Your Footscan studio builds the model.",
                   systemImage: "camera.on.rectangle")
                 .font(.footnote).foregroundStyle(Color.fsMuted)
         }
     }
 
     private func start() {
+        retake = []
         if settings.hasPrepared(subject) { begin(subject) } else { prep = PrepRequest(subject: subject, mustTick: true) }
+    }
+
+    /// A new scan of the same kind as one the studio refused: back to home, the get-ready sheet with what to
+    /// change this time on top, then the camera (which shows it again while the box is set).
+    private func scanAgain(_ refused: Scan) {
+        guard let rec = refused.record, subjects.contains(rec.subject) else { return }
+        subjectRaw = rec.subject.rawValue
+        path = []
+        retake = rec.nextTime
+        prep = PrepRequest(subject: rec.subject, mustTick: false, retake: retake)
     }
 
     private func begin(_ s: Subject) {
         if method == .photos {
             // photos go straight to the studio: nothing big is kept on the phone
             guard studio.client != nil else { showStudio = true; return }
-            photoCapture = s
+            // home Wi-Fi or Tailscale: open the camera page at whichever address answers from here. One search at
+            // a time; when it ends, the page opens only if nothing else happened meanwhile (another subject or
+            // method chosen, a LiDAR scan started, disconnected).
+            guard findingStudio == nil else { return }
+            findingStudio = s
+            Task {
+                await studio.findAddress()
+                findingStudio = nil
+                if studio.client != nil, subject == s, method == .photos, capturing == nil, photoCapture == nil {
+                    photoCapture = s
+                }
+            }
             return
         }
         if let problem = DiskSpace.captureProblem() {
@@ -520,7 +554,7 @@ private struct InsolePath: View {
     ]
 
     private var title: String {
-        ["Scan the bottom of your foot", "Send it to your studio", "Make the insole on your Mac"][step]
+        ["Scan the bottom of your foot", "Send it to your studio", "Make the insole in your studio"][step]
     }
 
     private var detail: String {
@@ -529,9 +563,9 @@ private struct InsolePath: View {
             ? "Sole up or a foam print: it's the shape the insole is made from."
             : "Sole and foam-print scans need an iPhone with LiDAR (a Pro model)."
         case 1:
-            if !studioConnected { autoSend ? "Connect to the studio on your Mac; then it goes by itself."
-                                           : "Connect to the studio on your Mac, then open the scan and tap Send." }
-            else if autoSend { "It goes by itself when the phone is on the same Wi-Fi as the Mac." }
+            if !studioConnected { autoSend ? "Connect to the studio on your computer; then it goes by itself."
+                                           : "Connect to the studio on your computer, then open the scan and tap Send." }
+            else if autoSend { "It goes by itself whenever the phone can reach the studio (same Wi-Fi, or Tailscale)." }
             else { "Sending automatically is off: tap here to open the scan, then Send." }
         default: "Research library, then Make insole. A podiatrist or athletic trainer signs the summary sheet before you play in it."
         }

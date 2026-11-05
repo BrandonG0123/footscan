@@ -62,7 +62,7 @@ def main(argv=None) -> int:
             print(f"    {p}")
     if a.json:
         Path(a.json).parent.mkdir(parents=True, exist_ok=True)
-        Path(a.json).write_text(json.dumps(rows, indent=2))
+        Path(a.json).write_text(json.dumps(rows, indent=2), encoding="utf-8")
     return 0
 
 

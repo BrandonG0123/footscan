@@ -63,7 +63,7 @@ class Detection:
 
 @lru_cache(maxsize=4)
 def load_board(paper: str) -> dict:
-    board = json.loads((MAT_DIR / f"footscan-mat-{paper}.json").read_text())
+    board = json.loads((MAT_DIR / f"footscan-mat-{paper}.json").read_text(encoding="utf-8"))
     board["lookup"] = {
         int(mid): (i, np.asarray(corners, float))
         for i, sheet in enumerate(board["sheets"])

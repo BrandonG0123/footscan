@@ -165,7 +165,10 @@ what's missing and how to scan again. (A new model sent to a capture that
 already had one leaves the earlier model, and what was made from it, as it
 was.) The phone shows that on the scan's
 page, marks the scan *Scan again*, and never sends it again (not even with
-"send automatically" on). What refuses a scan:
+"send automatically" on). With each refusal line the answer carries what to
+change on the next scan (`retake`: a title and numbered steps per problem,
+from `completeness.RETAKE_STEPS`), which the phone shows before and during
+the retake and Import 3D lists under the error. What refuses a scan:
 
 - **The toes are missing**: seen from above (the insole outline), a foot
   rounds off to its toes. 5 mm in from the front, the outline is only a third

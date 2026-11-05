@@ -727,9 +727,9 @@ def write_outputs(insole: Insole, out_dir: Path, name: str, scan_label: str, syn
                  notes=out / "print-notes.txt", json=out / f"{name}.json")
     write_3mf(insole.mesh, files["threemf"], title=f"{tag}{name}", notes=notes, bed_mm=insole.params.bed_mm)
     insole.mesh.export(files["stl"])
-    files["summary"].write_text(summary_html(insole, scan_label, synthetic))
-    files["notes"].write_text(PRINT_NOTES)
-    files["json"].write_text(json.dumps(dict(synthetic=synthetic, params=asdict(insole.params), **insole.report), indent=2))
+    files["summary"].write_text(summary_html(insole, scan_label, synthetic), encoding="utf-8")
+    files["notes"].write_text(PRINT_NOTES, encoding="utf-8")
+    files["json"].write_text(json.dumps(dict(synthetic=synthetic, params=asdict(insole.params), **insole.report), indent=2), encoding="utf-8")
     out_files = {k: str(v) for k, v in files.items()}
     out_files.update({f"preview_{k}": v for k, v in write_preview(insole, out, name).items()})
     return out_files

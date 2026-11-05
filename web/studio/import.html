@@ -82,6 +82,7 @@
         <input id="notes" type="text" maxlength="500" placeholder="e.g. Polycam LiDAR mode, iPhone 15 Pro">
       </div>
       <p class="errors" id="errors" role="alert"></p>
+      <div id="retake" hidden></div>
       <button class="btn" type="submit" id="btn-import">Import</button>
     </form>
 
@@ -175,7 +176,7 @@
   drop.addEventListener("dragleave", () => drop.classList.remove("over"));
   drop.addEventListener("drop", (e) => { e.preventDefault(); drop.classList.remove("over"); pick(e.dataTransfer.files[0]); });
 
-  // The connect code for the iPhone app: footscan-capture://connect?url=…&key=…&fp=…
+  // The connect code for the iPhone app: footscan-capture://connect?url=…&key=…&fp=…[&alt=…]
   $("btn-pair").addEventListener("click", async () => {
     if (!$("pair").hidden) {
       $("pair").hidden = true; $("pair-msg").textContent = ""; // the note goes with the code
@@ -189,6 +190,7 @@
       if (!p.available) { $("pair-msg").textContent = p.reason; return; }
       const q = new URLSearchParams({ url: p.url, key: p.key });
       if (p.fingerprint) q.set("fp", p.fingerprint);
+      for (const alt of p.alt_urls || []) q.append("alt", alt);  // e.g. its Tailscale address, for away from home
       const code = qrcode(0, "M");
       code.addData(`footscan-capture://connect?${q}`);
       code.make();
@@ -256,6 +258,7 @@
     else if (!["obj", "ply", "stl", "glb", "gltf", "off"].includes(ext)) errors.push("That file type can't be read. Export as OBJ or PLY.");
     if ((cond === "swb" || cond === "fwb") && kind === "foot" && !$("load").value) errors.push("Enter the scale reading for a loaded scan.");
     $("errors").textContent = errors.join(" ");
+    $("retake").hidden = true;
     if (errors.length) return;
 
     const btn = $("btn-import");
@@ -276,7 +279,7 @@
         method: "PUT", headers: { "Content-Type": "application/octet-stream" }, body: file,
       });
       const data = await up.json();
-      if (!up.ok) throw new Error(data.error);
+      if (!up.ok) throw Object.assign(new Error(data.error), { retake: data.retake });
       const m = data.mesh;
       $("facts").innerHTML = [
         ["Length", `${m.extents_mm[0]} mm`], ["Width", `${m.extents_mm[1]} mm`], ["Height", `${m.extents_mm[2]} mm`],
@@ -291,6 +294,10 @@
       $("result").scrollIntoView({ behavior: "smooth" });
     } catch (err) {
       $("errors").textContent = `Import failed: ${err.message}`;
+      // a sole scan refused for a missing part: what to change on the next scan, step by step
+      $("retake").hidden = !err.retake?.length;
+      $("retake").innerHTML = (err.retake || []).map(a => `<h3>${esc(a.title)}. Next time:</h3>`
+        + `<ol>${a.steps.map(s => `<li>${esc(s)}</li>`).join("")}</ol>`).join("");
     } finally {
       btn.disabled = false;
       btn.textContent = "Import";

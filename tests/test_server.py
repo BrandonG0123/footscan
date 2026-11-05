@@ -1,7 +1,9 @@
 import json
+import sys
 import threading
 import urllib.error
 import urllib.request
+from pathlib import Path
 
 import pytest
 
@@ -492,15 +494,21 @@ def test_calipers_saved_and_validated(servers):
     assert body(call(f"{op}/api/captures/{cid}/recon")) == {"state": "none"}  # readings alone don't build
 
 
-def test_runner_one_build_at_a_time_and_notices_a_dead_process(tmp_path):
+def test_runner_one_build_at_a_time_and_notices_a_dead_process(tmp_path, monkeypatch):
     from footscan import recon_jobs
 
-    fake = tmp_path / "fake-python"
-    fake.write_text("#!/bin/sh\nsleep 2\n")
-    fake.chmod(0o755)
+    # A stand-in `footscan.cli` that sleeps and exits without writing "done". It's put first on PYTHONPATH and
+    # run by this same Python, so the test runs on Windows too (a `#!/bin/sh` fake can't be started there).
+    fake = tmp_path / "fake" / "footscan"
+    fake.mkdir(parents=True)
+    (fake / "__init__.py").write_text("", encoding="utf-8")
+    (fake / "cli.py").write_text(
+        "import sys, time\nprint(f'utf8_mode={sys.flags.utf8_mode}', flush=True)\ntime.sleep(2)\n", encoding="utf-8")
+    monkeypatch.setenv("PYTHONPATH", str(fake.parent))
+    monkeypatch.setenv("PYTHONUTF8", "0")  # as on Windows; a C locale would otherwise turn UTF-8 mode on by itself
     a, b = tmp_path / "a", tmp_path / "b"
     a.mkdir(), b.mkdir()
-    runner = recon_jobs.ReconRunner(python=str(fake))
+    runner = recon_jobs.ReconRunner(python=sys.executable)
     runner.start(a, calibration_object=False)
     assert recon_jobs.summary(a, runner)["state"] == "running"
     with pytest.raises(recon_jobs.Busy):
@@ -509,6 +517,8 @@ def test_runner_one_build_at_a_time_and_notices_a_dead_process(tmp_path):
     # it exited without writing "done": that's a failure, not "still running"
     s = recon_jobs.summary(a, runner)
     assert s["state"] == "failed" and "unexpectedly" in s["error"]
+    # the build runs in UTF-8 mode, so its log and files are UTF-8 on Windows as well
+    assert "utf8_mode=1" in (a / "recon" / "log.txt").read_text(encoding="utf-8")
 
 
 def test_customer_scan_recon_writes_what_the_pipeline_needs(servers):
@@ -676,6 +686,7 @@ def test_a_lan_pairing_code_at_an_address_the_app_store_build_refuses_says_so(tm
     from footscan import server
 
     handler = make_handler(WEB_DIR, tmp_path, studio_key=KEY, cert_fingerprint="ab" * 32)
+    monkeypatch.setattr(handler, "other_addresses", lambda self, url: [])
     monkeypatch.setattr(handler, "studio_info", lambda self: {"phones_can_connect": True,
                                                               "scan_url": "https://128.32.10.1:8766/"})
     p = handler.pairing(object.__new__(handler))
@@ -683,6 +694,224 @@ def test_a_lan_pairing_code_at_an_address_the_app_store_build_refuses_says_so(tm
     monkeypatch.setattr(handler, "studio_info", lambda self: {"phones_can_connect": True,
                                                               "scan_url": "https://192.168.11.233:8766/"})
     assert "note" not in handler.pairing(object.__new__(handler))
+
+
+def _phone_ready_studio(tmp_path, monkeypatch, tailnet):
+    """A studio as the tank runs it (every address, HTTPS, a pinned certificate), on a home network."""
+    import footscan.server as srv
+
+    monkeypatch.setattr(srv, "lan_ip", lambda: "192.168.11.233")
+    monkeypatch.setattr(srv, "tailnet_ip", lambda: tailnet)
+    handler = make_handler(WEB_DIR, tmp_path, local_check=lambda h: False, studio_key=KEY, secure_cookie=True,
+                           cert_fingerprint="ab" * 32)
+    httpd = StudioServer(("127.0.0.1", 0), handler)  # listening on this computer only, while the tests run
+    port = httpd.server_address[1]
+    httpd.server_address = ("0.0.0.0", port)  # but answering as a studio bound to every address, as tank's is
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    return httpd, f"http://127.0.0.1:{port}"
+
+
+def test_pairing_offers_the_tailscale_address_too_so_the_phone_reaches_the_studio_away_from_home(tmp_path, monkeypatch):
+    httpd, url = _phone_ready_studio(tmp_path, monkeypatch, tailnet="100.101.102.103")
+    port = httpd.server_address[1]
+    try:
+        p = body(call(f"{url}/api/studio/pairing", headers={"X-Studio-Key": KEY}))
+        assert p["available"] is True and p["fingerprint"] == "ab" * 32
+        assert p["url"] == f"https://192.168.11.233:{port}"                 # home Wi-Fi first, as before
+        assert p["alt_urls"] == [f"https://100.101.102.103:{port}"]         # same port, same pinned certificate
+    finally:
+        httpd.shutdown()
+
+
+def test_pairing_without_tailscale_offers_only_the_home_network_address(tmp_path, monkeypatch):
+    httpd, url = _phone_ready_studio(tmp_path, monkeypatch, tailnet=None)
+    try:
+        p = body(call(f"{url}/api/studio/pairing", headers={"X-Studio-Key": KEY}))
+        assert p["available"] is True and p["alt_urls"] == []
+    finally:
+        httpd.shutdown()
+
+
+def test_pairing_with_no_wifi_address_offers_the_tailscale_one_instead_of_failing(tmp_path, monkeypatch):
+    """Reachable only over Tailscale (no Wi-Fi address): the connect code names the Tailscale address. With
+    neither, the page says so, instead of answering 500."""
+    import footscan.server as srv
+
+    httpd, url = _phone_ready_studio(tmp_path, monkeypatch, tailnet="100.101.102.103")
+    monkeypatch.setattr(srv, "lan_ip", lambda: None)
+    port = httpd.server_address[1]
+    try:
+        p = body(call(f"{url}/api/studio/pairing", headers={"X-Studio-Key": KEY}))
+        assert p["available"] is True and p["url"] == f"https://100.101.102.103:{port}" and p["alt_urls"] == []
+    finally:
+        httpd.shutdown()
+    httpd, url = _phone_ready_studio(tmp_path, monkeypatch, tailnet=None)
+    monkeypatch.setattr(srv, "lan_ip", lambda: None)
+    try:
+        st, raw, _ = call(f"{url}/api/studio/pairing", headers={"X-Studio-Key": KEY})
+        assert st == 200 and json.loads(raw)["available"] is False and "no network address" in json.loads(raw)["reason"]
+    finally:
+        httpd.shutdown()
+
+
+def test_the_tailscale_address_is_asked_for_at_most_once_a_minute(tmp_path, monkeypatch):
+    """Each Show the connect code asks for it; a stuck tailscaled costs 3 s a try."""
+    import footscan.server as srv
+
+    asked = []
+    httpd, url = _phone_ready_studio(tmp_path, monkeypatch, tailnet=None)
+    monkeypatch.setattr(srv, "tailnet_ip", lambda: asked.append(1) or "100.101.102.103")
+    try:
+        for _ in range(3):
+            assert body(call(f"{url}/api/studio/pairing", headers={"X-Studio-Key": KEY}))["alt_urls"]
+    finally:
+        httpd.shutdown()
+    assert len(asked) == 1
+
+
+def test_tailnet_address_is_read_from_the_tailscale_command(monkeypatch, tmp_path):
+    import subprocess
+
+    import footscan.server as srv
+
+    exe = tmp_path / "tailscale"
+    exe.write_text("")
+    monkeypatch.setattr(srv.shutil, "which", lambda name: str(exe))
+    monkeypatch.setattr(srv.subprocess, "run", lambda *a, **k: subprocess.CompletedProcess(a, 0, "100.88.1.2\n", ""))
+    assert srv.tailnet_ip() == "100.88.1.2"
+
+
+def test_tailnet_address_is_found_through_the_mac_app_when_the_command_isnt_on_path(monkeypatch):
+    import subprocess
+
+    import footscan.server as srv
+
+    mac_cli = "/Applications/Tailscale.app/Contents/MacOS/Tailscale"
+    ran = []
+    monkeypatch.setattr(srv.shutil, "which", lambda name: None)
+    monkeypatch.setattr(srv.Path, "is_file", lambda self: self == Path(mac_cli))  # Path, not str: works on Windows
+
+    def run(cmd, **kw):
+        ran.append(cmd[0])
+        return subprocess.CompletedProcess(cmd, 0, "100.88.1.2\n", "")
+
+    monkeypatch.setattr(srv.subprocess, "run", run)
+    assert srv.tailnet_ip() == "100.88.1.2" and ran == [mac_cli]
+
+
+def test_a_stopped_tailscale_means_no_tailnet_address(monkeypatch, tmp_path):
+    """Tailscale stopped: its command runs and gives no address, and that is the answer. (The computer's own
+    addresses aren't looked at: a 100.64.0.0/10 one then is someone else's, such as Cloudflare WARP's.)"""
+    import subprocess
+
+    import footscan.server as srv
+
+    exe = tmp_path / "tailscale"
+    exe.write_text("")
+    monkeypatch.setattr(srv.shutil, "which", lambda name: str(exe))
+    monkeypatch.setattr(srv.subprocess, "run",
+                        lambda cmd, **k: subprocess.CompletedProcess(cmd, 1, "", "Tailscale is stopped.\n"))
+    assert srv.tailnet_ip() is None
+    # with no tailscale command anywhere (WARP on, Tailscale not installed), still none
+    monkeypatch.setattr(srv.shutil, "which", lambda name: None)
+    monkeypatch.setattr(srv.Path, "is_file", lambda self: False)
+    assert srv.tailnet_ip() is None
+
+
+def test_the_tailscale_command_runs_once_when_path_finds_an_install_location(monkeypatch):
+    """which() on tank finds C:\\Program Files\\Tailscale\\tailscale.exe, which is also on the fixed list: a stuck
+    tailscaled would cost 3 s twice on every pairing request if it ran twice."""
+    import subprocess
+
+    import footscan.server as srv
+
+    win = r"C:\Program Files\Tailscale\tailscale.exe"
+    ran = []
+    monkeypatch.setattr(srv.shutil, "which", lambda name: win)
+    monkeypatch.setattr(srv.Path, "is_file", lambda self: self == Path(win))
+
+    def run(cmd, **kw):
+        ran.append(cmd[0])
+        raise subprocess.TimeoutExpired(cmd, 3)
+
+    monkeypatch.setattr(srv.subprocess, "run", run)
+    assert srv.tailnet_ip() is None and ran == [win]
+
+
+def test_a_stuck_tailscaled_is_waited_on_once_not_once_per_program(monkeypatch):
+    """The Mac's command-line tailscale is a script, not a link to the app's program, so both are on the list;
+    when the first times out, the second would only wait on the same stuck tailscaled."""
+    import subprocess
+
+    import footscan.server as srv
+
+    mac_cli, wrapper = "/Applications/Tailscale.app/Contents/MacOS/Tailscale", "/usr/local/bin/tailscale"
+    ran = []
+    monkeypatch.setattr(srv.shutil, "which", lambda name: wrapper)
+    monkeypatch.setattr(srv.Path, "is_file", lambda self: self in (Path(mac_cli), Path(wrapper)))
+
+    def run(cmd, **kw):
+        ran.append(cmd[0])
+        raise subprocess.TimeoutExpired(cmd, 3)
+
+    monkeypatch.setattr(srv.subprocess, "run", run)
+    assert srv.tailnet_ip() is None and ran == [wrapper]
+
+
+def test_a_tailscale_exit_node_doesnt_hide_the_home_network_address(monkeypatch):
+    """With an exit node (or a subnet route over 10/8) the route toward a private address goes through
+    Tailscale, so the connect code's home address would be the Tailscale one and the phone at home without
+    Tailscale couldn't reach the studio. The computer's own private address is used instead."""
+    import socket
+
+    import footscan.server as srv
+
+    class Routed:
+        def __init__(self, *a):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def connect(self, addr):
+            pass
+
+        def getsockname(self):
+            return ("100.113.53.83", 50000)
+
+    monkeypatch.setattr(srv.socket, "socket", Routed)
+    monkeypatch.setattr(srv.socket, "getaddrinfo", lambda *a, **k: [
+        (socket.AF_INET, 0, 0, "", ("100.113.53.83", 0)), (socket.AF_INET, 0, 0, "", ("127.0.0.1", 0)),
+        (socket.AF_INET, 0, 0, "", ("192.168.11.233", 0))])
+    assert srv.lan_ip() == "192.168.11.233"
+    monkeypatch.setattr(srv.socket, "getaddrinfo", lambda *a, **k: [(socket.AF_INET, 0, 0, "", ("100.113.53.83", 0))])
+    assert srv.lan_ip() is None  # only the Tailscale address: no home address to offer
+
+
+def test_no_tailscale_address_is_asked_again_after_ten_seconds_not_a_minute(monkeypatch):
+    """A service started at boot may ask before Tailscale is up; that "none" mustn't stand for a minute."""
+    import time
+
+    import footscan.server as srv
+
+    answers = iter([None, "100.88.1.2"])
+    monkeypatch.setattr(srv, "tailnet_ip", lambda: next(answers))
+    cached = srv.make_handler().tailnet_cached
+    now = time.monotonic()
+    monkeypatch.setattr(time, "monotonic", lambda: now)
+    assert cached() is None
+    monkeypatch.setattr(time, "monotonic", lambda: now + srv.TAILNET_RETRY_S + 1)
+    assert cached() == "100.88.1.2"
+
+
+def test_only_addresses_in_tailscales_range_count_as_tailnet():
+    from footscan.server import first_tailnet_ip
+
+    assert first_tailnet_ip(["192.168.11.233", "100.63.255.255", "100.128.0.1", "fd7a:115c:a1e0::1"]) is None
+    assert first_tailnet_ip(["192.168.11.233", "not an ip", "100.64.0.1", "100.100.1.1"]) == "100.64.0.1"
 
 
 def test_certificate_fingerprint_is_the_sha256_of_the_certificate(tmp_path):
@@ -960,6 +1189,8 @@ def test_a_sole_scan_without_its_toes_is_refused_and_not_kept(servers):
     r = json.loads(raw)
     assert r["incomplete"] and r["incomplete"][0].startswith("THE TOES ARE MISSING")
     assert r["error"].startswith("The studio didn't keep this scan") and "Scan again" in r["error"]
+    # and what to change next time, one entry per line found, for the phone to show before the retake
+    assert [a["code"] for a in r["retake"]] == ["toes_missing"] and r["retake"][0]["steps"]
     assert not (data / "captures" / cid).exists()
     assert cid not in [c["capture_id"] for c in body(call(f"{op}/api/captures"))]
 
@@ -972,6 +1203,18 @@ def test_a_whole_sole_scan_is_kept_with_its_measures(servers):
     assert st == 200, raw
     c = json.loads((data / "captures" / cid / "capture.json").read_text())["completeness"]
     assert c["problems"] == [] and c["measures"]["length_mm"] == pytest.approx(250.0, abs=3.0)
+
+
+def test_a_refusal_gives_one_set_of_steps_per_kind_of_problem():
+    """Shorter than both feet's scans is two lines but one thing to change: the phone shows its steps once."""
+    from footscan.server import IncompleteScan
+
+    lines = ["THIS FOOT IS 20 MM SHORTER than an earlier scan of the same foot (L1): ...",
+             "THIS FOOT IS 18 MM SHORTER than your right foot's scan (R1): ...",
+             "THE TOES ARE MISSING: ...", "SOMETHING NEW: a. Scan again.", "SOMETHING ELSE: b. Scan again."]
+    e = IncompleteScan(lines)
+    assert e.problems == lines
+    assert [a["code"] for a in e.advice] == ["shorter_than_other", "toes_missing", "other", "other"]
 
 
 def test_a_sole_scan_much_shorter_than_the_other_foot_is_refused(servers):
@@ -1243,3 +1486,399 @@ def test_kinds_the_check_doesnt_read_are_kept_as_before(servers):
     assert call(f"{op}/api/captures/{cid}/mesh?ext=obj&up=y", "PUT", _object_capture_foot("right"),
                 {"Content-Type": "application/octet-stream"})[0] == 200
     assert "completeness" not in json.loads((data / "captures" / cid / "capture.json").read_text())
+
+
+def test_a_refused_upload_still_gets_its_answer_when_the_body_is_large(servers):
+    """A request refused before its body is read (here: too large) is answered and then the connection closes.
+    Closing with the body still arriving makes the computer reset the connection, which can throw away the
+    answer before the phone reads it (seen on Windows, test_imported_calibration_object_... under load);
+    the server reads and drops what is still coming, within a limit, before it closes."""
+    import socket
+
+    op, _phone, _data = servers
+    host, port = op.removeprefix("http://").split(":")
+    body = b"x" * (6 * 1024 * 1024)  # over the 2 MB JSON limit, and more than the socket buffers hold
+    sock = socket.create_connection((host, int(port)), timeout=10)
+    head = (f"POST /api/captures HTTP/1.1\r\nHost: {host}\r\nContent-Type: application/json\r\n"
+            f"Content-Length: {len(body)}\r\n\r\n").encode()
+    errors = []
+
+    def send():
+        try:
+            sock.sendall(head + body)
+        except OSError as e:  # the server closed while the body was still coming: a reset
+            errors.append(e)
+
+    sender = threading.Thread(target=send, daemon=True)
+    sender.start()
+    got = b""
+    try:
+        while chunk := sock.recv(65536):
+            got += chunk
+    finally:
+        sender.join(10)
+        sock.close()
+    assert got.startswith(b"HTTP/1.1 400"), got[:200]
+    assert b"body too large" in got
+    assert errors == []  # the whole body was taken in before the connection closed, so nothing was reset
+
+
+def test_a_refused_chunked_upload_still_gets_its_answer(servers):
+    """A chunked upload (Transfer-Encoding) is refused with 501 before its body is read; like any refused body,
+    what's still coming is read and dropped before the connection closes, so the sender isn't reset and the
+    answer isn't lost."""
+    import socket
+
+    op, _phone, _data = servers
+    host, port = op.removeprefix("http://").split(":")
+    piece = b"x" * 65536
+    chunks = b"".join(b"%x\r\n%s\r\n" % (len(piece), piece) for _ in range(96)) + b"0\r\n\r\n"  # 6 MB
+    sock = socket.create_connection((host, int(port)), timeout=10)
+    head = (f"PUT /api/captures/x/mesh?ext=ply HTTP/1.1\r\nHost: {host}\r\n"
+            "Transfer-Encoding: chunked\r\n\r\n").encode()
+    errors = []
+
+    def send():
+        try:
+            sock.sendall(head + chunks)
+        except OSError as e:
+            errors.append(e)
+
+    sender = threading.Thread(target=send, daemon=True)
+    sender.start()
+    got = b""
+    try:
+        while chunk := sock.recv(65536):
+            got += chunk
+    finally:
+        sender.join(10)
+        sock.close()
+    assert got.startswith(b"HTTP/1.1 501"), got[:200]
+    assert errors == []
+
+
+def test_a_capture_removed_while_the_list_is_read_is_left_out(tmp_path, monkeypatch):
+    """A refused phone upload removes its just-made capture; if that happens between the list's glob and its read,
+    the list leaves it out instead of answering 404 for the whole list."""
+    from footscan import server
+
+    caps = tmp_path / "captures"
+    for cid in ("kept", "gone"):
+        (caps / cid).mkdir(parents=True)
+        server.write_json(caps / cid / "capture.json", {"capture_id": cid, "created": "2026-11-05"})
+    real = server.read_json
+
+    def read(path):
+        if path.parent.name == "gone":
+            raise FileNotFoundError(path)
+        return real(path)
+
+    monkeypatch.setattr(server, "read_json", read)
+    assert [m["capture_id"] for m in server.list_captures(caps)] == ["kept"]
+    subs = tmp_path / "submissions"
+    (subs / "gone").mkdir(parents=True)
+    server.write_json(subs / "gone" / "submission.json", {"id": "gone"})
+    assert server.list_submissions(subs) == []
+
+
+def test_a_json_file_is_swapped_in_even_while_a_reader_briefly_holds_the_old_one(tmp_path, monkeypatch):
+    """On Windows, replacing a file someone has open fails with PermissionError for as long as they hold it (the
+    model page reads a build's status every 2 s). The swap is tried again for a moment instead of failing the
+    write (and with it the build); a file held for good still fails, after the wait."""
+    import os
+
+    from footscan import atomic, server
+    from footscan.recon import pipeline
+
+    real, refusals = os.replace, []
+
+    def held_for_a_moment(src, dst):
+        if len(refusals) < 3:
+            refusals.append(dst)
+            raise PermissionError(13, "Access is denied", str(dst))
+        return real(src, dst)
+
+    monkeypatch.setattr(atomic.os, "replace", held_for_a_moment)
+    monkeypatch.setattr(atomic, "RETRIES", True)  # as on Windows, wherever the test runs
+    server.write_json(tmp_path / "capture.json", {"a": 1})
+    assert server.read_json(tmp_path / "capture.json") == {"a": 1} and len(refusals) == 3
+    refusals.clear()
+    pipeline.write_json_atomic(tmp_path / "status.json", {"stage": "done"})
+    assert json.loads((tmp_path / "status.json").read_text(encoding="utf-8")) == {"stage": "done"}
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["capture.json", "status.json"]  # no temporary files left
+
+    def held_for_good(src, dst):
+        raise PermissionError(13, "Access is denied", str(dst))
+
+    monkeypatch.setattr(atomic.os, "replace", held_for_good)
+    monkeypatch.setattr(atomic, "RETRY_FOR_S", 0.05)
+    with pytest.raises(PermissionError):
+        atomic.replace(tmp_path / "x.tmp", tmp_path / "capture.json", retry_for_s=0.05)
+    with pytest.raises(PermissionError):
+        server.write_json(tmp_path / "capture.json", {"a": 2})
+    assert server.read_json(tmp_path / "capture.json") == {"a": 1}
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["capture.json", "status.json"]
+
+
+def test_a_capture_whose_insole_cant_be_checked_is_listed_as_stale_not_left_out(tmp_path, monkeypatch):
+    """Only a capture.json that can't be read is left out of the studio list. If what the insole was made from
+    can't be read (a shoe's capture.json garbled, a model mid-rebuild), the capture is still listed, its insole
+    marked stale."""
+    from footscan import server
+
+    d = tmp_path / "captures" / "A"
+    d.mkdir(parents=True)
+    server.write_json(d / "capture.json", {"capture_id": "A", "created": "1", "insole": {"made": "x"}})
+
+    def unreadable(folder, meta):
+        raise ValueError("not UTF-8")
+
+    monkeypatch.setattr(server, "insole_source", unreadable)
+    [c] = server.list_captures(tmp_path / "captures")
+    assert c["capture_id"] == "A" and c["insole"]["stale"] is True
+
+
+def test_an_insole_whose_source_cant_be_read_is_not_downloadable_and_the_review_loop_carries_on(tmp_path, monkeypatch):
+    """The same unreadable source answers "not current" wherever it's asked (the download, the review
+    loop), instead of an error that stops the review of every other capture."""
+    from footscan import review, server
+
+    for cid in ("A", "B"):
+        d = tmp_path / "captures" / cid
+        (d / "insole").mkdir(parents=True)
+        (d / "insole" / "insole.json").write_text("{}", encoding="utf-8")
+        server.write_json(d / "capture.json", {"capture_id": cid, "insole": {"made": "x", "source": "m"}})
+
+    def source(folder, meta):
+        if folder.name == "A":
+            raise OSError("removed mid-rebuild")
+        return folder / "mesh.ply"
+
+    monkeypatch.setattr(server, "insole_source", source)
+    monkeypatch.setattr(server, "source_stamp", lambda path: "m")
+    assert server.insole_downloadable(tmp_path / "captures" / "A", {"insole": {"made": "x", "source": "m"}}) is False
+    assert server.insole_is_stale(tmp_path / "captures" / "A", {"insole": {"made": "x", "source": "m"}}) is True
+    assert [f.name for f, _m in review.pending(tmp_path)] == ["B"]
+
+
+def test_a_list_of_submissions_still_shows_a_bug_in_reading_one(tmp_path, monkeypatch):
+    """Only a submission.json that can't be read is left out; a ValueError from turning it into the studio's
+    view is a bug, and is raised, not hidden by leaving that submission out."""
+    from footscan import server
+
+    (tmp_path / "S1").mkdir()
+    server.write_json(tmp_path / "S1" / "submission.json", {"created": "1", "scans": {}})
+
+    def broken(meta):
+        raise ValueError("a bug")
+
+    monkeypatch.setattr(server, "public_meta", broken)
+    with pytest.raises(ValueError, match="a bug"):
+        server.list_submissions(tmp_path)
+
+
+def test_a_build_from_before_the_computer_last_started_has_stopped(monkeypatch):
+    """After a restart or a power cut, the number in a build's status.json may belong to another account's
+    process now, which can't be asked (access denied) and would look alive for good. A status written
+    before the computer started is from a process that has stopped."""
+    import os
+
+    from footscan import recon_jobs
+
+    monkeypatch.setattr(recon_jobs, "booted_at", lambda: 1000.0)
+    early = 1000.0 - recon_jobs.CLOCK_SLACK_S
+    assert recon_jobs.pid_alive(os.getpid(), since=early - 1) is False
+    # just before the start as the clock now reads: the clock may have been set forward since (NTP)
+    assert recon_jobs.pid_alive(os.getpid(), since=999.0) is True
+    assert recon_jobs.pid_alive(os.getpid(), since=1001.0) is True
+    assert recon_jobs.pid_alive(os.getpid()) is True  # no time written: asked as before
+
+
+def test_a_build_page_reads_a_bom_calipers_file_and_skips_a_garbled_plantar_file(tmp_path):
+    """calipers.json saved by Notepad starts with a byte-order mark, which --calipers accepts; the status
+    must too. A plantar.json cut short (being rewritten, or removed by a rebuild) leaves its profile out
+    instead of failing the whole status."""
+    import json
+
+    from footscan import recon_jobs
+
+    out = tmp_path / "recon"
+    out.mkdir()
+    (out / "status.json").write_text(json.dumps({"state": "done", "stage": "done"}), encoding="utf-8")
+    (out / "plantar.json").write_bytes(b'{"medial_prof')
+    (tmp_path / "calipers.json").write_bytes(b"\xef\xbb\xbf" + json.dumps({"length": 50.0}).encode())
+    s = recon_jobs.summary(tmp_path)
+    assert s["state"] == "done" and s["medial_profile"] is None and s["calipers"] == {"length": 50.0}
+
+
+@pytest.mark.parametrize("failure", ["permission", "openssl"])
+def test_a_studio_that_cant_write_its_certificate_says_how_to_make_it(monkeypatch, failure):
+    """Under Local Service the checkout is read-only, so a missing .certs (first start, or deleted to make
+    a new certificate) can't be made there: say to start it once as yourself, not a traceback."""
+    import subprocess
+
+    from footscan import server
+
+    def refused(cert_dir):
+        if failure == "permission":
+            raise PermissionError(13, "Access is denied", str(cert_dir))
+        raise subprocess.CalledProcessError(1, ["openssl"], stderr=b"req: Can't open key.pem for writing")
+
+    monkeypatch.setattr(server, "load_studio_key", lambda path: "k")
+    monkeypatch.setattr(server, "ensure_cert", refused)
+    # openssl can fail for other reasons too (a broken openssl.cnf on a Mac): what it said comes first
+    said = "Start footscan serve --https once as yourself" if failure == "permission" else "Can't open key.pem for writing"
+    with pytest.raises(SystemExit, match=said):
+        server.serve(https=True)
+
+
+def test_a_temporary_file_left_by_a_killed_write_is_known_as_one(tmp_path):
+    """A write killed between writing its temporary file and the swap leaves that file behind. It isn't
+    something anyone made, so a refused upload's capture with only that beside capture.json is still
+    removed."""
+    from footscan import atomic
+
+    assert atomic.is_temporary(atomic.temporary_name(tmp_path / "capture.json"))
+    assert not atomic.is_temporary(tmp_path / "capture.json")
+    assert not atomic.is_temporary(tmp_path / "mesh.ply")
+
+
+def test_a_request_refused_for_two_lengths_still_gets_its_answer(servers):
+    """Content-Length 0 then 5 MB is refused (one length, please) before its body is read. The 5 MB is still
+    coming, so it's taken in before the close like any refused body, and the 400 isn't lost to a reset."""
+    import socket
+
+    op, _phone, _data = servers
+    host, port = op.removeprefix("http://").split(":")
+    body = b"x" * (6 * 1024 * 1024)
+    sock = socket.create_connection((host, int(port)), timeout=10)
+    head = (f"POST /api/captures HTTP/1.1\r\nHost: {host}\r\nContent-Type: application/json\r\n"
+            f"Content-Length: 0\r\nContent-Length: {len(body)}\r\n\r\n").encode()
+    errors = []
+
+    def send():
+        try:
+            sock.sendall(head + body)
+        except OSError as e:
+            errors.append(e)
+
+    sender = threading.Thread(target=send, daemon=True)
+    sender.start()
+    got = b""
+    try:
+        while chunk := sock.recv(65536):
+            got += chunk
+    except OSError as e:
+        errors.append(e)
+    finally:
+        sender.join(10)
+        sock.close()
+    assert got.startswith(b"HTTP/1.1 400"), got[:200]
+    assert errors == []
+
+
+def test_a_folder_that_cant_be_written_fails_at_once_off_windows(tmp_path, monkeypatch):
+    """Only Windows refuses to replace an open file; elsewhere PermissionError means the folder can't be written,
+    and waiting 2 s on every write (holding the request and its capture lock) changes nothing."""
+    import time
+
+    from footscan import atomic
+
+    def refused(src, dst):
+        raise PermissionError(13, "Permission denied", str(dst))
+
+    monkeypatch.setattr(atomic.os, "replace", refused)
+    monkeypatch.setattr(atomic, "RETRIES", False)
+    t0 = time.monotonic()
+    with pytest.raises(PermissionError):
+        atomic.write_utf8(tmp_path / "capture.json", "{}")
+    assert time.monotonic() - t0 < 0.5
+    assert list(tmp_path.iterdir()) == []  # no temporary file left behind
+
+
+def test_a_build_another_account_started_counts_as_running_on_windows():
+    """The Local Service studio can't open a build the owner started from their own PowerShell (access
+    denied). That build exists, so it's running: the studio mustn't call it failed and start a second one."""
+    from footscan import recon_jobs
+
+    class NoOpen:
+        def OpenProcess(self, *a):
+            return 0
+
+    assert recon_jobs._windows_pid_alive(1234, NoOpen(), lambda: recon_jobs.ERROR_ACCESS_DENIED) is True
+    assert recon_jobs._windows_pid_alive(1234, NoOpen(), lambda: 87) is False  # ERROR_INVALID_PARAMETER: gone
+
+
+def test_a_build_silent_for_longer_than_any_build_takes_has_stopped_even_if_its_number_cant_be_asked():
+    """Crashed, and its number given to another account's process in the same boot: access denied, but a build
+    writes its status at every stage, so one unheard of for SILENT_BUILD_S is not that build."""
+    from footscan import recon_jobs
+
+    class NoOpen:
+        def OpenProcess(self, *a):
+            return 0
+
+    denied = lambda: recon_jobs.ERROR_ACCESS_DENIED  # noqa: E731
+    assert recon_jobs._windows_pid_alive(1234, NoOpen(), denied, unheard_for_s=60.0) is True
+    assert recon_jobs._windows_pid_alive(1234, NoOpen(), denied, unheard_for_s=recon_jobs.SILENT_BUILD_S + 1) is False
+
+
+def test_a_read_refused_while_a_write_swaps_the_file_is_tried_again(tmp_path, monkeypatch):
+    """Windows refuses an open in the instant another thread replaces the file (a sharing violation)."""
+    from pathlib import Path as P
+
+    from footscan import atomic
+
+    f = tmp_path / "capture.json"
+    f.write_text("{}", encoding="utf-8")
+    real, calls = P.read_text, []
+
+    def busy_once(self, *a, **k):
+        calls.append(1)
+        if len(calls) == 1:
+            raise PermissionError(13, "sharing violation", str(self))
+        return real(self, *a, **k)
+
+    monkeypatch.setattr(atomic, "RETRIES", True)
+    monkeypatch.setattr(P, "read_text", busy_once)
+    assert atomic.read_utf8(f) == "{}" and len(calls) == 2
+
+
+def test_a_file_kept_open_past_the_retries_gets_an_answer_not_a_dropped_connection(servers, monkeypatch):
+    from footscan import server
+
+    op, _phone, _data = servers
+
+    def busy(path):
+        raise PermissionError(13, "Access is denied", str(path))
+
+    monkeypatch.setattr(server, "list_captures", busy)
+    st, raw, _ = call(f"{op}/api/captures")
+    assert st == 503 and "in use by another program" in json.loads(raw)["error"]
+
+
+def test_a_temporary_file_another_request_is_writing_now_still_counts(tmp_path):
+    """Only one left behind (older than a minute) is ignored when a refused upload's capture is removed; one
+    being written right now (a calipers save) keeps the folder."""
+    import os
+    import time
+
+    from footscan import atomic
+
+    t = atomic.temporary_name(tmp_path / "calipers.json")
+    t.write_text("{}", encoding="utf-8")
+    assert not atomic.is_temporary(t, left_behind=True)
+    old = time.time() - atomic.LEFT_BEHIND_AFTER_S - 5
+    os.utime(t, (old, old))
+    assert atomic.is_temporary(t, left_behind=True)
+
+
+def test_a_studio_that_cant_write_its_key_says_how_to_make_it(monkeypatch):
+    from footscan import server
+
+    def read_only(path):
+        raise PermissionError(13, "Access is denied", str(path))
+
+    monkeypatch.setattr(server, "load_studio_key", read_only)
+    with pytest.raises(SystemExit, match="Start footscan serve once as yourself"):
+        server.serve()

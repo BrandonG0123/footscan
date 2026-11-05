@@ -53,13 +53,21 @@ left rescan.
    the bed.
 2. Ankle relaxed: don't point the foot or pull the toes back. Let the toes
    lie straight; if they curl, wiggle them and let go.
-3. **Level the ball of the foot.** The helper looks along the sole from the
-   toe end: the big-toe side and the little-toe side of the ball should be
-   at the same height. If the big-toe side is higher (as on both failed
-   left scans), turn the foot a little outward until they match. This is the step
-   the failed left scan missed.
-4. In the app, drag the box so it holds this foot and a hand's width of the
-   leg, nothing else.
+3. **Level the ball of the foot.** The helper lays a book (anything flat
+   and stiff) across the ball of the foot, from the big-toe joint to the
+   little-toe joint. Both sides should touch it. If one doesn't, turn the
+   foot gently until it does, then take the book away and keep still. This
+   is the step the failed left scan missed.
+
+   (This replaced "look along the sole: if the big-toe side is higher, turn
+   the foot outward". The 8.6 mm on 89df is the big-toe side's height above
+   the floor in the *prepared scan*, sole down. Seen by the helper with the
+   sole up, that same side is the *lower* one, so the old wording pointed at
+   the wrong side. The book doesn't need either. Not yet tried on a real
+   scan.)
+4. In the app, drag the box so it holds this foot, past the toe tips and the
+   back of the heel, and a hand's width of the leg, nothing else. The camera
+   repeats the checks under the box until you tap Start.
 5. The helper walks slowly all the way round, phone pointing down at the
    sole, until the ring fills. Then a **second lap**, closer, over the
    arch, the toes and the back of the heel. Then Finish.
@@ -155,6 +163,30 @@ Possible and cheap, but untested here, and a worse material for this.
 Where to buy: craft shops and Amazon sell wet floral foam bricks in packs
 (search "wet floral foam brick"). Dry floral foam, for artificial flowers,
 is a different, firmer material; don't use it.
+
+## When the studio says scan again
+
+A sole scan that would make a bad insole is refused as soon as it reaches
+the studio, and the phone marks it *Scan again*. Open it: the page lists
+what to change, in steps, with a **Scan again** button that goes straight
+to a new scan of the same foot (the steps again on the get-ready list, and
+"Last time: ..." on the camera until you tap Start). The studio's own
+findings, with its measurements, are folded under *What the studio found*.
+
+| The phone says | Most likely cause | What to change |
+|---|---|---|
+| The toes were cut off | The box ended at the toes, or they curled out of view | Toes relaxed and straight; the box past the toe tips; a close second lap round the toes |
+| The back of the heel was cut off | The phone never went behind the heel | The box past the back of the heel; take the phone right round behind it |
+| The underside of the heel wasn't scanned | The heel pad left out of the box or the laps | The box over the whole sole; look at the heel on each lap, not just the toes |
+| More than this foot was in the scan | The other foot, the bed or the leg in the box | The other foot a forearm's width away; the box in to this foot and a hand's width of leg |
+| The other foot hid one side of this one | Both feet in the box, touching | As above |
+| Part of the foot wasn't scanned | Part of the foot outside the box, or a lap not finished | The whole foot in the box; the ring full, then a second lap |
+| This foot came out shorter than your other scan | An end missing that the shape checks didn't see | Toes straight; the box past both ends; two laps |
+| The toes were curled up | Pointed ankle, curled toes | Ankle relaxed; wiggle the toes and let go |
+| The ball of the foot wasn't level | The relaxed forefoot rolled onto its outer edge | The book check (step 3 above) |
+| The studio couldn't find the whole foot | The scan held too little of the foot | The whole foot in the box; the ring full |
+
+The steps are in `RETAKE_STEPS` in `src/footscan/recon/completeness.py`.
 
 ## What the studio checks
 

@@ -196,7 +196,7 @@ def main(argv=None) -> int:
     files = insole.write_outputs(ins, out, f"{args.foot}-insole", label, synthetic=True)
     checks = sanity(ins.report, args.foot)
     (out / "placement.json").write_text(json.dumps(dict(source=str(args.mesh), decisions=decisions,
-                                                        checks=checks, report=ins.report), indent=2))
+                                                        checks=checks, report=ins.report), indent=2), encoding="utf-8")
 
     r = ins.report
     print(f"{args.mesh}: {units} -> mm, {decisions['size_mm']} mm; up {decisions['up']}"

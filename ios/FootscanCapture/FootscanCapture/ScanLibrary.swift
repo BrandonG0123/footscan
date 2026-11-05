@@ -18,8 +18,10 @@ final class ScanLibrary {
     private(set) var scans: [Scan] = []
     private(set) var work: [URL: Work] = [:]
     private(set) var problems: [URL: String] = [:]
-    /// Scans whose last send failed because the studio didn't answer (offer Reconnect).
+    /// Scans whose last send failed because the studio didn't answer, or dropped midway (sent again later).
     private(set) var unreachable: Set<URL> = []
+    /// Of those, the ones where no address answered at all (offer Reconnect: scan the studio's code again).
+    private(set) var reconnect: Set<URL> = []
     /// Bumped when a scan's files or record change, so views re-read them.
     private(set) var version = 0
 
@@ -133,24 +135,28 @@ final class ScanLibrary {
         if let loadKg { record.loadKg = loadKg; scan.save(record) }
         problems[scan.folder] = nil
         unreachable.remove(scan.folder)
+        reconnect.remove(scan.folder)
         work[scan.folder] = .sending
         let release = KeepAlive.work("Sending a scan")
         defer { work[scan.folder] = nil; reload(); release() }
         do {
             let sent = try await client.upload(scan, record: record)
             record.studioCaptureID = sent.captureID
-            record.studioHost = client.link.host
+            record.studioHost = sent.link.host
+            studio.remember(sent.link)
             record.sentAt = Date()
             record.studioAccuracy = sent.accuracy
             scan.save(record)
             UINotificationFeedbackGenerator().notificationOccurred(.success)
-        } catch StudioClient.Failure.incomplete(let missing) {
+        } catch StudioClient.Failure.incomplete(let missing, let advice) {
             record.retake = missing
+            record.retakeAdvice = advice.isEmpty ? nil : advice
             scan.save(record)
             UINotificationFeedbackGenerator().notificationOccurred(.error)
         } catch {
             problems[scan.folder] = error.localizedDescription
             if (error as? StudioClient.Failure)?.isUnreachable == true { unreachable.insert(scan.folder) }
+            if (error as? StudioClient.Failure)?.offersReconnect == true { reconnect.insert(scan.folder) }
             UINotificationFeedbackGenerator().notificationOccurred(.error)
         }
     }
