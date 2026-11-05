@@ -58,6 +58,9 @@ struct HomeView: View {
     @State private var error: String?
     @State private var startAfterPrep: Subject?
     @State private var photoCapture: Subject?
+    /// Finding which of the studio's addresses answers before the camera page opens (up to 3 s): the button
+    /// says so and can't be tapped again meanwhile.
+    @State private var findingStudio: Subject?
     /// Scanning again after a refusal: what to change, for the get-ready sheet and the camera.
     @State private var retake: [RetakeAdvice] = []
 
@@ -208,13 +211,14 @@ struct HomeView: View {
             Button {
                 if method == .photos && studio.client == nil { showStudio = true } else { start() }
             } label: {
-                Label(method == .photos && studio.client == nil
-                      ? "Connect to your studio first"
+                Label(findingStudio != nil ? "Finding your studio…"
+                      : method == .photos && studio.client == nil ? "Connect to your studio first"
                       : "Scan \(subject.label.lowercased())",
                       systemImage: method == .photos && studio.client == nil ? "desktopcomputer" : "camera.viewfinder")
                     .contentTransition(.numericText())
             }
             .buttonStyle(PrimaryButtonStyle())
+            .disabled(findingStudio != nil)
             .animation(.smooth, value: subjectRaw)
             .animation(.smooth, value: method)
 
@@ -381,10 +385,17 @@ struct HomeView: View {
         if method == .photos {
             // photos go straight to the studio: nothing big is kept on the phone
             guard studio.client != nil else { showStudio = true; return }
-            // home Wi-Fi or Tailscale: open the camera page at whichever address answers from here
+            // home Wi-Fi or Tailscale: open the camera page at whichever address answers from here. One search at
+            // a time; when it ends, the page opens only if nothing else happened meanwhile (another subject or
+            // method chosen, a LiDAR scan started, disconnected).
+            guard findingStudio == nil else { return }
+            findingStudio = s
             Task {
                 await studio.findAddress()
-                if studio.client != nil { photoCapture = s } // still connected after the wait
+                findingStudio = nil
+                if studio.client != nil, subject == s, method == .photos, capturing == nil, photoCapture == nil {
+                    photoCapture = s
+                }
             }
             return
         }

@@ -61,6 +61,15 @@ enum StudioAddressKind: Equatable {
     case tailscale
     case other
 
+    /// How the address is reached, in the words the app uses everywhere: "home Wi-Fi", "Tailscale".
+    var label: String? {
+        switch self {
+        case .homeNetwork: "home Wi-Fi"
+        case .tailscale: "Tailscale"
+        case .other: nil
+        }
+    }
+
     init(host: String) {
         let h = host.lowercased()
         let parts = h.split(separator: ".", omittingEmptySubsequences: false)
@@ -93,8 +102,13 @@ enum StudioStore {
     }
 
     static func save(_ link: StudioLink, key: String) {
-        UserDefaults.standard.set(try? JSONEncoder().encode(link), forKey: linkKey)
+        saveLink(link)
         writeKey(key)
+    }
+
+    /// The studio's addresses (which to try first) without touching its key in the Keychain.
+    static func saveLink(_ link: StudioLink) {
+        UserDefaults.standard.set(try? JSONEncoder().encode(link), forKey: linkKey)
     }
 
     static func clear() {
@@ -129,22 +143,35 @@ enum StudioStore {
         return String(data: data, encoding: .utf8)
     }
 
+    /// Changed in place when there is one (never a moment with no key, which a delete-then-add has: an app
+    /// stopped between the two would come back "Not connected"); added when there isn't.
     private static func writeKey(_ key: String) {
-        SecItemDelete([kSecClass: kSecClassGenericPassword, kSecAttrService: service] as CFDictionary)
-        SecItemAdd([kSecClass: kSecClassGenericPassword, kSecAttrService: service,
-                    kSecAttrAccessible: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
-                    kSecValueData: Data(key.utf8)] as CFDictionary, nil)
+        let match = [kSecClass: kSecClassGenericPassword, kSecAttrService: service] as CFDictionary
+        let update = [kSecValueData: Data(key.utf8),
+                      kSecAttrAccessible: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly] as CFDictionary
+        if SecItemUpdate(match, update) == errSecItemNotFound {
+            SecItemAdd([kSecClass: kSecClassGenericPassword, kSecAttrService: service,
+                        kSecAttrAccessible: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
+                        kSecValueData: Data(key.utf8)] as CFDictionary, nil)
+        }
     }
 }
 
 /// Trusts exactly the pinned certificate (when there is one); otherwise the phone's normal checks.
-final class PinnedTrust: NSObject, URLSessionDelegate {
+final class PinnedTrust: NSObject, URLSessionDelegate, @unchecked Sendable {
     let fingerprint: String?
     init(fingerprint: String?) { self.fingerprint = fingerprint }
+
+    private let lock = NSLock()
+    private var refused = false
+    /// Did this session turn a server's certificate away (it isn't the pinned one)? Then a failed request was
+    /// a wrong certificate, said for certain, not guessed from the error it ended with.
+    var refusedCertificate: Bool { lock.withLock { refused } }
 
     func urlSession(_ session: URLSession, didReceive challenge: URLAuthenticationChallenge,
                     completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
         let (disposition, credential) = Self.decide(challenge, fingerprint: fingerprint)
+        if disposition == .cancelAuthenticationChallenge { lock.withLock { refused = true } }
         completionHandler(disposition, credential)
     }
 
@@ -193,11 +220,14 @@ struct StudioClient {
         /// Nothing answered in time, or the computer turned the connection away (Footscan not running).
         case noAnswer
 
-        init(_ error: Error) {
+        /// `pinRefused`: the pin itself turned the certificate away (PinnedTrust.refusedCertificate), which is
+        /// known for certain; the request then ends as "cancelled", which alone could be anything.
+        init(_ error: Error, pinRefused: Bool = false) {
+            if pinRefused { self = .wrongCertificate; return }
             switch (error as? URLError)?.code {
-            // .cancelled: the pin cancels the challenge when the certificate differs
+            // the phone's own checks, for a studio with no pinned certificate
             // (.secureConnectionFailed is a TLS set-up failure, not a certificate: it counts as no answer)
-            case .cancelled?, .serverCertificateUntrusted?, .serverCertificateHasBadDate?, .serverCertificateHasUnknownRoot?,
+            case .serverCertificateUntrusted?, .serverCertificateHasBadDate?, .serverCertificateHasUnknownRoot?,
                  .serverCertificateNotYetValid?: self = .wrongCertificate
             case .notConnectedToInternet?, .dataNotAllowed?, .internationalRoamingOff?: self = .noRoute
             default: self = .noAnswer
@@ -246,15 +276,28 @@ struct StudioClient {
                         ? "Something answered at \(host), but it isn't the studio this phone connected to (its certificate is different). If the studio was set up again, show its connect code and scan it again."
                         : "\(host) answered, but its certificate isn't one this phone trusts.")
                 case (_, .homeNetwork):
-                    lines.append("\(host) is the studio's home-network address: it only answers while this phone is on the same Wi-Fi as the studio computer.")
+                    lines.append("\(host) is the studio's \(StudioAddressKind.homeNetwork.label!) address: it only answers while this phone is on the same Wi-Fi as the studio computer.")
+                case (.noRoute, .tailscale):
+                    lines.append("\(host) is the studio's \(StudioAddressKind.tailscale.label!) address, but this phone has no connection to reach it right now.")
                 case (_, .tailscale):
-                    lines.append("\(host) is the studio's Tailscale address: it answers from anywhere while Tailscale is on, on this phone and on the studio computer.")
+                    lines.append("\(host) is the studio's \(StudioAddressKind.tailscale.label!) address: it answers from anywhere while Tailscale is on, on this phone and on the studio computer.")
+                case (.noRoute, .other):
+                    lines.append("This phone has no connection to reach \(host) right now.")
                 case (_, .other):
                     lines.append("Nothing answered at \(host).")
                 }
             }
+            if misses.contains(where: { $0.miss == .noRoute }) {
+                // the phone's own connection: every address fails this way abroad with Data Roaming off, in
+                // Airplane Mode, or with Mobile Data switched off for this app
+                lines.append("Check this phone's own connection: Airplane Mode off, Wi-Fi or mobile data on, Data Roaming on if you're abroad, and mobile data allowed for Footscan (Settings > Cellular).")
+            }
             if misses.contains(where: { $0.miss == .noRoute && StudioAddressKind(host: StudioLink.host(of: $0.address)) == .homeNetwork }) {
                 lines.append("If the phone just asked to find devices on your local network, tap Allow and test again (Settings > Privacy & Security > Local Network).")
+            }
+            if misses.contains(where: { $0.miss == .noAnswer && StudioAddressKind(host: StudioLink.host(of: $0.address)) == .homeNetwork }) {
+                // routers hand out new addresses: the code the phone scanned may name the studio's old one
+                lines.append("If the studio computer's Wi-Fi address has changed, show its connect code and scan it again.")
             }
             guard misses.contains(where: { $0.miss != .wrongCertificate }) else {
                 return lines.joined(separator: " ") // something did answer: "isn't answering" would mislead
@@ -275,11 +318,12 @@ struct StudioClient {
         }
     }
 
-    private func session(timeout: TimeInterval = 20) -> URLSession {
+    private func session(timeout: TimeInterval = 20) -> (URLSession, PinnedTrust) {
         let config = URLSessionConfiguration.ephemeral
         config.timeoutIntervalForRequest = timeout
         config.waitsForConnectivity = false
-        return URLSession(configuration: config, delegate: PinnedTrust(fingerprint: link.fingerprint), delegateQueue: nil)
+        let trust = PinnedTrust(fingerprint: link.fingerprint)
+        return (URLSession(configuration: config, delegate: trust, delegateQueue: nil), trust)
     }
 
     private func request(_ path: String, method: String = "GET", query: [URLQueryItem] = [], body: Data? = nil,
@@ -297,15 +341,15 @@ struct StudioClient {
     }
 
     private func send(_ req: URLRequest, timeout: TimeInterval = 20) async throws -> [String: Any] {
-        let s = session(timeout: timeout)
+        let (s, trust) = session(timeout: timeout)
         defer { s.finishTasksAndInvalidate() }
         let data: Data, response: URLResponse
         do {
             (data, response) = try await s.data(for: req)
         } catch {
-            // a cancelled task also ends with URLError.cancelled: that isn't a wrong certificate
-            if Task.isCancelled { throw CancellationError() }
-            throw Failure.unreachable([Missed(address: link.url, miss: Miss(error))], pinned: link.fingerprint != nil)
+            if Task.isCancelled { throw CancellationError() } // another address answered first: not a miss
+            throw Failure.unreachable([Missed(address: link.url, miss: Miss(error, pinRefused: trust.refusedCertificate))],
+                                      pinned: link.fingerprint != nil)
         }
         let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
         let code = (response as? HTTPURLResponse)?.statusCode ?? 0
@@ -329,7 +373,6 @@ struct StudioClient {
                 group.addTask { try await client.hello(timeout: timeout); return client }
             }
             var misses: [Missed] = []
-            var refusal: Error?
             while !group.isEmpty {
                 do {
                     if let client = try await group.next() {
@@ -339,10 +382,12 @@ struct StudioClient {
                 } catch Failure.unreachable(let missed, _) {
                     misses += missed
                 } catch {
-                    refusal = refusal ?? error // the studio answered but said no (a wrong key): that's the answer
+                    // the studio answered but said no (a wrong key): that's the answer, now, without waiting
+                    // for the other addresses to time out
+                    group.cancelAll()
+                    throw error
                 }
             }
-            if let refusal { throw refusal }
             misses.sort { (addresses.firstIndex(of: $0.address) ?? 0) < (addresses.firstIndex(of: $1.address) ?? 0) }
             throw Failure.unreachable(misses, pinned: link.fingerprint != nil)
         }

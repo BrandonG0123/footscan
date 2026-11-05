@@ -2,6 +2,7 @@ import json
 import threading
 import urllib.error
 import urllib.request
+from pathlib import Path
 
 import pytest
 
@@ -712,7 +713,7 @@ def test_tailnet_address_is_found_through_the_mac_app_when_the_command_isnt_on_p
     mac_cli = "/Applications/Tailscale.app/Contents/MacOS/Tailscale"
     ran = []
     monkeypatch.setattr(srv.shutil, "which", lambda name: None)
-    monkeypatch.setattr(srv.Path, "is_file", lambda self: str(self) == mac_cli)
+    monkeypatch.setattr(srv.Path, "is_file", lambda self: self == Path(mac_cli))  # Path, not str: works on Windows
 
     def run(cmd, **kw):
         ran.append(cmd[0])
@@ -721,6 +722,49 @@ def test_tailnet_address_is_found_through_the_mac_app_when_the_command_isnt_on_p
     monkeypatch.setattr(srv.subprocess, "run", run)
     monkeypatch.setattr(srv.socket, "getaddrinfo", lambda *a, **k: [])  # the computer's name gives only LAN addresses
     assert srv.tailnet_ip() == "100.88.1.2" and ran == [mac_cli]
+
+
+def test_a_stopped_tailscale_means_no_tailnet_address_even_if_another_100_64_address_is_there(monkeypatch, tmp_path):
+    """Tailscale stopped: its command runs and gives no address. A 100.64.0.0/10 address the computer has then is
+    someone else's (Cloudflare WARP gives 100.96.0.0/12), and must not go in the connect code as Tailscale."""
+    import socket
+    import subprocess
+
+    import footscan.server as srv
+
+    exe = tmp_path / "tailscale"
+    exe.write_text("")
+    monkeypatch.setattr(srv.shutil, "which", lambda name: str(exe))
+    monkeypatch.setattr(srv.subprocess, "run",
+                        lambda cmd, **k: subprocess.CompletedProcess(cmd, 1, "", "Tailscale is stopped.\n"))
+    monkeypatch.setattr(srv.socket, "getaddrinfo",
+                        lambda *a, **k: [(socket.AF_INET, 0, 0, "", ("100.96.0.7", 0))])
+    assert srv.tailnet_ip() is None
+    # with no tailscale command anywhere, the computer's own addresses are still looked at
+    monkeypatch.setattr(srv.shutil, "which", lambda name: None)
+    monkeypatch.setattr(srv.Path, "is_file", lambda self: False)
+    assert srv.tailnet_ip() == "100.96.0.7"
+
+
+def test_the_tailscale_command_runs_once_when_path_finds_an_install_location(monkeypatch):
+    """which() on tank finds C:\\Program Files\\Tailscale\\tailscale.exe, which is also on the fixed list: a stuck
+    tailscaled would cost 3 s twice on every pairing request if it ran twice."""
+    import subprocess
+
+    import footscan.server as srv
+
+    win = r"C:\Program Files\Tailscale\tailscale.exe"
+    ran = []
+    monkeypatch.setattr(srv.shutil, "which", lambda name: win)
+    monkeypatch.setattr(srv.Path, "is_file", lambda self: self == Path(win))
+
+    def run(cmd, **kw):
+        ran.append(cmd[0])
+        raise subprocess.TimeoutExpired(cmd, 3)
+
+    monkeypatch.setattr(srv.subprocess, "run", run)
+    monkeypatch.setattr(srv.socket, "getaddrinfo", lambda *a, **k: [])
+    assert srv.tailnet_ip() is None and ran == [win]
 
 
 def test_only_addresses_in_tailscales_range_count_as_tailnet():

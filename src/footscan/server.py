@@ -1589,19 +1589,36 @@ def tailnet_ip() -> str | None:
 
     Asks the tailscale command first (`tailscale ip -4`). It is often not on the studio's PATH (a Windows service
     started before Tailscale was installed; the Mac app, whose command sits inside the app), so the install
-    locations are tried too. Then falls back to the addresses this computer's name resolves to.
+    locations are tried too, each program once however many of those name it.
+
+    Only if no tailscale command could be run at all does it fall back to the addresses this computer's name
+    resolves to. When the command ran and gave no address (Tailscale is stopped or logged out), there is none:
+    a 100.64.0.0/10 address the computer has then belongs to something else (Cloudflare WARP, a carrier's NAT),
+    and handing it to the phone as "Tailscale, from anywhere" would send it to the wrong place.
     """
     candidates = [shutil.which("tailscale"), r"C:\Program Files\Tailscale\tailscale.exe",
                   "/Applications/Tailscale.app/Contents/MacOS/Tailscale"]
+    tried, ran = set(), False
     for exe in filter(None, candidates):
         if not Path(exe).is_file():
             continue
         try:
-            out = subprocess.run([exe, "ip", "-4"], capture_output=True, text=True, timeout=3).stdout
+            key = Path(exe).resolve()
+        except OSError:
+            key = Path(exe)
+        if key in tried:  # which() found one of the install locations: don't wait on it twice
+            continue
+        tried.add(key)
+        try:
+            out = subprocess.run([exe, "ip", "-4"], capture_output=True, text=True, encoding="utf-8",
+                                 errors="replace", timeout=3).stdout
         except (OSError, subprocess.SubprocessError):
             continue
+        ran = True
         if ip := first_tailnet_ip(out.split()):
             return ip
+    if ran:
+        return None
     try:
         names = [a[4][0] for a in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET)]
     except OSError:

@@ -68,19 +68,15 @@ final class StudioConnection {
     /// The studio answered at this address: use it first from now on. Ignored if the studio changed meanwhile.
     func remember(_ reached: StudioLink) {
         guard let link, reached != link, Set(reached.addresses) == Set(link.addresses),
-              reached.fingerprint == link.fingerprint, let key else { return }
+              reached.fingerprint == link.fingerprint, key != nil else { return }
         self.link = reached
-        StudioStore.save(reached, key: key)
+        StudioStore.saveLink(reached) // only the address order changed: the key in the Keychain stays as it is
     }
 
     /// "100.88.1.2 (Tailscale)": the address, and how it's reached.
     nonisolated static func describe(_ url: URL) -> String {
         let host = StudioLink.host(of: url)
-        switch StudioAddressKind(host: host) {
-        case .homeNetwork: return "\(host) (home Wi-Fi)"
-        case .tailscale: return "\(host) (Tailscale)"
-        case .other: return host
-        }
+        return StudioAddressKind(host: host).label.map { "\(host) (\($0))" } ?? host
     }
 
     func disconnect() {

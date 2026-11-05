@@ -96,7 +96,7 @@ struct ConnectionTestFailures {
 
     @Test func awayFromHomeTheHomeAddressIsSaidToNeedTheSameWiFi() {
         let text = StudioClient.Failure.explain([.init(address: home, miss: .noAnswer)], pinned: true)
-        #expect(text.contains("192.168.11.233 is the studio's home-network address"))
+        #expect(text.contains("192.168.11.233 is the studio's home Wi-Fi address"))
         #expect(text.contains("same Wi-Fi"))
         #expect(text.contains("Check Footscan is running"))
         #expect(!text.contains("Mac")) // the studio may be on any computer
@@ -122,6 +122,31 @@ struct ConnectionTestFailures {
         #expect(!silent.contains("Local Network"))
     }
 
+    @Test func aHomeAddressThatDoesntAnswerSuggestsScanningTheCodeAgain() {
+        // the router may have given the studio a new address: the old advice to scan the code again stays
+        let text = StudioClient.Failure.explain([.init(address: home, miss: .noAnswer)], pinned: true)
+        #expect(text.contains("Wi-Fi address has changed") && text.contains("scan it again"))
+        let away = StudioClient.Failure.explain([.init(address: tailnet, miss: .noAnswer)], pinned: true)
+        #expect(!away.contains("Wi-Fi address has changed"))
+    }
+
+    @Test func noRouteAnywhereIsPutDownToThePhonesOwnConnection() {
+        // abroad with Data Roaming off, Airplane Mode, or mobile data off for the app: no address can be reached
+        let text = StudioClient.Failure.explain([.init(address: home, miss: .noRoute), .init(address: tailnet, miss: .noRoute)], pinned: true)
+        #expect(text.contains("this phone's own connection") && text.contains("Data Roaming") && text.contains("Airplane Mode"))
+        #expect(text.contains("100.101.102.103 is the studio's Tailscale address, but this phone has no connection"))
+        #expect(!text.contains("answers from anywhere while Tailscale is on")) // it is on: that's not the problem
+        let silent = StudioClient.Failure.explain([.init(address: tailnet, miss: .noAnswer)], pinned: true)
+        #expect(!silent.contains("this phone's own connection"))
+    }
+
+    @Test func theAddressKindsHaveOneLabelEverywhere() {
+        #expect(StudioConnection.describe(home) == "192.168.11.233 (home Wi-Fi)")
+        #expect(StudioConnection.describe(tailnet) == "100.101.102.103 (Tailscale)")
+        let text = StudioClient.Failure.explain([.init(address: home, miss: .noAnswer), .init(address: tailnet, miss: .noAnswer)], pinned: true)
+        #expect(text.contains("home Wi-Fi address") && text.contains("Tailscale address"))
+    }
+
     @Test func aDropMidSendIsNotBlamedOnTheWiFiAndTheScanWaits() {
         let failure = StudioClient.Failure.dropped(host: "192.168.11.233")
         #expect(failure.isUnreachable) // sent again once the studio is back
@@ -129,7 +154,8 @@ struct ConnectionTestFailures {
     }
 
     @Test(arguments: [
-        (URLError.Code.cancelled, StudioClient.Miss.wrongCertificate), // the pin cancels the challenge
+        // cancelled alone says nothing (the pin's own verdict is what tells a wrong certificate, below)
+        (URLError.Code.cancelled, StudioClient.Miss.noAnswer),
         (.serverCertificateUntrusted, .wrongCertificate),
         (.secureConnectionFailed, .noAnswer), // a failed TLS set-up says nothing about which certificate
         (.notConnectedToInternet, .noRoute),
@@ -137,6 +163,12 @@ struct ConnectionTestFailures {
     ])
     func networkErrorsAreSorted(_ code: URLError.Code, _ miss: StudioClient.Miss) {
         #expect(StudioClient.Miss(URLError(code)) == miss)
+    }
+
+    @Test func aCertificateThePinTurnedAwayIsAWrongCertificateWhateverTheErrorSays() {
+        #expect(StudioClient.Miss(URLError(.cancelled), pinRefused: true) == .wrongCertificate)
+        #expect(StudioClient.Miss(URLError(.secureConnectionFailed), pinRefused: true) == .wrongCertificate)
+        #expect(PinnedTrust(fingerprint: String(repeating: "a", count: 64)).refusedCertificate == false)
     }
 }
 
