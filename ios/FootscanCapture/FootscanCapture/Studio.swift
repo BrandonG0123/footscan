@@ -7,8 +7,9 @@
 // SHA-256 of the Mac's own HTTPS certificate. The Mac's certificate is
 // self-made (no authority vouches for it), so instead of switching off the
 // phone's checks the app pins it: it talks only to a server presenting
-// exactly that certificate. Through the public address (a real certificate)
-// there is no `fp` and the phone's normal checks apply.
+// exactly that certificate. A public studio's code (a real certificate, no
+// `fp`, the phone's normal checks) is accepted by development builds only:
+// see `StudioStore.acceptsPublicStudios`.
 //
 // The key is a password to the studio, so it is kept in the Keychain.
 import CryptoKit
@@ -37,10 +38,13 @@ enum StudioStore {
     static let acceptsPublicStudios = false
     #endif
 
-    /// The saved studio and its key, or nil. Reads only.
-    static func load() -> (link: StudioLink, key: String)? {
+    /// The saved studio and its key, or nil. Reads only. A public studio saved by a development build (the
+    /// app updated in place to the App Store build keeps its settings) isn't used where public studios aren't
+    /// accepted: the app then shows "Not connected", and the saved link stays until a new code replaces it.
+    static func load(allowPublic: Bool = acceptsPublicStudios) -> (link: StudioLink, key: String)? {
         guard let data = UserDefaults.standard.data(forKey: linkKey),
               let link = try? JSONDecoder().decode(StudioLink.self, from: data),
+              link.fingerprint != nil || allowPublic,
               let key = readKey() else { return nil }
         return (link, key)
     }

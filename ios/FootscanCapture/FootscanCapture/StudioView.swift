@@ -158,7 +158,7 @@ struct StudioView: View {
                     Text(link.host).font(.subheadline.monospaced()).foregroundStyle(Color.fsMuted)
                 }
             }
-            Label(link.fingerprint == nil ? "Public address, checked the normal way" : "Talks only to this Mac (its certificate is pinned)",
+            Label(link.fingerprint == nil ? "Public address, checked the normal way (development builds only)" : "Talks only to this Mac (its certificate is pinned)",
                   systemImage: "lock.fill")
                 .font(.footnote).foregroundStyle(Color.fsMuted)
             HStack {

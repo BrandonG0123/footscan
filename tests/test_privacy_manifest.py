@@ -6,6 +6,7 @@ sources as text, so they run anywhere (no Xcode), and fail when a new use appear
 declaration outlives the code that needed it.
 """
 
+import functools
 import plistlib
 import re
 from pathlib import Path
@@ -28,7 +29,7 @@ CATEGORIES = {
          {"C617.1"}),
     "NSPrivacyAccessedAPICategoryDiskSpace": (
         [r"volume(Available|Total)Capacity", r"\bNSURLVolume(Available|Total)Capacity", r"\bsystemFreeSize\b",
-         r"\bsystemSize\b", r"\bf?statv?fs\("],
+         r"\bsystemSize\b", r"\bf?statv?fs\(", r"\bf?getattrlist(at)?\("],  # getattrlist: both lists, per Apple
         {"E174.1", "85F4.1"}),   # room to write a scan; how much is free, shown when there isn't
     "NSPrivacyAccessedAPICategorySystemBootTime": (
         [r"\bsystemUptime\b", r"\bmach_absolute_time\b"], set()),          # not used: no reason chosen yet
@@ -37,14 +38,21 @@ CATEGORIES = {
 }
 
 
+@functools.cache
 def manifest() -> dict:
     with MANIFEST.open("rb") as f:
         return plistlib.load(f)
 
 
+HASH_QUOTE = re.compile(r'#+"')   # a raw string's opening: #" or ##" ...
+HASH_SLASH = re.compile(r"#+/")   # an extended regex literal's opening: #/ ... /#
+
+
 def strip(text: str) -> str:
     """Swift code without its strings and comments, so only real calls count (a URL's "//" isn't a comment,
-    and a comment or a message naming an API isn't a use).
+    and a comment or a message naming an API isn't a use). Block comments nest, as in Swift. Extended regex
+    literals (``#/.../#``) are skipped whole, so a quote in one doesn't open a string; a bare ``/.../`` regex
+    can't be told from division by text alone and is read as code.
 
     The code inside a string's interpolations, ``"up \\(ProcessInfo.processInfo.systemUptime) s"``, is code and
     is kept (Apple's scan of the built app sees that call); a string inside an interpolation is still a string.
@@ -77,6 +85,20 @@ def strip(text: str) -> str:
             i += 1
         return i
 
+    def block_comment(i: int) -> int:
+        """Skip the /* ... */ starting at i, with any /* */ inside it. -> the index just after it."""
+        depth = 0
+        while i < n:
+            if text.startswith("/*", i):
+                depth, i = depth + 1, i + 2
+            elif text.startswith("*/", i):
+                depth, i = depth - 1, i + 2
+                if depth == 0:
+                    return i
+            else:
+                i += 1
+        return i
+
     def code(i: int, until: str | None = None) -> int:
         """Copy code from i to ``out``, skipping comments and strings, up to the ``until`` that closes it
         (an interpolation's ")", counting the parentheses inside it). -> the index just after that."""
@@ -90,10 +112,13 @@ def strip(text: str) -> str:
                 j = text.find("\n", i)
                 i = n if j < 0 else j
             elif text.startswith("/*", i):
-                j = text.find("*/", i + 2)
-                i = n if j < 0 else j + 2
-            elif c == '"' or (c == "#" and re.match(r'#+"', text[i:])):
+                i = block_comment(i)
+            elif c == '"' or (c == "#" and HASH_QUOTE.match(text, i)):
                 i = string(i)
+            elif c == "#" and (m := HASH_SLASH.match(text, i)):
+                close = "/" + "#" * (m.end() - i - 1)
+                j = text.find(close, m.end())
+                i = n if j < 0 else j + len(close)
             else:
                 if c == "(":
                     depth += 1
@@ -107,11 +132,12 @@ def strip(text: str) -> str:
     return "".join(out)
 
 
+@functools.cache
 def swift_source() -> str:
     return strip("\n".join(p.read_text(encoding="utf-8") for p in sorted(APP.rglob("*.swift"))))
 
 
-def declared() -> dict[str, set[str]]:
+def declared() -> dict[str, set[str]]:  # (manifest() is read once; the sets are new each call)
     return {d["NSPrivacyAccessedAPIType"]: set(d["NSPrivacyAccessedAPITypeReasons"])
             for d in manifest()["NSPrivacyAccessedAPITypes"]}
 
@@ -202,3 +228,17 @@ def test_no_app_function_is_called_stat_so_the_file_date_check_cant_be_kept_gree
     pattern = CATEGORIES["NSPrivacyAccessedAPICategoryFileTimestamp"][0]
     assert any(re.search(p, strip('_ = stat("/tmp/x", &info)')) for p in pattern)
     assert not any(re.search(p, strip('statRow("Typical error", median)')) for p in pattern)
+
+
+def test_nested_comments_and_regex_literals_hide_nothing_and_show_nothing():
+    """Swift's block comments nest, and a quote inside a #/.../# regex isn't a string."""
+    assert "UserDefaults" not in strip("/* outer /* inner */ UserDefaults */ let x = 1")
+    assert strip("/* a /* b */ c */ let x = 1").strip() == "let x = 1"
+    assert "UserDefaults.standard" in strip('let r = #/"x/#; let d = UserDefaults.standard')
+    assert "UserDefaults" in strip('let r = ##/a/#b/##; let d = UserDefaults.standard')
+
+
+def test_getattrlist_counts_as_free_disk_space_too():
+    # Apple lists getattrlist and its variants under both file timestamps and disk space
+    disk = CATEGORIES["NSPrivacyAccessedAPICategoryDiskSpace"][0]
+    assert any(re.search(p, strip("getattrlist(path, &attrs, &buf, size, 0)")) for p in disk)

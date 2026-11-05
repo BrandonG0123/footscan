@@ -26,8 +26,9 @@ struct ConnectCodes {
         #expect(parsed.link.fingerprint == nil)
     }
 
-    @Test func theAppStoreBuildPairsOnlyWithAStudioWhoseCertificateItPins() {
-        // a public studio could be the developer's: scans sent there would be collected data (docs/PRIVACY.md)
+    @Test func withPublicStudiosRefusedOnlyACodeThatPinsItsCertificateIsAccepted() {
+        // as in the App Store build (acceptsPublicStudios is false outside DEBUG; these tests build in Debug):
+        // a public studio could be the developer's, and scans sent there would be collected data (docs/PRIVACY.md)
         #expect(StudioStore.parse("footscan-capture://connect?url=https://footscan.example.dev&key=k", allowPublic: false) == nil)
         let pin = String(repeating: "a", count: 64)
         #expect(StudioStore.parse("footscan-capture://connect?url=https://192.168.1.20:8765&key=k&fp=\(pin)", allowPublic: false) != nil)
@@ -61,9 +62,15 @@ struct StudioKeyStorage {
     @Test func aKeyLeftFromAnEarlierInstallIsDeletedNotReused() throws {
         let before = StudioStore.load()
         defer { if let before { StudioStore.save(before.link, key: before.key) } else { StudioStore.clear() } }
-        let link = StudioLink(url: URL(string: "https://192.168.1.20:8765")!, fingerprint: nil)
+        let link = StudioLink(url: URL(string: "https://192.168.1.20:8765")!, fingerprint: String(repeating: "a", count: 64))
+
+        // a public studio saved by a development build isn't used where public studios aren't accepted (the
+        // App Store build, updated in place over a development one, keeps its settings and Keychain)
+        StudioStore.save(StudioLink(url: URL(string: "https://footscan.example.dev")!, fingerprint: nil), key: "k")
+        #expect(StudioStore.load(allowPublic: false) == nil && StudioStore.load(allowPublic: true)?.key == "k")
 
         StudioStore.save(link, key: "old-key")
+        #expect(StudioStore.load(allowPublic: false)?.key == "old-key")
         StudioStore.removeLeftoverKey() // a paired studio: nothing is left over
         #expect(StudioStore.load()?.key == "old-key")
         // Deleting the app clears its settings, but iOS keeps the Keychain item.

@@ -31,17 +31,20 @@ other apps' files. Turn off backup for Footscan in the iPhone's iCloud settings 
 
 ## Sending scans to a studio
 
-A 3D-capture scan leaves your phone only when it is sent to the studio you connected. Once a studio is
+A 3D-capture scan leaves your phone only when it is sent to the studio you connected, or when you share or
+export it yourself (the Share buttons for a scan's model files, and the app's folder in the Files app, which
+you can copy from). Once a studio is
 connected, each finished model is sent to it automatically; you can turn that off in Settings and tap Send
 yourself instead. Photos + mat scans go to the studio as they are taken. Everything is sent over an
 encrypted (HTTPS) connection. For a studio on your home network, the app checks it is talking to that
 exact computer.
 
 The studio is software run by you, or by someone you chose, on their own computer. The App Store version
-of the app connects only to a studio on a computer like that, reached over your Wi-Fi or a private network
-such as Tailscale, and checks it is that very computer (its certificate); it doesn't connect to a studio at
-a public internet address, so it can't send your scans to the app's developer or anyone else's server. Once a scan is at the studio, it is kept there, under the
-control of whoever runs it, not the app's developer.
+of the app accepts only the connect code a studio on a computer like that shows (it carries that
+computer's own certificate, and the app checks it is talking to that very computer), not a code for a
+website's studio, such as a hosted one the app's developer might run. It sends scans only to the studio
+whose code you scanned. Once a scan is at the studio, it is kept there, under the control of whoever runs
+it, not the app's developer.
 
 ## Deleting your data
 
