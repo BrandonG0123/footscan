@@ -5,7 +5,7 @@ import urllib.request
 
 import pytest
 
-from footscan.server import WEB_DIR, StudioServer, make_handler
+from footscan.server import PUBLIC_PAIRING_NOTE, WEB_DIR, StudioServer, make_handler
 
 JPEG = b"\xff\xd8\xff\xe0" + b"\x00" * 64
 KEY = "test-studio-key"
@@ -653,7 +653,8 @@ def test_pairing_through_the_public_address_uses_it_and_needs_no_fingerprint(tmp
     try:
         assert call(f"{url}/api/studio/pairing")[0] == 403
         p = body(call(f"{url}/api/studio/pairing", headers={"X-Studio-Key": KEY, "Host": "footscan.example.dev"}))
-        assert p == {"available": True, "url": "https://footscan.example.dev", "key": KEY, "fingerprint": None}
+        assert p == {"available": True, "url": "https://footscan.example.dev", "key": KEY, "fingerprint": None,
+                     "note": PUBLIC_PAIRING_NOTE}  # the App Store build won't take it: said where the code is shown
     finally:
         httpd.shutdown()
 

@@ -191,6 +191,7 @@
       code.make();
       $("pair-qr").innerHTML = code.createSvgTag({ cellSize: 4, margin: 2, scalable: true });
       $("pair").hidden = false;
+      $("pair-msg").textContent = p.note || ""; // a public studio: which builds of the app can use it
       $("btn-pair").textContent = "Hide the code";
     } catch (err) {
       $("pair-msg").textContent = `Couldn't make the code: ${err.message}`;

@@ -30,21 +30,45 @@ enum StudioStore {
     /// Studios at a public internet address (a real certificate, no fingerprint in the code) are someone else's
     /// server, possibly the developer's own hosted studio: scans sent there would be data the developer
     /// collects, which the privacy manifest and policy say never happens. So the App Store build pairs only
-    /// with a studio on a computer the person runs, whose own certificate the code pins (on home Wi-Fi or
-    /// over Tailscale); development builds still accept public addresses, for the developer's own testing.
+    /// with a studio on a computer the person runs, whose own certificate the code pins, at an address on
+    /// their home network or Tailscale; development builds still accept public addresses, for the developer's
+    /// own testing.
     #if DEBUG
     static let acceptsPublicStudios = true
     #else
     static let acceptsPublicStudios = false
     #endif
 
-    /// The saved studio and its key, or nil. Reads only. A public studio saved by a development build (the
-    /// app updated in place to the App Store build keeps its settings) isn't used where public studios aren't
-    /// accepted: the app then shows "Not connected", and the saved link stays until a new code replaces it.
+    /// Is this a studio this build may send scans to? With ``allowPublic`` false (the App Store build): one whose
+    /// certificate the code pins, at an address on the person's own network or Tailscale. A pin alone isn't
+    /// enough: a hosted studio at a public address can pin a self-made certificate too.
+    static func accepts(_ link: StudioLink, allowPublic: Bool = acceptsPublicStudios) -> Bool {
+        allowPublic || (link.fingerprint != nil && isOwnNetwork(link.url))
+    }
+
+    /// An address only the person's own network or Tailscale reaches: a private or link-local IP (10/8,
+    /// 172.16/12, 192.168/16, 169.254/16, IPv6 fc00::/7 and fe80::/10), Tailscale's 100.64/10, or a .local name.
+    static func isOwnNetwork(_ url: URL) -> Bool {
+        guard let host = url.host()?.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: "[]")) else { return false }
+        let parts = host.split(separator: ".", omittingEmptySubsequences: false)
+        let octets = parts.compactMap { UInt8($0) }
+        if parts.count == 4, octets.count == 4 {
+            switch (octets[0], octets[1]) {
+            case (10, _), (192, 168), (169, 254), (172, 16...31), (100, 64...127): return true
+            default: return false
+            }
+        }
+        if host.contains(":") { return host.hasPrefix("fc") || host.hasPrefix("fd") || host.hasPrefix("fe80:") }
+        return host.hasSuffix(".local")
+    }
+
+    /// The saved studio and its key, or nil. Reads only. A studio this build doesn't accept (a public one saved
+    /// by a development build, which the App Store build updated in place keeps) isn't used: the launch-time
+    /// cleanup, ``removeLeftoverKey()``, removes it.
     static func load(allowPublic: Bool = acceptsPublicStudios) -> (link: StudioLink, key: String)? {
         guard let data = UserDefaults.standard.data(forKey: linkKey),
               let link = try? JSONDecoder().decode(StudioLink.self, from: data),
-              link.fingerprint != nil || allowPublic,
+              accepts(link, allowPublic: allowPublic),
               let key = readKey() else { return nil }
         return (link, key)
     }
@@ -54,8 +78,15 @@ enum StudioStore {
     /// app's studio password is gone the next time the app is installed and opened (the privacy policy,
     /// docs/PRIVACY.md, says so; Disconnect before deleting removes it at once). Only when the key can be read:
     /// before the phone's first unlock after a restart the settings can read as empty too, and the key is
-    /// unreadable then, so a real pairing is never thrown away.
-    static func removeLeftoverKey() {
+    /// unreadable then, so a real pairing is never thrown away. A saved studio this build won't use (see
+    /// ``load(allowPublic:)``) goes too, address and key: the app shows "Not connected" with no Disconnect
+    /// for it, and its key would otherwise stay on the phone for good.
+    static func removeLeftoverKey(allowPublic: Bool = acceptsPublicStudios) {
+        if let data = UserDefaults.standard.data(forKey: linkKey),
+           let link = try? JSONDecoder().decode(StudioLink.self, from: data), !accepts(link, allowPublic: allowPublic) {
+            clear()
+            return
+        }
         guard UserDefaults.standard.data(forKey: linkKey) == nil, readKey() != nil else { return }
         deleteKey()
     }
@@ -70,12 +101,12 @@ enum StudioStore {
         deleteKey()
     }
 
-    private static func deleteKey() {
+    static func deleteKey() {
         SecItemDelete([kSecClass: kSecClassGenericPassword, kSecAttrService: service] as CFDictionary)
     }
 
     /// Parse a connect code. Only https studios are accepted, and (``allowPublic`` false, as in the App Store
-    /// build) only ones whose certificate the code pins: see ``acceptsPublicStudios``.
+    /// build) only ones ``accepts(_:allowPublic:)`` allows: see ``acceptsPublicStudios``.
     static func parse(_ text: String, allowPublic: Bool = acceptsPublicStudios) -> (link: StudioLink, key: String)? {
         guard let comps = URLComponents(string: text.trimmingCharacters(in: .whitespacesAndNewlines)),
               comps.scheme == "footscan-capture", comps.host == "connect" else { return nil }
@@ -84,11 +115,12 @@ enum StudioStore {
               let key = q["key"], !key.isEmpty else { return nil }
         let fp = q["fp"].flatMap { $0.isEmpty ? nil : $0.lowercased() }
         if let fp, fp.count != 64 || !fp.allSatisfy(\.isHexDigit) { return nil }
-        if fp == nil && !allowPublic { return nil }
-        return (StudioLink(url: url, fingerprint: fp), key)
+        let link = StudioLink(url: url, fingerprint: fp)
+        guard accepts(link, allowPublic: allowPublic) else { return nil }
+        return (link, key)
     }
 
-    private static func readKey() -> String? {
+    static func readKey() -> String? {
         var out: CFTypeRef?
         let q: [CFString: Any] = [kSecClass: kSecClassGenericPassword, kSecAttrService: service,
                                   kSecReturnData: true, kSecMatchLimit: kSecMatchLimitOne]
@@ -96,7 +128,7 @@ enum StudioStore {
         return String(data: data, encoding: .utf8)
     }
 
-    private static func writeKey(_ key: String) {
+    static func writeKey(_ key: String) {
         deleteKey()
         SecItemAdd([kSecClass: kSecClassGenericPassword, kSecAttrService: service,
                     kSecAttrAccessible: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,

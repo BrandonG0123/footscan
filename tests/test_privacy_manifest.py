@@ -224,10 +224,29 @@ def test_no_app_function_is_called_stat_so_the_file_date_check_cant_be_kept_gree
     helper of that name, but the helper's own definition still matched, keeping the file-date declaration
     looking needed with no real use. The helper is called statRow now, and every stat( counts."""
     src = swift_source()
-    assert not re.search(r"\bfunc\s+(f|l)?stat(at)?\s*\(", src)
+    # a function, or a closure kept in a constant or variable, called stat would match just the same
+    assert not re.search(r"\b(func|let|var)\s+(f|l)?stat(at)?\b", src)
     pattern = CATEGORIES["NSPrivacyAccessedAPICategoryFileTimestamp"][0]
     assert any(re.search(p, strip('_ = stat("/tmp/x", &info)')) for p in pattern)
     assert not any(re.search(p, strip('statRow("Typical error", median)')) for p in pattern)
+
+
+# A bare /.../ regex literal holding a quote, right after = ( , : or [ (where a / can't be division).
+BARE_REGEX_WITH_QUOTE = re.compile(r'(?:^|[=(,:\[])\s*/(?![/*\s])[^/\n]*"[^/\n]*/', re.M)
+
+
+def test_no_bare_regex_literal_holds_a_quote_the_scan_would_read_as_a_string():
+    """strip() knows #/.../# regexes but not bare /.../ ones (telling one from division needs a Swift parser).
+    A quote inside a bare one would open a "string" that hides the rest of the line, required-reason calls
+    included, so the manifest check could pass for an undeclared call: refuse such a literal outright (write
+    it as #/.../#)."""
+    assert BARE_REGEX_WITH_QUOTE.search('let r = /"/; let d = UserDefaults.standard')
+    assert BARE_REGEX_WITH_QUOTE.search('x.firstMatch(of: /a"b/)')
+    assert not BARE_REGEX_WITH_QUOTE.search('let half = width / 2; let s = "a/b"')
+    assert not BARE_REGEX_WITH_QUOTE.search('let u = URL(string: "https://x/y")  // a "path"')
+    for f in sorted(APP.rglob("*.swift")):
+        for m in BARE_REGEX_WITH_QUOTE.finditer(f.read_text(encoding="utf-8")):
+            raise AssertionError(f"{f.name}: a bare regex literal with a quote ({m.group(0)!r}): write it as #/.../#")
 
 
 def test_nested_comments_and_regex_literals_hide_nothing_and_show_nothing():

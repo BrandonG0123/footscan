@@ -349,6 +349,12 @@ def capture_lock(capture_id: str) -> threading.Lock:
         return _capture_locks.setdefault(capture_id, threading.Lock())
 
 
+# A public studio's code has no certificate fingerprint, and the App Store build of the app pairs only with a
+# studio on the person's own computer whose certificate the code pins (docs/PRIVACY.md).
+PUBLIC_PAIRING_NOTE = ("This code pairs only with a development build of the Footscan app. The App Store version "
+                       "connects only to a studio on your own computer, over your Wi-Fi or Tailscale.")
+
+
 def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check=is_loopback,
                  studio_key: str | None = None, secure_cookie: bool = False,
                  submissions_per_hour: int = SUBMISSIONS_PER_HOUR, allow_indexing: bool = True,
@@ -658,7 +664,9 @@ def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check
                 host = self.headers.get("Host", "")
                 if not host:
                     return dict(available=False, reason="Open the studio through its public address to pair.")
-                return dict(available=True, url=f"https://{host}", key=studio_key, fingerprint=None)
+                # said here, where the code is shown, not only on the phone after scanning it
+                return dict(available=True, url=f"https://{host}", key=studio_key, fingerprint=None,
+                            note=PUBLIC_PAIRING_NOTE)
             info = self.studio_info()
             if not info["phones_can_connect"] or not cert_fingerprint:
                 return dict(available=False,
