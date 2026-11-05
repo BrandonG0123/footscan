@@ -55,6 +55,51 @@ scan's card). How (`src/footscan/recon/shoe.py`):
 
 Not yet tried on a real shoe's insole.
 
+## A Bambu Studio project with TPU settings
+
+```bash
+.venv/bin/python -m footscan.bambu reports/my-insole/right-insole.3mf -o right-insole-tpu.3mf \
+  --profiles /Applications/BambuStudio.app/Contents/Resources/profiles/BBL --bed-type "High Temp Plate"
+```
+
+turns the plain 3MF into a Bambu Studio project (`src/footscan/bambu.py`):
+opening it selects the printer (default X1 Carbon 0.4 mm nozzle), Bambu's own
+TPU 95A HF filament profile, the plate type, and a process with 3 walls,
+20% gyroid infill and slow speeds (40 mm/s infill, 25 mm/s outer wall and
+top surface). The shape is copied unchanged at scale 1; it is only turned
+and moved to lie on the bed clear of the printer's no-print corner. The
+settings are starting points, not yet checked on a printed insole. Use the
+profile folder of the Bambu Studio that will open the file, and
+`--app-version` no newer than that app.
+
+Give it both insoles (`left.3mf right.3mf -o pair.3mf`) for one project with
+the left on plate 1 and the right on plate 2 (at most two). The project is
+always the `-o` file: it must be a new `.3mf` or an earlier project this made,
+never one of the insole files, a plain insole 3MF or any other Bambu Studio
+project, so a forgotten name can't overwrite an insole or someone's other
+work. A project that has been saved again from Bambu Studio (it then carries
+a modification date) counts as someone's work and is refused too: give a new
+name. The insole files must be the plain 3MF or STL `footscan insole` wrote; a
+Bambu project, a 3MF whose placement mirrors or scales, or the same file given
+twice, is refused. For a different spool pick its profile with `--filament`
+(e.g. `"Bambu TPU 95A @BBL X1C"`, Bambu's standard, not-HF TPU; presets in
+Bambu's sub-folders, such as the P1P's, are found through Bambu's own
+`BBL.json` index) and slow the whole print with `--max-flow 2.5` (mm³/s,
+more than 0 and no more than the filament profile's own limit, which it only
+ever lowers), which caps every speed at what the spool can melt. Two insoles
+for the same foot are refused (the 3MF's notes, or the `.json` beside an STL,
+say which foot); an STL of synthetic test geometry keeps that label in the
+project, from the same `.json`.
+
+The project's notes always carry the not-a-medical-device line (no posting;
+walking-only break-in; no sport until a clinician has signed the summary
+sheet), from an STL too, which has no notes of its own. The no-print area
+comes from the printer profile as Bambu draws it (its own shape, not a box
+round it). The plain 3MF from `footscan insole` is placed by the same search,
+with the X1/P1's corner, so opened as it is on one of those printers it also
+keeps clear of that corner.
+
+
 ## From the iPhone app
 
 The insole is the shape of the bottom of the foot, so the app's first
@@ -288,8 +333,16 @@ edge measured at every grid point), so the edge tucks under a shoe's
 curving sides instead of riding up them. The heel keeps its full base.
 
 On the bed: the outline is turned in 0.5 degree steps to find the angle
-where it fits the 256 mm bed with the most room to spare, and the 3MF is
-placed at that angle. Full detail in `src/footscan/insole.py`.
+where it fits the 256 mm bed with the most room to spare, clear of the edges
+by 3 mm and of the X1/P1's 18 x 28 mm no-print corner (`bed_exclude` in
+the parameters; an empty list for a printer with no such corner, such as an
+A1), and the 3MF is placed at that angle. The report's bed line (the studio,
+the review packet's `bed` check) is that same search, so it names the angle
+the file lies at and its `margin_mm`, the room left at the tightest point;
+an outline that can't fit says how far it is short there (`short_by_mm`). Both
+are at one point: centred between two edges, an insole 20 mm too long is short
+by about 10 mm at each end. Full
+detail in `src/footscan/insole.py`.
 
 ## What's been checked
 
