@@ -75,8 +75,16 @@ again, choose another (`footscan shoe default <id>`), or ask for the foot's
 own outline (`--foot-outline`). A saved shoe's id is its file's name.
 
 The review packet (docs/ALWAYS-ON.md) checks an insole cut to a saved shoe
-against that shoe's outline length, not `review-spec.json`'s chart length,
-and FLAGs `shoe` if the saved shoe isn't the one the spec names.
+against that shoe's outline length, FLAGs `shoe` if the saved shoe isn't the
+one the spec names, and FLAGs `shoe_length` if the outline is more than 5 mm
+off the spec's chart length (a stock insole scanned at the wrong scale would
+otherwise make insoles that match it exactly and pass).
+
+Two different shoes can get the same id (the id keeps only a-z and 0-9, so
+"Nike Pegasus 40", "US 9" and "Nike Pegasus", "40 US 9" meet). Saving the
+second is refused with a message, rather than replacing the first; give it a
+name that tells them apart. The same shoe saved again, written a little
+differently, still replaces it.
 
 No saved shoe exists yet: the stock ASICS insole hasn't been scanned.
 

@@ -25,6 +25,7 @@ from __future__ import annotations
 import json
 import re
 import secrets
+import unicodedata
 from datetime import datetime
 from pathlib import Path
 
@@ -34,7 +35,7 @@ DEFAULT_DIR = Path(__file__).resolve().parents[2] / "data" / "shoes"  # the stud
 ID_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,89}$")
 DEFAULT_FILE = "default.txt"
 NAME_MAX = 60   # characters. The id keeps all of the name's and the size's letters and numbers (at most 60 + 1 +
-SIZE_MAX = 24   # 24 = 85 characters), so two shoes get the same id only if they differ just in case or punctuation
+SIZE_MAX = 24   # 24 = 85 characters). Two shoes can still share an id (save() refuses the second; see same_shoe)
 
 
 class ShoeLibraryError(ValueError):
@@ -42,14 +43,25 @@ class ShoeLibraryError(ValueError):
 
 
 def slug(text: str) -> str:
-    """Lower case letters and numbers, runs of anything else as one "-": how ids and names are compared."""
-    return re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")
+    """Lower case letters and numbers, runs of anything else as one "-": how ids and names are compared.
+    Accents are dropped first ("é" -> "e", "ö" -> "o"); other letters outside a-z are dropped ("Größe" -> "groe")."""
+    plain = unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode("ascii")
+    return re.sub(r"[^a-z0-9]+", "-", plain.lower()).strip("-")
+
+
+def same_shoe(a: dict, b: dict) -> bool:
+    """Are two saved shoes' names and sizes the same, apart from case, spacing and punctuation? Two that share an
+    id but aren't ("Nike Pegasus 40", "US 9" and "Nike Pegasus", "40 US 9"; "Große" and "Größe") are different
+    shoes, and save() won't let one replace the other."""
+    def key(s: dict):
+        return tuple(re.sub(r"[\W_]+", " ", str(s.get(k, "")).casefold()).strip() for k in ("name", "size"))
+    return key(a) == key(b)
 
 
 def shoe_id(name: str, size: str) -> str:
     """"ASICS Gel Resolution X", "US men's 9.5" -> "asics-gel-resolution-x-us-men-s-9-5". The name and the size
-    are both whole in it (nothing is cut off), so two shoes, or two sizes of one shoe, are never the same saved
-    shoe unless their names differ only in case or punctuation."""
+    are both whole in it (nothing is cut off). Two different shoes can still get one id, when the split between
+    name and size moves or only accented or non-Latin letters differ: save() refuses the second (same_shoe)."""
     n, z = slug(name), slug(size)
     sid = f"{n}-{z}" if n and z else ""
     if not ID_RE.match(sid):
@@ -84,6 +96,14 @@ def save(folder: Path, outline, name: str, size: str, source: str, read: dict, d
     folder = Path(folder)
     folder.mkdir(parents=True, exist_ok=True)
     path = _path(folder, shoe["id"])
+    if path.is_file():  # saving the same shoe again replaces it; a different shoe with the same id doesn't
+        try:
+            old = load(folder, shoe["id"])
+        except ShoeLibraryError:
+            old = None  # unreadable: replaced (the way to repair it)
+        if old is not None and not same_shoe(old, shoe):
+            raise ShoeLibraryError(f"a different saved shoe already has the id {shoe['id']} ({label(old)}): "
+                                   f"give this one a name or size that tells them apart")
     tmp = path.with_name(f"{path.name}.part-{secrets.token_hex(4)}")  # this save's own: two at once never share one
     try:
         tmp.write_text(json.dumps(shoe, indent=1), encoding="utf-8")

@@ -368,7 +368,7 @@ def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check
                  public: bool = False, cert_fingerprint: str | None = None):
     runner = recon_jobs.ReconRunner()
     captures_dir = data_dir / "captures"
-    shoes_dir = data_dir / "shoes"
+    shoes_dir = shoes_dir_of(captures_dir)
     submissions_dir = data_dir / "submissions"
     limiter = RateLimiter(submissions_per_hour)
 
@@ -678,7 +678,8 @@ def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check
                 body = self.json_body()
                 folder = shoe_capture(captures_dir, body.get("capture"))
                 try:
-                    outline, read = shoe_outline(folder)
+                    with capture_lock(folder.name):  # not while it's re-imported or rebuilt (a half-written model)
+                        outline, read = shoe_outline(folder)
                 except ValueError as e:  # a ShoeError: not an insole's scan
                     raise BadRequest(str(e)) from None
                 except Exception as e:  # noqa: BLE001 - a broken model is reported, never a dropped connection
@@ -731,9 +732,8 @@ def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check
                     raise FileNotFoundError
                 dmeta = read_json(d / "capture.json")
                 if not insole_downloadable(d, dmeta):
-                    return self.send_json({"error": STALE_MESSAGES.get(insole_stale_reason(d, dmeta),
-                                                                       STALE_MESSAGES[None])},
-                                          HTTPStatus.CONFLICT)
+                    why = STALE_MESSAGES.get(insole_stale_reason(d, dmeta), STALE_MESSAGES[None])
+                    return self.send_json({"error": f"{why} Make the insole again."}, HTTPStatus.CONFLICT)
                 f = out / name
                 if not f.is_file():
                     raise FileNotFoundError
@@ -1242,13 +1242,21 @@ def source_stamp(path: Path | None) -> str | None:
     return file_stamp(path)
 
 
+def shoes_dir_of(captures_dir: Path) -> Path:
+    """The saved shoes' folder of a studio whose captures are in ``captures_dir``: both are in its data folder."""
+    return Path(captures_dir).parent / "shoes"
+
+
 def _shoe_changed(folder: Path, ins: dict) -> bool:
     """Was the shoe's-insole capture (or saved shoe) an insole was fitted to replaced, rebuilt or deleted since?"""
     shoe = ins.get("shoe")
     if not shoe:
         return False
     if shoe.get("saved"):  # a saved shoe: <data>/shoes/<id>.json, beside <data>/captures (make_handler's layout)
-        return shoes_mod.stamp(folder.parent.parent / "shoes", shoe["saved"]) != shoe.get("source")
+        try:
+            return shoes_mod.stamp(shoes_dir_of(folder.parent), shoe["saved"]) != shoe.get("source")
+        except shoes_mod.ShoeLibraryError:  # not a saved shoe's id (a hand-edited capture.json): it can't match
+            return True
     sf = folder.parent / shoe["capture"]
     if not (sf / "capture.json").is_file():
         return True
@@ -1265,12 +1273,13 @@ def _prepared_another_way(meta: dict, ins: dict) -> bool:
 
 
 # Why an insole no longer matches what it was made from, in the words the studio shows (and a download answers)
+# (the studio's card shows them as list_captures' stale_message, so they're written only here)
 STALE_MESSAGES = {
-    "model": "this insole doesn't match the scan's current 3D model (it was replaced or rebuilt): make the insole again",
-    "shoe": "the shoe this insole was cut to has been saved again (or its scan replaced or removed) since: "
-            "make the insole again",
-    "prep": "the way this kind of scan is prepared has changed since this insole was made: make the insole again",
-    None: "this insole can't be downloaded (the last attempt failed, or it no longer matches): make the insole again",
+    "model": "The 3D model has changed since this insole was made (it was replaced or rebuilt), so it no longer matches.",
+    "shoe": "The shoe this insole was cut to has been saved again (or its scan replaced or removed) since, so it no "
+            "longer matches.",
+    "prep": "The way this kind of scan is prepared has changed since this insole was made.",
+    None: "This insole can't be downloaded: the last attempt failed, or it no longer matches.",
 }
 
 
@@ -1299,9 +1308,8 @@ def insole_is_stale(folder: Path, meta: dict) -> bool:
 def insole_downloadable(folder: Path, meta: dict) -> bool:
     """Only an insole from a successful build whose source model is still the current one."""
     ins = meta.get("insole") or {}
-    current = source_stamp(insole_source(folder, meta))
-    return (bool(ins) and "error" not in ins and current is not None and ins.get("source") == current
-            and not _shoe_changed(folder, ins) and not _prepared_another_way(meta, ins))
+    return (bool(ins) and "error" not in ins and source_stamp(insole_source(folder, meta)) is not None
+            and insole_stale_reason(folder, meta) is None)
 
 
 def parse_shoe_length(value) -> float | None:
@@ -1615,7 +1623,7 @@ def list_captures(captures_dir: Path) -> list[dict]:
         meta.pop("frames", None)
         why = insole_stale_reason(f.parent, meta) if meta.get("insole") else None
         if why:
-            meta["insole"] = {**meta["insole"], "stale": True, "stale_reason": why}
+            meta["insole"] = {**meta["insole"], "stale": True, "stale_reason": why, "stale_message": STALE_MESSAGES[why]}
         out.append(meta)
     return sorted(out, key=lambda m: m.get("created", ""), reverse=True)
 

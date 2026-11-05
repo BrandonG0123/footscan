@@ -268,3 +268,70 @@ def test_saving_the_same_shoe_from_many_requests_at_once_leaves_one_readable_fil
     assert {s["id"] for s in saved} == {"test-trainer-9-5"}
     assert shoes.load(tmp_path, "test-trainer-9-5")["read_from"].startswith("scan ")
     assert sorted(p.name for p in tmp_path.iterdir()) == ["test-trainer-9-5.json"]  # no part files left behind
+
+
+def test_the_insole_command_cuts_the_other_foot_to_a_saved_shoe_without_a_false_scan_warning(tmp_path, capsys):
+    """The command line's saved shoe is a saved shoe too: mirrored for the other foot with no "scanned upside
+    down" warning on that insole's sheet (the studio already did this; the command line didn't)."""
+    from footscan import cli
+
+    shoes_dir = tmp_path / "shoes"
+    scan = tmp_path / "right-stock-insole.obj"
+    scan.write_bytes(synth.shoe_insole(ball=114.0, foot="right").export(file_type="obj").encode())
+    left = tmp_path / "left-foot.ply"
+    synth.curved_foot("left", leg=False).export(left)
+    assert cli.main(["shoe", "add", str(scan), "--name", "Test Trainer", "--size", "9.5", "--default",
+                     "--shoes", str(shoes_dir)]) == 0
+    capsys.readouterr()
+    assert cli.main(["insole", str(left), "--foot", "left", "-o", str(tmp_path / "out"),
+                     "--shoes", str(shoes_dir)]) == 0
+    out = capsys.readouterr()
+    assert "outline: saved shoe Test Trainer, 9.5" in out.out
+    assert "upside down" not in out.err
+    assert "upside down" not in (tmp_path / "out" / "left-insole-summary.html").read_text(encoding="utf-8")
+
+
+def test_the_insole_command_takes_one_way_to_set_the_outline(tmp_path, capsys):
+    """A shoe's outline sets the length, so --shoe with --length (or --foot-outline) is refused before the foot
+    is read, and said as the command's problem, not the foot scan's."""
+    from footscan import cli, shoes
+
+    outline, read = _shoe_outline()
+    s = shoes.save(tmp_path / "shoes", outline, "Test Trainer", "9.5", "synthetic", read)
+    foot = _foot_file(tmp_path)
+    for extra in (["--length", "275"], ["--foot-outline"]):
+        assert cli.main(["insole", str(foot), "--foot", "right", "-o", str(tmp_path / "out"),
+                         "--shoes", str(tmp_path / "shoes"), "--shoe", s["id"], *extra]) == 1
+        err = capsys.readouterr().err
+        assert err.startswith("footscan insole: give --shoe or") and str(foot) not in err
+
+
+def test_a_shoes_folder_that_cant_be_written_is_a_message_not_a_traceback(tmp_path, capsys):
+    from footscan import cli
+
+    scan = tmp_path / "stock-insole.obj"
+    scan.write_bytes(synth.shoe_insole(ball=114.0).export(file_type="obj").encode())
+    not_a_folder = tmp_path / "shoes"
+    not_a_folder.write_text("a file where the shoes folder should be")
+    assert cli.main(["shoe", "add", str(scan), "--name", "X", "--size", "9", "--shoes", str(not_a_folder)]) == 1
+    assert capsys.readouterr().err.startswith("footscan shoe: ")
+
+
+def test_two_different_shoes_that_get_the_same_id_never_replace_each_other(tmp_path):
+    """The id is the name and size with only a-z and 0-9 kept, so a split between name and size that moves, or
+    letters outside a-z, can give two shoes one id. The second is refused instead of silently replacing the
+    first (whose insoles would go stale, or the default switch shoe). The same shoe saved again, written a
+    little differently, still replaces it."""
+    from footscan import shoes
+
+    outline, read = _shoe_outline()
+    for first, second in ((("Nike Pegasus 40", "US 9"), ("Nike Pegasus", "40 US 9")),
+                          (("Große", "EU 42"), ("Größe", "EU 42"))):
+        folder = tmp_path / first[0].replace(" ", "")
+        a = shoes.save(folder, outline, *first, "synthetic", read, default=True)
+        assert shoes.shoe_id(*second) == a["id"]
+        with pytest.raises(shoes.ShoeLibraryError, match="a different saved shoe already has the id"):
+            shoes.save(folder, outline, *second, "synthetic", read)
+        assert shoes.load(folder, a["id"])["name"] == first[0] and shoes.default_id(folder) == a["id"]
+    again = shoes.save(tmp_path / "NikePegasus40", outline, "nike  pegasus-40", "us 9", "a better scan", read)
+    assert again["name"] == "nike  pegasus-40"

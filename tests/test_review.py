@@ -413,3 +413,35 @@ def test_footscan_service_prints_only_the_file_on_stdout(capsys, tmp_path):
     assert cli.main(["service", "--system", "linux", "--data", str(tmp_path)]) == 0
     out = capsys.readouterr()
     assert out.out.startswith("[Unit]") and "systemctl --user" in out.err
+
+
+def test_a_saved_shoe_far_from_the_charts_length_is_flagged_though_the_insole_matches_it(tmp_path):
+    """An insole cut to a saved shoe always matches that shoe's outline, so the length check alone can't catch
+    a stock insole scanned at the wrong scale (the same few percent the foot scans read short). The outline is
+    checked against the spec's chart length too, within shoe_length_tolerance_mm."""
+    from footscan import shoes
+    from footscan.recon import shoe as shoe_mod
+
+    data = tmp_path / "data"
+    scan = synth.shoe_insole(ball=114.0)
+    scan.apply_scale(0.92)  # SYNTHETIC: a stock insole read 8% short
+    outline, read = shoe_mod.outline_from_scan(scan)
+    s = shoes.save(data / "shoes", outline, "ASICS Gel Resolution X", "US men's 9.5", "synthetic", read)
+    assert s["length_mm"] < 275.0 - 15
+    d = data / "captures" / "Rshort"
+    d.mkdir(parents=True)
+    m = synth.block_foot(0.0, "right", origin=(0, 0))
+    m.apply_transform(np.block([[imported.UP["y"].T, np.zeros((3, 1))], [np.zeros((1, 3)), np.ones((1, 1))]]))
+    m.apply_scale(0.001)
+    m.export(d / "mesh.ply")
+    meta = dict(capture_id="Rshort", foot="right", method="imported_mesh", condition="swb", scan_kind="foot",
+                mesh=dict(up="y"))
+    meta["insole"] = server.make_insole(d, meta, saved=server.saved_shoe(data / "shoes", s["id"]))
+    assert "error" not in meta["insole"], meta["insole"]
+    server.write_json(d / "capture.json", meta)
+
+    [p] = review.run_once(data, SPEC)
+    assert _check(p, "length")["ok"] and _check(p, "shoe")["ok"]  # it is the spec's shoe, and matches its outline
+    c = _check(p, "shoe_length")
+    assert not c["ok"] and "chart length" in c["found"]
+    assert "shoe_length" in json.loads((p / "review.json").read_text())["flags"]

@@ -39,7 +39,7 @@ MM_PER_PX = 0.5
 
 DEFAULT_SPEC = dict(shoe="ASICS Gel Resolution X", size="US men's 9.5", target_length_mm=275.0,
                     target_length_source="size-chart insole length, not a ruler measurement",
-                    length_tolerance_mm=1.0, pair_tolerance_mm=1.0,
+                    length_tolerance_mm=1.0, pair_tolerance_mm=1.0, shoe_length_tolerance_mm=5.0,
                     tolerances_source="a judgment, not measured", slicer="Bambu Studio",
                     slicer_scale_percent=100, bed_mm=256.0)
 
@@ -135,12 +135,24 @@ def checks(ins_dir: Path, meta: dict, report: dict, mesh, spec: dict, other: dic
         which = f"the saved shoe {shoe_name}" if shoe_name else "the shoe's insole scan"
         add("length", abs(length - target) <= tol,
             f"{length:.1f} mm long; cut to the outline of {which}, {target:.1f} mm long; allowed ±{tol:g} mm")
+        named = f"{spec['shoe']}, {spec['size']}"
+        is_spec_shoe = True
         if shoe_name:
             from .shoes import slug
 
-            named = f"{spec['shoe']}, {spec['size']}"
-            add("shoe", slug(shoe_name) == slug(named),
-                f"cut to the saved shoe {shoe_name}; review-spec.json names {named}")
+            is_spec_shoe = slug(shoe_name) == slug(named)
+            add("shoe", is_spec_shoe, f"cut to the saved shoe {shoe_name}; review-spec.json names {named}")
+        if is_spec_shoe:
+            # The insole matches its outline by construction, so that alone can't catch a wrong outline: a stock
+            # insole scanned a few percent small (LIDAR_nwb_relaxed_R_20261027-151404-2349 read the foot 8.4%
+            # shorter than a ruler) saves a short shoe, and every insole cut to it would pass. So the outline is
+            # checked against the spec's chart length too, more loosely (shoe_length_tolerance_mm, a judgment):
+            # a stock insole isn't exactly its size chart's length.
+            stol = float(spec["shoe_length_tolerance_mm"])
+            chart = float(spec["target_length_mm"])
+            add("shoe_length", abs(target - chart) <= stol,
+                f"the outline of {which} is {target:.1f} mm long; review-spec.json's chart length for {named} is "
+                f"{chart:.1f} mm ({spec['target_length_source']}); allowed ±{stol:g} mm")
     else:
         target = float(spec["target_length_mm"])
         add("length", abs(length - target) <= tol,
@@ -451,7 +463,8 @@ def packet_markdown(p: dict) -> str:
               f"- Outline: {outline_line(i)}",
               f"- review-spec.json: {s['shoe']}, {s['size']}, insole length {s['target_length_mm']:g} mm "
               f"({s['target_length_source']})"
-              + (". An insole cut to a shoe's outline is checked against that outline's length instead." if i.get("shoe_fit")
+              + (f". An insole cut to a shoe's outline is checked against that outline's length, and the outline against "
+                 f"this length within ±{s['shoe_length_tolerance_mm']:g} mm" if i.get("shoe_fit")
                  else "."),
               f"- Slice in {s['slicer']} at **{s['slicer_scale_percent']}% scale**. Never rescale the model in the "
               "slicer: if the size is wrong, rebuild the insole with the right length instead.", "",

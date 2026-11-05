@@ -192,6 +192,11 @@ def insole_outline(args):
 
     folder = Path(args.shoes)
     sid = None
+    # One way to set the outline, as the studio's Make insole takes one: a shoe's outline sets the length itself
+    if args.shoe and args.length:
+        raise ValueError("give --shoe or --length, not both (a shoe's outline is its own length)")
+    if args.shoe and args.foot_outline:
+        raise ValueError("give --shoe or --foot-outline, not both")
     if args.shoe and not Path(args.shoe).exists():
         if looks_like_a_path(args.shoe):  # e.g. a mistyped scan's name: say the file isn't there
             raise ValueError(f"--shoe {args.shoe}: no such file (a saved shoe's id has no dots or slashes: "
@@ -199,7 +204,7 @@ def insole_outline(args):
         sid = args.shoe  # not a file: a saved shoe's id
     elif args.shoe:
         outline, info = shoe.outline_from_scan(load_geometry(args.shoe), up=args.shoe_up)
-        return (InsoleParams(shoe_outline=shoe.as_param(outline), target_length_mm=args.length),
+        return (InsoleParams(shoe_outline=shoe.as_param(outline)),
                 f"outline: the shoe's insole scanned in {args.shoe}, {info['length_mm']} x {info['width_mm']} mm"
                 f"{' (on a table)' if info['table_found'] else ''}")
     elif args.length:
@@ -211,7 +216,8 @@ def insole_outline(args):
         hint = "" if args.foot_outline else " (no default saved shoe: footscan shoe add)"
         return None, f"outline: the foot's own{hint}"
     s = shoes.load(folder, sid)
-    return (InsoleParams(shoe_outline=shoes.outline_param(s), target_length_mm=args.length, shoe_name=shoes.label(s)),
+    # shoe_saved: one outline for both feet (mirrored for the other one), so its sheet doesn't warn about mirroring
+    return (InsoleParams(shoe_outline=shoes.outline_param(s), shoe_name=shoes.label(s), shoe_saved=True),
             f"outline: saved shoe {shoes.label(s)}, {s['length_mm']} x {s['width_mm']} mm"
             f"{'' if args.shoe else ' (the default)'}")
 
@@ -278,7 +284,7 @@ def cmd_shoe(args) -> int:
                 print(f"{'*' if s['id'] == default else ' '} {s['id']}: {shoes.label(s)}, {s['length_mm']} x {s['width_mm']} mm")
             if not listed:
                 print(f"no saved shoes in {folder}")
-    except ValueError as err:  # a ShoeError or ShoeLibraryError
+    except (ValueError, OSError) as err:  # a ShoeError or ShoeLibraryError; a missing scan, a folder it can't write
         print(f"footscan shoe: {err}", file=sys.stderr)
         return 1
     return 0

@@ -5,7 +5,7 @@ import urllib.request
 
 import pytest
 
-from footscan.server import WEB_DIR, StudioServer, make_handler
+from footscan.server import STALE_MESSAGES, WEB_DIR, StudioServer, make_handler
 
 JPEG = b"\xff\xd8\xff\xe0" + b"\x00" * 64
 KEY = "test-studio-key"
@@ -942,8 +942,21 @@ def test_a_saved_shoe_is_the_default_outline_for_every_new_insole(servers):
     assert call(f"{op}/api/shoes", "POST", new)[0] == 201
     listed = [c for c in body(call(f"{op}/api/captures")) if c["capture_id"] == foot][0]
     assert listed["insole"].get("stale") is True and listed["insole"]["stale_reason"] == "shoe"
+    assert listed["insole"]["stale_message"] == STALE_MESSAGES["shoe"]  # the card's words, from one place
     st, raw, _ = call(f"{op}/api/captures/{foot}/insole/insole.3mf")
     assert st == 409 and "shoe" in json.loads(raw)["error"] and "3D model" not in json.loads(raw)["error"]
+
+    # a capture.json naming something that isn't a saved shoe's id (edited by hand): that insole is stale, and
+    # the studio's list still loads (it used to answer 500, an empty studio)
+    cj = data / "captures" / foot / "capture.json"
+    kept = cj.read_bytes()
+    m = json.loads(kept)
+    m["insole"]["shoe"]["saved"] = "../Not An Id"
+    cj.write_text(json.dumps(m))
+    st, raw, _ = call(f"{op}/api/captures")
+    assert st == 200
+    assert [c for c in json.loads(raw) if c["capture_id"] == foot][0]["insole"]["stale_reason"] == "shoe"
+    cj.write_bytes(kept)
 
     # the default's file broken by hand: Make insole says so, rather than cutting to the foot's own outline
     good = (data / "shoes" / f"{s['id']}.json").read_bytes()

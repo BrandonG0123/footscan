@@ -45,6 +45,9 @@ never suggest posting or any correction (the first fit has none). Every number y
      (Outline: <that shoe>). Only if no saved shoe exists, rebuild with the spec's length in the length box, and
      say a saved shoe would be better. Never rebuild a shoe-outline insole with "Outline: the foot's own".
    - `shoe`: it was cut to a saved shoe other than the one in review-spec.json. Ask Brandon which shoe it goes in.
+   - `shoe_length`: the shoe's outline (saved, or scanned) is far from the spec's chart length, so the stock insole
+     was probably scanned at the wrong scale, or is another size. Don't rebuild: ask Brandon to measure the stock
+     insole with a ruler, and save the shoe again from a new scan if the outline is off.
    - Never fix size with the slicer's scale: it stays at 100%.
    - `pair_length`: the two feet's files differ in length. Both should be built to the same shoe length.
    - `3mf_size`: the 3MF isn't the size insole.json says. Don't print it; rebuild.
