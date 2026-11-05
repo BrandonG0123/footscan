@@ -1274,3 +1274,99 @@ def test_a_refused_upload_still_gets_its_answer_when_the_body_is_large(servers):
     assert got.startswith(b"HTTP/1.1 400"), got[:200]
     assert b"body too large" in got
     assert errors == []  # the whole body was taken in before the connection closed, so nothing was reset
+
+
+def test_a_refused_chunked_upload_still_gets_its_answer(servers):
+    """A chunked upload (Transfer-Encoding) is refused with 501 before its body is read; like any refused body,
+    what's still coming is read and dropped before the connection closes, so the sender isn't reset and the
+    answer isn't lost."""
+    import socket
+
+    op, _phone, _data = servers
+    host, port = op.removeprefix("http://").split(":")
+    piece = b"x" * 65536
+    chunks = b"".join(b"%x\r\n%s\r\n" % (len(piece), piece) for _ in range(96)) + b"0\r\n\r\n"  # 6 MB
+    sock = socket.create_connection((host, int(port)), timeout=10)
+    head = (f"PUT /api/captures/x/mesh?ext=ply HTTP/1.1\r\nHost: {host}\r\n"
+            "Transfer-Encoding: chunked\r\n\r\n").encode()
+    errors = []
+
+    def send():
+        try:
+            sock.sendall(head + chunks)
+        except OSError as e:
+            errors.append(e)
+
+    sender = threading.Thread(target=send, daemon=True)
+    sender.start()
+    got = b""
+    try:
+        while chunk := sock.recv(65536):
+            got += chunk
+    finally:
+        sender.join(10)
+        sock.close()
+    assert got.startswith(b"HTTP/1.1 501"), got[:200]
+    assert errors == []
+
+
+def test_a_capture_removed_while_the_list_is_read_is_left_out(tmp_path, monkeypatch):
+    """A refused phone upload removes its just-made capture; if that happens between the list's glob and its read,
+    the list leaves it out instead of answering 404 for the whole list."""
+    from footscan import server
+
+    caps = tmp_path / "captures"
+    for cid in ("kept", "gone"):
+        (caps / cid).mkdir(parents=True)
+        server.write_json(caps / cid / "capture.json", {"capture_id": cid, "created": "2026-11-05"})
+    real = server.read_json
+
+    def read(path):
+        if path.parent.name == "gone":
+            raise FileNotFoundError(path)
+        return real(path)
+
+    monkeypatch.setattr(server, "read_json", read)
+    assert [m["capture_id"] for m in server.list_captures(caps)] == ["kept"]
+    subs = tmp_path / "submissions"
+    (subs / "gone").mkdir(parents=True)
+    server.write_json(subs / "gone" / "submission.json", {"id": "gone"})
+    assert server.list_submissions(subs) == []
+
+
+def test_a_json_file_is_swapped_in_even_while_a_reader_briefly_holds_the_old_one(tmp_path, monkeypatch):
+    """On Windows, replacing a file someone has open fails with PermissionError for as long as they hold it (the
+    model page reads a build's status every 2 s). The swap is tried again for a moment instead of failing the
+    write (and with it the build); a file held for good still fails, after the wait."""
+    import os
+
+    from footscan import atomic, server
+    from footscan.recon import pipeline
+
+    real, refusals = os.replace, []
+
+    def held_for_a_moment(src, dst):
+        if len(refusals) < 3:
+            refusals.append(dst)
+            raise PermissionError(13, "Access is denied", str(dst))
+        return real(src, dst)
+
+    monkeypatch.setattr(atomic.os, "replace", held_for_a_moment)
+    server.write_json(tmp_path / "capture.json", {"a": 1})
+    assert server.read_json(tmp_path / "capture.json") == {"a": 1} and len(refusals) == 3
+    refusals.clear()
+    pipeline.write_json_atomic(tmp_path / "status.json", {"stage": "done"})
+    assert json.loads((tmp_path / "status.json").read_text(encoding="utf-8")) == {"stage": "done"}
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["capture.json", "status.json"]  # no temporary files left
+
+    def held_for_good(src, dst):
+        raise PermissionError(13, "Access is denied", str(dst))
+
+    monkeypatch.setattr(atomic.os, "replace", held_for_good)
+    monkeypatch.setattr(atomic, "RETRY_FOR_S", 0.05)
+    with pytest.raises(PermissionError):
+        atomic.replace(tmp_path / "x.tmp", tmp_path / "capture.json", retry_for_s=0.05)
+    with pytest.raises(PermissionError):
+        server.write_json(tmp_path / "capture.json", {"a": 2})
+    assert server.read_json(tmp_path / "capture.json") == {"a": 1}
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["capture.json", "status.json"]

@@ -29,6 +29,7 @@ import hashlib
 import json
 import os
 import platform
+import threading
 import time
 import traceback
 from dataclasses import dataclass, field
@@ -68,9 +69,14 @@ def clear_outputs(out: Path) -> None:
 
 def write_json_atomic(path: Path, obj) -> None:
     """Write to a temporary file, then rename over the target: a reader sees the old or the new file, never half."""
-    tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    from ..atomic import replace
+
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
     tmp.write_text(json.dumps(obj, indent=1, default=_json_default), encoding="utf-8")
-    os.replace(tmp, path)
+    try:
+        replace(tmp, path)  # tried again for a moment while a reader has it open (Windows)
+    finally:
+        tmp.unlink(missing_ok=True)
 
 
 def frame_names(capture_dir: Path) -> tuple[list[str], dict]:

@@ -26,10 +26,18 @@ MODE = re.compile(r"^[rwax+tb]+$")
 def _text_io_without_encoding(tree):
     """Calls that read or write text with the system's default encoding.
 
-    read_text / write_text; the builtin open() in a text mode; ``something.open("w")`` when its first argument
-    is a file mode (so zipfile's ``z.open(name)`` or ``Image.open(path)`` aren't mistaken for files); and
-    subprocess calls with text=True or universal_newlines=True.
+    read_text / write_text; the builtin open() and io.open() in a text mode; ``os.fdopen(fd, "w")``;
+    tempfile's NamedTemporaryFile / TemporaryFile / SpooledTemporaryFile in a text mode; ``something.open()``
+    with no arguments or only keyword ones (``Path.open()``, ``p.open(newline="")``), or whose first argument is
+    a file mode (``p.open("w")``), but not one whose first argument is something else (so zipfile's
+    ``z.open(name)`` or ``Image.open(path)`` aren't mistaken for files); and subprocess calls with text=True or
+    universal_newlines=True.
     """
+    def text_mode(mode, default_text):
+        if mode is None:
+            return default_text
+        return isinstance(mode, ast.Constant) and isinstance(mode.value, str) and "b" not in mode.value
+
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
             continue
@@ -38,14 +46,25 @@ def _text_io_without_encoding(tree):
             continue
         f = node.func
         name = f.attr if isinstance(f, ast.Attribute) else getattr(f, "id", None)
+        owner = getattr(f.value, "id", None) if isinstance(f, ast.Attribute) else None
         if name in ("read_text", "write_text"):
             yield node
-        elif name == "open" and isinstance(f, ast.Name):
-            mode = kw.get("mode", node.args[1] if len(node.args) > 1 else None)
-            if mode is None or (isinstance(mode, ast.Constant) and "b" not in mode.value):
+        elif name == "open" and (isinstance(f, ast.Name) or owner == "io"):
+            if text_mode(kw.get("mode", node.args[1] if len(node.args) > 1 else None), True):
+                yield node
+        elif name == "fdopen":
+            if text_mode(kw.get("mode", node.args[1] if len(node.args) > 1 else None), True):
+                yield node
+        elif name in ("NamedTemporaryFile", "TemporaryFile", "SpooledTemporaryFile"):
+            # binary ("w+b") unless told otherwise
+            if text_mode(kw.get("mode", node.args[0] if node.args else None), False):
                 yield node
         elif name == "open":
-            mode = kw.get("mode", node.args[0] if node.args else None)
+            if not node.args:  # p.open(), p.open(newline=""), p.open(mode="w"): a Path, in text unless "b"
+                if text_mode(kw.get("mode"), True):
+                    yield node
+                continue
+            mode = node.args[0]
             if isinstance(mode, ast.Constant) and isinstance(mode.value, str) and MODE.match(mode.value) \
                     and "b" not in mode.value:
                 yield node
@@ -69,6 +88,12 @@ def test_the_check_tells_files_from_other_things_called_open():
     assert calls("open(p, 'rb')") == calls("p.open('wb')") == calls("z.open('3D/3dmodel.model')") == 0
     assert calls("Image.open(path)") == calls("webbrowser.open(url)") == calls("subprocess.run(c)") == 0
     assert calls("open(p, encoding='utf-8')") == calls("subprocess.run(c, text=True, encoding='utf-8')") == 0
+    # the Path forms of a text open, and the other ways to open a text file
+    assert calls("p.open()") == calls("p.open(newline='')") == calls("p.open(mode='w')") == 1
+    assert calls("io.open(p, 'w')") == calls("os.fdopen(fd, 'w')") == calls("tempfile.NamedTemporaryFile('w')") == 1
+    assert calls("tempfile.NamedTemporaryFile(mode='w+')") == calls("tempfile.SpooledTemporaryFile(mode='w')") == 1
+    assert calls("p.open(mode='rb')") == calls("os.fdopen(fd, 'wb')") == calls("tempfile.NamedTemporaryFile()") == 0
+    assert calls("p.open(newline='', encoding='utf-8')") == calls("io.open(p, 'rb')") == 0
 
 
 def _trials_rows():

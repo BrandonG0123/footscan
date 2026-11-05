@@ -198,9 +198,16 @@ def read_json(path: Path) -> dict:
 
 
 def write_json(path: Path, obj: dict) -> None:
-    tmp = path.with_suffix(".tmp")
+    """Written whole to this call's own temporary file, then swapped in (a reader sees the old file or the new),
+    tried again for a moment while a reader has the old one open (Windows refuses the swap meanwhile)."""
+    from .atomic import replace
+
+    tmp = path.with_name(f"{path.stem}.{secrets.token_hex(4)}.tmp")
     tmp.write_text(json.dumps(obj, indent=2), encoding="utf-8")
-    tmp.replace(path)
+    try:
+        replace(tmp, path)
+    finally:
+        tmp.unlink(missing_ok=True)
 
 
 # ---- validation ------------------------------------------------------------
@@ -474,9 +481,13 @@ def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check
             return True
 
         def body_left_unread(self) -> bool:
-            """Did this request send a body that hasn't been read? Then the connection can't be reused."""
+            """Did this request send a body that hasn't been read? Then the connection can't be reused.
+            A chunked upload (Transfer-Encoding, refused in parse_request) is never read: its body is still coming
+            however long it is, so it's lingered on like any other."""
             if getattr(self, "_body_read", False) or not hasattr(self, "headers"):
                 return False
+            if self.headers.get_all("Transfer-Encoding") is not None:
+                return True
             try:
                 return int(self.headers.get("Content-Length") or 0) > 0  # parse_request checked it's one whole number
             except ValueError:
@@ -1499,7 +1510,7 @@ def list_submissions(submissions_dir: Path) -> list[dict]:
     for f in submissions_dir.glob("*/submission.json") if submissions_dir.exists() else []:
         try:
             out.append(public_meta(read_json(f)))
-        except (json.JSONDecodeError, UnicodeDecodeError):
+        except (ValueError, OSError):  # garbled or not UTF-8 (ValueErrors), or removed since the glob saw it
             continue
     return sorted(out, key=lambda m: m.get("created", ""), reverse=True)
 
@@ -1509,11 +1520,11 @@ def list_captures(captures_dir: Path) -> list[dict]:
     for f in captures_dir.glob("*/capture.json") if captures_dir.exists() else []:
         try:
             meta = read_json(f)
-        except (json.JSONDecodeError, UnicodeDecodeError):
+            meta.pop("frames", None)
+            if meta.get("insole") and insole_is_stale(f.parent, meta):
+                meta["insole"] = {**meta["insole"], "stale": True}
+        except (ValueError, OSError):  # garbled or not UTF-8, or removed since the glob saw it (a refused upload)
             continue
-        meta.pop("frames", None)
-        if meta.get("insole") and insole_is_stale(f.parent, meta):
-            meta["insole"] = {**meta["insole"], "stale": True}
         out.append(meta)
     return sorted(out, key=lambda m: m.get("created", ""), reverse=True)
 

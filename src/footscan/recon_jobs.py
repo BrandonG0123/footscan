@@ -101,7 +101,7 @@ class ReconRunner:
             if st.exists():
                 try:
                     cur = json.loads(st.read_text(encoding="utf-8"))
-                except (json.JSONDecodeError, UnicodeDecodeError, OSError):
+                except (ValueError, OSError):  # garbled, not UTF-8 (both ValueErrors), or gone meanwhile
                     cur = {}
                 if cur.get("state") == "running" and pid_alive(cur.get("pid")):
                     raise Busy("this model is already being built")
@@ -134,7 +134,7 @@ def summary(folder: Path, runner: ReconRunner | None = None) -> dict:
         return dict(state="none")
     try:
         status = json.loads((out / "status.json").read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, UnicodeDecodeError, OSError):
+    except (ValueError, OSError):  # garbled, not UTF-8 (both ValueErrors), or gone meanwhile
         return dict(state="running", stage="starting")  # being written this instant
     # A process that died without writing "done"/"failed" (killed, crashed).
     # The process id survives a restart of the web server; the runner doesn't.
@@ -149,7 +149,7 @@ def summary(folder: Path, runner: ReconRunner | None = None) -> dict:
     if (out / "report.json").exists() and res["state"] != "running":
         try:
             r = json.loads((out / "report.json").read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, UnicodeDecodeError, OSError):
+        except (ValueError, OSError):  # garbled, not UTF-8 (both ValueErrors), or gone meanwhile
             r = {}
         res.update(
             synthetic=r.get("synthetic"),

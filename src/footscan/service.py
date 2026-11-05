@@ -24,6 +24,12 @@ from xml.sax.saxutils import escape
 
 LABEL = "dev.footscan.server"
 NSSM_DIR = r"C:\Program Files\nssm"
+NSSM_EXE = NSSM_DIR + r"\nssm.exe"
+# Windows' built-in Local Service account (SID S-1-5-19): a service account with no more rights than a normal
+# user. The Windows service runs the studio as it, not as LocalSystem, so code in the checkout (which the owner's
+# own account can change) can't take over the computer when the service starts it.
+LOCAL_SERVICE = r"NT AUTHORITY\LocalService"
+LOCAL_SERVICE_SID = "*S-1-5-19"
 SYSTEMS = ("macos", "linux", "windows")
 
 
@@ -41,8 +47,13 @@ def serve_args(data_dir: Path, port: int = 8765, review: bool = True) -> list[st
     return args + (["--review"] if review else [])
 
 
-def render(system: str, root: Path, data_dir: Path | None = None, port: int = 8765, review: bool = True) -> dict:
-    """{"path": where the file goes (or None), "content": the file or commands, "steps": what to run}."""
+def render(system: str, root: Path, data_dir: Path | None = None, port: int = 8765, review: bool = True,
+           python_home: Path | str | None = None) -> dict:
+    """{"path": where the file goes (or None), "content": the file or commands, "steps": what to run}.
+
+    ``python_home``: the Python installation the checkout's .venv runs on (default: this one's,
+    ``sys.base_prefix``, as ``footscan service`` runs from that .venv). The Windows service account is given
+    read access to it."""
     if system not in SYSTEMS:
         raise ValueError(f"system must be one of {', '.join(SYSTEMS)}")
     root = Path(root)
@@ -59,7 +70,7 @@ def render(system: str, root: Path, data_dir: Path | None = None, port: int = 87
     if any(" " in a for a in args):
         # NSSM takes the arguments as one quoted string; a quoted path inside it can't survive PowerShell
         raise ValueError("on Windows, choose a data folder without spaces in its path (e.g. C:\\srv\\footscan-data)")
-    return _nssm(root, exe, args, log, port)
+    return _nssm(root, exe, args, log, port, Path(python_home or sys.base_prefix), data_dir)
 
 
 def _launchd(root, exe, args, log, port, regen) -> dict:
@@ -139,20 +150,36 @@ WantedBy=default.target
     return dict(path=path, content=content, steps=steps, port=port)
 
 
-def _nssm(root, exe, args, log, port) -> dict:
+def _nssm(root, exe, args, log, port, python_home, data_dir) -> dict:
     """A Windows service through NSSM (tank already runs Caddy this way). Commands, not a file.
 
-    The service runs nssm.exe itself, as LocalSystem. winget puts nssm in the user's own folder, where the
-    user (or anything running as them) can replace it and so get the whole computer; so the commands first
-    copy it to Program Files, which only an administrator can change, and install the service from there.
+    Two things keep the service from being a way to take over the computer:
+
+    - nssm.exe itself runs as LocalSystem. winget puts it in the user's own folder, where the user (or anything
+      running as them) can replace it; so the commands copy it to Program Files, which only an administrator can
+      change, install the service from there, and put that folder first on the computer's own PATH, so a later
+      ``nssm`` in an Administrator PowerShell runs that copy too, not winget's.
+    - The studio runs as Local Service, not LocalSystem: the checkout and its .venv are the owner's to change (git
+      pull, pip install), so whatever is in them runs with no more rights than a normal user. Local Service gets
+      read access to the checkout and the Python it runs on, and write access to the data folder only.
     """
     content = "\n".join([
         "# Administrator PowerShell. NOT a medical device; Wi-Fi only (no tunnel, no port forwarding).",
-        "# nssm where only an administrator can change it (the service runs it with full control of the computer)",
+        "# nssm where only an administrator can change it (nssm runs with full control of the computer), first on",
+        "# the computer's PATH so every later Administrator PowerShell's nssm is this one",
         f'New-Item -ItemType Directory -Force "{NSSM_DIR}" | Out-Null',
-        f'Copy-Item (Get-Command nssm).Source "{NSSM_DIR}\\nssm.exe"',
+        f'Copy-Item (Get-Command nssm).Source "{NSSM_EXE}"',
+        '$machine = [Environment]::GetEnvironmentVariable("Path", "Machine")',
+        f'if (($machine -split ";") -notcontains "{NSSM_DIR}") {{ '
+        f'[Environment]::SetEnvironmentVariable("Path", "{NSSM_DIR};" + $machine, "Machine") }}',
         f'$env:Path = "{NSSM_DIR};" + $env:Path',
+        "# the studio runs as Local Service (no more rights than a normal user): it may read the checkout and the",
+        "# Python it runs on, and write only the data folder",
+        f'icacls "{root}" /grant "{LOCAL_SERVICE_SID}:(OI)(CI)RX"',
+        f'icacls "{python_home}" /grant "{LOCAL_SERVICE_SID}:(OI)(CI)RX"',
+        f'icacls "{data_dir}" /grant "{LOCAL_SERVICE_SID}:(OI)(CI)M"',
         f'nssm install Footscan "{exe}" "{" ".join(args)}"',
+        f'nssm set Footscan ObjectName "{LOCAL_SERVICE}"',
         f'nssm set Footscan AppDirectory "{root}"',
         "nssm set Footscan AppEnvironmentExtra PYTHONUTF8=1",
         f'nssm set Footscan AppStdout "{log}"',
@@ -169,7 +196,8 @@ def _nssm(root, exe, args, log, port) -> dict:
              f'Open PowerShell as Administrator: New-Item -ItemType Directory -Force "{log.parent}", '
              "then paste the commands above",
              "Settings > Network: your Wi-Fi must be a Private network, or the firewall rule doesn't apply",
-             'sc.exe qc Footscan    # BINARY_PATH_NAME must be "C:\\Program Files\\nssm\\nssm.exe", in quotes',
+             'sc.exe qc Footscan    # BINARY_PATH_NAME must be "C:\\Program Files\\nssm\\nssm.exe", in quotes, '
+             "and SERVICE_START_NAME NT AUTHORITY\\LocalService (not LocalSystem)",
              f"Get-Content -Wait {log}    # the studio's addresses",
              "to stop: nssm stop Footscan"]
     return dict(path=None, content=content, steps=steps, port=port)

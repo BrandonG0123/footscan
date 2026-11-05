@@ -292,7 +292,7 @@ def list_picks(folder: Path) -> list[dict]:
     for p in sorted(files, key=lambda p: int(p.stem.split("-", 1)[1])):
         try:
             rec = json.loads(p.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, UnicodeDecodeError, OSError):
+        except (ValueError, OSError):  # garbled, not UTF-8 (both ValueErrors), or gone meanwhile
             continue  # a damaged file is skipped, not allowed to break the page
         rec["stale"] = rec.get("mesh_sha256") != current
         out.append(rec)

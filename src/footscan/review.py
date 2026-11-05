@@ -64,7 +64,8 @@ def load_spec(path: Path | None = None) -> dict:
     p = Path(path) if path else SPEC_PATH
     spec = dict(DEFAULT_SPEC)
     if p.is_file():
-        spec.update({k: v for k, v in json.loads(p.read_text(encoding="utf-8")).items() if not k.startswith("_")})
+        # utf-8-sig: also a file saved "UTF-8 with BOM" (Windows PowerShell 5.1's Set-Content -Encoding UTF8, Notepad)
+        spec.update({k: v for k, v in json.loads(p.read_text(encoding="utf-8-sig")).items() if not k.startswith("_")})
     return spec
 
 

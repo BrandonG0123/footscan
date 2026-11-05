@@ -369,6 +369,26 @@ def test_the_windows_service_runs_nssm_from_where_only_an_administrator_can_chan
     assert copy < first < install
 
 
+def test_the_windows_service_runs_the_studio_as_local_service_not_localsystem(tmp_path):
+    """The checkout and its .venv are the owner's to change, so the code the service starts must not run with
+    full control of the computer: it runs as Local Service, which may read the checkout and the Python the .venv
+    runs on and write only the data folder. And a later Administrator PowerShell's `nssm` must be the Program
+    Files copy, so that folder goes first on the computer's own PATH."""
+    r = service.render("windows", tmp_path / "footscan", tmp_path / "data", python_home=tmp_path / "py311")
+    lines = r["content"].splitlines()
+    install = next(i for i, ln in enumerate(lines) if ln.startswith("nssm install Footscan"))
+    account = lines.index('nssm set Footscan ObjectName "NT AUTHORITY\\LocalService"')
+    start = lines.index("nssm start Footscan")
+    assert install < account < start
+    grants = {ln.split('"')[1]: ln.split('"')[3] for ln in lines if ln.startswith("icacls ")}
+    assert grants == {str(tmp_path / "footscan"): "*S-1-5-19:(OI)(CI)RX", str(tmp_path / "py311"): "*S-1-5-19:(OI)(CI)RX",
+                      str(tmp_path / "data"): "*S-1-5-19:(OI)(CI)M"}
+    assert max(i for i, ln in enumerate(lines) if ln.startswith("icacls ")) < start
+    machine_path = next(ln for ln in lines if "SetEnvironmentVariable" in ln)
+    assert '"C:\\Program Files\\nssm;" + $machine, "Machine"' in machine_path and "-notcontains" in machine_path
+    assert any("LocalService" in step and "sc.exe qc" in step for step in r["steps"])
+
+
 def test_the_windows_service_refuses_a_data_folder_with_spaces(tmp_path):
     with pytest.raises(ValueError, match="without spaces"):
         service.render("windows", tmp_path / "footscan", tmp_path / "my data")
@@ -388,3 +408,12 @@ def test_footscan_service_prints_only_the_file_on_stdout(capsys, tmp_path):
     assert cli.main(["service", "--system", "linux", "--data", str(tmp_path)]) == 0
     out = capsys.readouterr()
     assert out.out.startswith("[Unit]") and "systemctl --user" in out.err
+
+
+def test_a_review_spec_saved_with_a_byte_order_mark_still_loads(tmp_path):
+    """Windows PowerShell 5.1's Set-Content -Encoding UTF8 (and "UTF-8 with BOM" in editors) starts the file with a
+    byte-order mark; strict UTF-8 refused it, and every review round then wrote no packet."""
+    spec = tmp_path / "review-spec.json"
+    spec.write_bytes(b"\xef\xbb\xbf" + json.dumps({"shoe": "Test Shoe", "target_length_mm": 271.0}).encode())
+    got = review.load_spec(spec)
+    assert got["shoe"] == "Test Shoe" and got["target_length_mm"] == 271.0
