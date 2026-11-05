@@ -192,3 +192,95 @@ def test_a_slower_spool_lowers_the_filament_flow_limit_and_lists_it_as_a_filamen
     assert cfg["nozzle_temperature"] == ["230", "230"]
     with pytest.raises(KeyError, match="not filament settings"):
         bambu.project_config(profiles, **X1C, bed_type="High Temp Plate", filament_changes={"wall_loops": "4"})
+
+
+def _plain_3mf(tmp_path, name, mesh=None):
+    path = tmp_path / name
+    write_3mf(mesh if mesh is not None else _insole_like(), path, name, "NOT A MEDICAL DEVICE. test")
+    return path
+
+
+def test_leaving_off_the_project_name_never_overwrites_an_insole_file(tmp_path, profiles):
+    """The project is always -o: the old 'last file is the output' form replaced right-insole.3mf with a project
+    holding only the left. An input, a plain insole 3MF, or a non-.3mf can't be the output either."""
+    left, right = _plain_3mf(tmp_path, "left-insole.3mf"), _plain_3mf(tmp_path, "right-insole.3mf")
+    before = right.read_bytes()
+    with pytest.raises(SystemExit):
+        bambu.main([str(left), str(right), "--profiles", str(profiles)])  # no -o
+    for out in (right, tmp_path / "pair.stl"):
+        with pytest.raises(SystemExit):
+            bambu.main([str(left), "-o", str(out), "--profiles", str(profiles)])
+    with pytest.raises(ValueError, match="isn't a Bambu project"):
+        bambu.tpu_project([left], right, profiles, bed_type="High Temp Plate", **X1C)
+    assert right.read_bytes() == before and not (tmp_path / "pair.stl").exists()
+
+    out = tmp_path / "pair.3mf"
+    assert bambu.main([str(left), str(right), "-o", str(out), "--profiles", str(profiles)]) == 0
+    assert len(bambu.read_project(out)["parts"]) == 2
+    assert bambu.main([str(left), "-o", str(out), "--profiles", str(profiles)]) == 0  # an earlier project: replaced
+
+
+def test_more_than_two_insoles_are_refused_before_any_is_read(tmp_path, profiles, monkeypatch):
+    paths = [_plain_3mf(tmp_path, f"{n}.3mf") for n in "abc"]
+    read = []
+    monkeypatch.setattr(bambu, "_load_insole", lambda p: read.append(p))
+    with pytest.raises(ValueError, match="one to 2 insole files"):
+        bambu.tpu_project(paths, tmp_path / "out.3mf", profiles, bed_type="High Temp Plate", **X1C)
+    with pytest.raises(SystemExit):
+        bambu.main([*map(str, paths), "-o", str(tmp_path / "out.3mf"), "--profiles", str(profiles)])
+    assert read == []
+
+
+def test_a_flow_cap_of_zero_or_less_is_refused_not_ignored(tmp_path, profiles, capsys):
+    src = _plain_3mf(tmp_path, "right-insole.3mf")
+    for bad in ("0", "-1", "250"):
+        with pytest.raises(SystemExit):
+            bambu.main([str(src), "-o", str(tmp_path / "p.3mf"), "--profiles", str(profiles), "--max-flow", bad])
+        assert "--max-flow must be more than 0" in capsys.readouterr().err
+    assert not (tmp_path / "p.3mf").exists()
+
+
+def test_a_project_from_an_stl_still_says_it_is_not_a_medical_device(tmp_path, profiles):
+    src = tmp_path / "right-insole.stl"
+    _insole_like().export(src)
+    out = tmp_path / "right-tpu.3mf"
+    bambu.tpu_project(src, out, profiles, bed_type="High Temp Plate", **X1C)
+    description = bambu.read_project(out)["metadata"]["Description"]
+    assert "NOT A MEDICAL DEVICE" in description and "clinician" in description
+    # from footscan's 3MF, its own note is kept, not repeated
+    out3 = tmp_path / "from-3mf.3mf"
+    bambu.tpu_project(_plain_3mf(tmp_path, "r.3mf"), out3, profiles, bed_type="High Temp Plate", **X1C)
+    assert bambu.read_project(out3)["metadata"]["Description"].count("NOT A MEDICAL DEVICE") == 1
+
+
+def test_presets_kept_in_bambus_sub_folders_are_found_through_its_index(tmp_path, profiles):
+    """Bambu's BBL.json lists each preset's file: many are in sub-folders (filament/P1P/...), and a name with a
+    "/" is kept under another file name."""
+    _write(profiles / "filament" / "P1P" / "Bambu TPU 95A @BBL P1P.json",
+           {"name": "Bambu TPU 95A @BBL P1P", "from": "system", "instantiation": "true", "nozzle_temperature": ["225"]})
+    _write(profiles / "filament" / "Bambu Support For PA PET @base.json",
+           {"name": "Bambu Support For PA/PET @base", "from": "system", "instantiation": "false"})
+    _write(profiles.parent / "BBL.json", {"name": "BBL", "filament_list": [
+        {"name": "Bambu TPU 95A @BBL P1P", "sub_path": "filament/P1P/Bambu TPU 95A @BBL P1P.json"},
+        {"name": "Bambu Support For PA/PET @base", "sub_path": "filament/Bambu Support For PA PET @base.json"}]})
+    assert bambu.flatten_preset(profiles, "filament", "Bambu TPU 95A @BBL P1P")["nozzle_temperature"] == ["225"]
+    assert bambu.flatten_preset(profiles, "filament", "Bambu Support For PA/PET @base")["name"].endswith("PA/PET @base")
+    assert bambu.flatten_preset(profiles, "machine", X1C["printer"])["printer_model"] == "Bambu Lab X1 Carbon"
+    (profiles.parent / "BBL.json").unlink()  # no index: found by the name inside the file
+    assert bambu.flatten_preset(profiles, "filament", "Bambu TPU 95A @BBL P1P")["nozzle_temperature"] == ["225"]
+    with pytest.raises(FileNotFoundError, match="no filament preset"):
+        bambu.flatten_preset(profiles, "filament", "No Such TPU")
+
+
+def test_the_plain_3mf_keeps_clear_of_the_x1_no_print_corner_too(tmp_path):
+    """footscan insole's own 3MF is placed by the same search as the Bambu project: a 275 mm insole that has to
+    turn to fit a 256 mm bed turns away from the 18 x 28 mm corner an X1/P1 wipes its nozzle in."""
+    from footscan.insole import BAMBU_NO_PRINT_CORNER, read_3mf
+
+    path = _plain_3mf(tmp_path, "long.3mf")
+    m = read_3mf(path)
+    placed = bambu.placed_vertices(m["transform"], m["vertices"])
+    (x0, y0), (x1, y1) = BAMBU_NO_PRINT_CORNER
+    assert not np.any((placed[:, 0] < x1 + 3) & (placed[:, 1] < y1 + 3))
+    assert placed[:, :2].min() >= 3.0 - 1e-6 and placed[:, :2].max() <= 253.0 + 1e-6
+    assert np.isclose(np.ptp(m["vertices"][:, 0]), 275.0, atol=0.01)  # turned and moved only

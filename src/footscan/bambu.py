@@ -82,6 +82,9 @@ TPU_INSOLE_PROCESS: dict[str, str] = {
     "bridge_speed": "20",
 }
 
+# Bambu Studio's own range for filament_max_volumetric_speed (PrintConfig.cpp: min 0, max 200, "can't be zero")
+MAX_FLOW_LIMIT = 200.0
+
 BED_TYPES = ("Cool Plate", "Engineering Plate", "High Temp Plate", "Textured PEI Plate")
 
 # keys that name or describe a preset rather than set a value
@@ -93,6 +96,35 @@ _PRESET_META = {"type", "name", "inherits", "from", "setting_id", "instantiation
 # ---------------------------------------------------------------------------
 # presets
 # ---------------------------------------------------------------------------
+def preset_path(profiles: Path, kind: str, name: str) -> Path:
+    """Where Bambu keeps the ``kind`` preset called ``name``.
+
+    Bambu's own index, ``BBL.json`` beside the ``BBL`` folder, lists every preset's file (``sub_path``):
+    many live in sub-folders (``filament/P1P/Bambu TPU 95A @BBL P1P.json``), and a name with a "/" in it is
+    kept under another file name ("Bambu Support For PA/PET" is "...PA PET..."). So the index is asked
+    first; without one, ``<kind>/<name>.json``, then any file in that kind's folder whose "name" is it.
+    """
+    profiles = Path(profiles)
+    index = profiles.parent / f"{profiles.name}.json"
+    if index.is_file():
+        listed = json.loads(index.read_text(encoding="utf-8")).get(f"{kind}_list") or []
+        for entry in listed:
+            if entry.get("name") == name and entry.get("sub_path"):
+                path = profiles / entry["sub_path"]
+                if path.is_file():
+                    return path
+    path = profiles / kind / f"{name}.json"
+    if path.is_file():
+        return path
+    for path in sorted((profiles / kind).rglob("*.json")) if (profiles / kind).is_dir() else []:
+        try:
+            if json.loads(path.read_text(encoding="utf-8")).get("name") == name:
+                return path
+        except (OSError, ValueError):
+            continue
+    raise FileNotFoundError(f"no {kind} preset called {name!r} in {profiles / kind}")
+
+
 def flatten_preset(profiles: Path, kind: str, name: str) -> dict:
     """One Bambu system preset with everything it inherits filled in.
 
@@ -100,10 +132,7 @@ def flatten_preset(profiles: Path, kind: str, name: str) -> dict:
     Bambu's loader applies the parent (``inherits``) first, then any
     ``include`` templates, then the preset's own keys; this does the same.
     """
-    path = Path(profiles) / kind / f"{name}.json"
-    if not path.exists():
-        raise FileNotFoundError(f"no {kind} preset called {name!r} in {Path(profiles) / kind}")
-    own = json.loads(path.read_text(encoding="utf-8"))
+    own = json.loads(preset_path(profiles, kind, name).read_text(encoding="utf-8"))
     out = flatten_preset(profiles, kind, own["inherits"]) if own.get("inherits") else {}
     for template in own.get("include", []):
         out.update(flatten_preset(profiles, kind, template))
@@ -178,73 +207,33 @@ def _poly(points) -> np.ndarray:
     return np.array([[float(c) for c in str(pt).split("x")] for pt in points], dtype=float)
 
 
-def _outline(xy: np.ndarray, step: float = 0.5) -> np.ndarray:
-    """The footprint's convex outline, with points every ``step`` mm along it."""
-    from scipy.spatial import ConvexHull
-
-    hull = xy[ConvexHull(xy).vertices]
-    pts = []
-    for a, b in zip(hull, np.roll(hull, -1, axis=0)):
-        n = max(int(np.ceil(np.linalg.norm(b - a) / step)), 1)
-        pts.append(a + (b - a) * np.linspace(0, 1, n, endpoint=False)[:, None])
-    return np.vstack(pts)
-
-
-def _room(outline: np.ndarray, bed: np.ndarray, exclude: np.ndarray | None) -> float:
-    """Smallest gap (mm) from the placed outline to the bed edge or the no-print corner; < 0 = overlaps."""
-    lo, hi = bed.min(0), bed.max(0)
-    gap = float(min((outline - lo).min(), (hi - outline).min()))
-    if exclude is not None and len(exclude):
-        elo, ehi = exclude.min(0), exclude.max(0)
-        outside = np.maximum(np.maximum(elo - outline, outline - ehi), 0.0)
-        dist = np.linalg.norm(outside, axis=1)
-        inside = np.all((outline > elo) & (outline < ehi), axis=1)
-        gap = min(gap, float(-1.0 if inside.any() else dist.min()))
-    return gap
-
-
 def place_on_bed(vertices, printable_area, bed_exclude_area=(), clearance: float = 3.0) -> dict:
     """Turn about z and move so the footprint lies centred on the bed, clear of the no-print corner.
 
-    Straight (0 degrees) when that leaves ``clearance`` all round; otherwise
-    the half-degree turn leaving the most room. Returns the 3MF build
-    transform (3 x 4, row vectors), the angle and the room left.
+    The same search the plain 3MF uses (``insole.place_on_bed``), on the printer profile's own bed
+    (``printable_area``) and no-print corner (``bed_exclude_area``). Refuses rather than scales when nothing
+    leaves ``clearance``. Returns the 3MF build transform (3 x 4, row vectors), the angle and the room left.
     """
+    from .insole import place_on_bed as search
+
     V = np.asarray(vertices, float)
     bed = _poly(printable_area)
     exclude = _poly(bed_exclude_area) if len(bed_exclude_area) else None
-    outline0 = _outline(V[:, :2])
-    centre = (bed.min(0) + bed.max(0)) / 2
-
-    def placed(deg):
-        a = np.radians(deg)
-        c, s = np.cos(a), np.sin(a)
-        turned = outline0 @ np.array([[c, s], [-s, c]])
-        shift = centre - (turned.min(0) + turned.max(0)) / 2
-        return turned + shift, shift, (c, s)
-
-    best = None
-    for deg in np.arange(0.0, 360.0, 0.5):
-        outline, shift, cs = placed(deg)
-        room = _room(outline, bed, exclude)
-        if deg == 0.0 and room >= clearance:
-            best = (deg, room, shift, cs)
-            break
-        if best is None or room > best[1]:
-            best = (float(deg), room, shift, cs)
-    deg, room, shift, (c, s) = best
-    if room < clearance:
-        raise ValueError(f"doesn't fit this bed: best turn {deg:g} degrees leaves {room:.1f} mm "
+    at = search(V[:, :2], bed.min(0), bed.max(0),
+                (exclude.min(0), exclude.max(0)) if exclude is not None else None, clearance)
+    if at["room_mm"] < clearance:
+        raise ValueError(f"doesn't fit this bed: best turn {at['angle_deg']:g} degrees leaves {at['room_mm']:.1f} mm "
                          f"(needs {clearance:g} mm)")
+    c, s = at["cos"], at["sin"]
     tz = -float(V[:, 2].min())
-    transform = [c, s, 0.0, -s, c, 0.0, 0.0, 0.0, 1.0, float(shift[0]), float(shift[1]), tz]
-    return dict(transform=transform, angle_deg=float(deg), room_mm=round(float(room), 1))
+    transform = [c, s, 0.0, -s, c, 0.0, 0.0, 0.0, 1.0, at["shift"][0], at["shift"][1], tz]
+    return dict(transform=transform, angle_deg=at["angle_deg"], room_mm=round(at["room_mm"], 1))
 
 
 # ---------------------------------------------------------------------------
 # the file
 # ---------------------------------------------------------------------------
-_CORE = "http://schemas.microsoft.com/3dmanufacturing/core/2015/02"
+from .insole import THREEMF_CORE as _CORE  # noqa: E402 - the one 3MF core namespace
 _PROD = "http://schemas.microsoft.com/3dmanufacturing/production/2015/06"
 _BBS = "http://schemas.bambulab.com/package/2021"
 _REL_MODEL = "http://schemas.microsoft.com/3dmanufacturing/2013/01/3dmodel"
@@ -254,22 +243,19 @@ def _fmt(x: float) -> str:
     return f"{x:.6f}".rstrip("0").rstrip(".") if x != 0 else "0"
 
 
+MAX_PARTS = 2  # a left and a right: plates side by side in one row
+
+
 def plate_offset(printable_area, plate: int) -> tuple[float, float]:
     """Where plate ``plate`` (0 = first) sits in Bambu Studio's project space.
 
-    Bambu lays plates out in a grid of ceil-ish(sqrt(count)) columns, each one
-    a bed width plus a fifth apart (``PartPlateList::compute_shape_position``,
-    ``LOGICAL_PART_PLATE_GAP = 1/5``). Objects are put on a plate by where they
-    lie, so an object for plate 2 is moved by this much.
+    Bambu lays plates out a bed width plus a fifth apart (``PartPlateList::compute_shape_position``,
+    ``LOGICAL_PART_PLATE_GAP = 1/5``). For one or two plates that's one row, so plate 2 is one step to the
+    right; objects are put on a plate by where they lie, so an object for plate 2 is moved by this much.
+    (Three or more would start a grid of rows, which this doesn't write: ``MAX_PARTS``.)
     """
-    bed = _poly(printable_area)
-    w, d = np.ptp(bed, axis=0)
+    w = float(np.ptp(_poly(printable_area)[:, 0]))
     return plate * w * 1.2, 0.0
-
-
-def _columns(count: int) -> int:
-    root = np.sqrt(count)
-    return int(round(root) + 1) if root > round(root) else int(round(root))
 
 
 def write_project(parts: list[dict], path: Path, config: dict, *, title: str, description: str) -> Path:
@@ -277,8 +263,8 @@ def write_project(parts: list[dict], path: Path, config: dict, *, title: str, de
 
     A part is ``dict(vertices, faces, name, placement)``; part k goes on plate k + 1.
     """
-    if len(parts) > 2:
-        raise ValueError("one or two parts (plates in one row); more needs Bambu's grid of rows")
+    if not 1 <= len(parts) <= MAX_PARTS:
+        raise ValueError(f"one to {MAX_PARTS} insoles (plates in one row), not {len(parts)}")
     app = f"BambuStudio-{config['version']}"
     ident = " ".join(["1", "0", "0", "0", "0", "1", "0", "0", "0", "0", "1", "0", "0", "0", "0", "1"])
     head = (f'<?xml version="1.0" encoding="UTF-8"?>\n<model unit="millimeter" xml:lang="en-US" xmlns="{_CORE}" '
@@ -395,6 +381,11 @@ def placed_vertices(transform, vertices) -> np.ndarray:
     return np.asarray(vertices, float) @ M[:3] + M[3]
 
 
+# Every project carries this, whatever it was made from: an STL has no notes of its own to pass on.
+SAFETY_NOTE = ("NOT A MEDICAL DEVICE. No posting. Walking-only break-in; no sport until a clinician has signed "
+               "the summary sheet.")
+
+
 def _load_insole(mesh_path: Path):
     mesh_path = Path(mesh_path)
     if mesh_path.suffix.lower() == ".3mf":
@@ -408,6 +399,25 @@ def _load_insole(mesh_path: Path):
     return np.asarray(m.vertices), np.asarray(m.faces), mesh_path.stem, ""
 
 
+def check_output(out: Path, inputs) -> None:
+    """Refuse an output that would destroy something: one of the inputs, a file that isn't a .3mf, or a .3mf
+    that isn't a Bambu project already (a plain insole 3MF, for one). Replacing an earlier project is fine."""
+    out = Path(out)
+    if out.suffix.lower() != ".3mf":
+        raise ValueError(f"the project to write must be a .3mf file, not {out.name!r}")
+    if any(Path(i).resolve() == out.resolve() for i in inputs):
+        raise ValueError(f"{out.name} is one of the insole files: name a new file for the project")
+    if out.exists():
+        try:
+            with zipfile.ZipFile(out) as z:
+                is_project = "Metadata/project_settings.config" in z.namelist()
+        except (OSError, zipfile.BadZipFile):
+            is_project = False
+        if not is_project:
+            raise ValueError(f"{out.name} already exists and isn't a Bambu project (an insole file?): "
+                             f"name a new file for the project")
+
+
 def tpu_project(mesh_paths, out: Path, profiles: Path, *, printer: str, process: str, filament: str,
                 bed_type: str, filament_changes: dict[str, str] | None = None,
                 app_version: str = DEFAULT_APP_VERSION) -> dict:
@@ -417,6 +427,9 @@ def tpu_project(mesh_paths, out: Path, profiles: Path, *, printer: str, process:
     """
     if isinstance(mesh_paths, (str, Path)):
         mesh_paths = [mesh_paths]
+    if not 1 <= len(mesh_paths) <= MAX_PARTS:  # before any file is read
+        raise ValueError(f"one to {MAX_PARTS} insole files (one per plate: a left and a right), not {len(mesh_paths)}")
+    check_output(out, mesh_paths)
     cfg = project_config(profiles, printer, process, filament, bed_type=bed_type,
                          filament_changes=filament_changes, app_version=app_version)
     parts, report, descriptions = [], [], []
@@ -431,6 +444,8 @@ def tpu_project(mesh_paths, out: Path, profiles: Path, *, printer: str, process:
         if description and description not in descriptions:
             descriptions.append(description)
     title = parts[0]["name"] if len(parts) == 1 else " + ".join(p["name"] for p in parts)
+    if not any("NOT A MEDICAL DEVICE" in d for d in descriptions):  # e.g. from an STL, which has no notes
+        descriptions.insert(0, SAFETY_NOTE)
     write_project(parts, out, cfg, title=title, description=" ".join(descriptions))
     return dict(path=str(out), plates=report, printer=printer, process=process, filament=filament,
                 bed_type=bed_type, changed=sorted(TPU_INSOLE_PROCESS), filament_changed=filament_changes or {},
@@ -443,8 +458,10 @@ def main(argv=None) -> int:
     ap = argparse.ArgumentParser(prog="python -m footscan.bambu",
                                  description="insole 3MF/STL -> Bambu Studio project with TPU settings")
     ap.add_argument("files", type=Path, nargs="+",
-                    help="the insole .3mf (from `footscan insole`) or .stl files, one per plate, then the "
-                         "project file to write (.3mf)")
+                    help=f"the insole .3mf (from `footscan insole`) or .stl files, one per plate (at most "
+                         f"{MAX_PARTS}: a left and a right)")
+    ap.add_argument("-o", "--output", type=Path, required=True,
+                    help="the Bambu Studio project to write (.3mf; a new file, or an earlier project)")
     ap.add_argument("--profiles", type=Path, required=True,
                     help="Bambu Studio's BBL profile folder, e.g. BambuStudio.app/Contents/Resources/profiles/BBL")
     ap.add_argument("--printer", default="Bambu Lab X1 Carbon 0.4 nozzle")
@@ -452,15 +469,21 @@ def main(argv=None) -> int:
     ap.add_argument("--filament", default="Bambu TPU 95A HF @BBL X1C")
     ap.add_argument("--bed-type", default="Textured PEI Plate", choices=BED_TYPES)
     ap.add_argument("--max-flow", type=float, default=None,
-                    help="filament max volumetric speed (mm^3/s), lower for a slower spool")
+                    help=f"filament max volumetric speed (mm^3/s), lower for a slower spool "
+                         f"(more than 0, at most {MAX_FLOW_LIMIT:g})")
     ap.add_argument("--app-version", default=DEFAULT_APP_VERSION,
                     help="Bambu Studio version to write (not newer than the app that will open it)")
     a = ap.parse_args(argv)
-    if len(a.files) < 2:
-        ap.error("give at least one insole file and then the project file to write")
-    *meshes, out = a.files
-    fil = {"filament_max_volumetric_speed": f"{a.max_flow:g}"} if a.max_flow else None
-    info = tpu_project(meshes, out, a.profiles, printer=a.printer, process=a.process, filament=a.filament,
+    if len(a.files) > MAX_PARTS:
+        ap.error(f"at most {MAX_PARTS} insole files (one per plate: a left and a right); the project is -o")
+    if a.max_flow is not None and not 0 < a.max_flow <= MAX_FLOW_LIMIT:
+        ap.error(f"--max-flow must be more than 0 and at most {MAX_FLOW_LIMIT:g} mm^3/s, not {a.max_flow:g}")
+    try:
+        check_output(a.output, a.files)
+    except ValueError as e:
+        ap.error(str(e))
+    fil = {"filament_max_volumetric_speed": f"{a.max_flow:g}"} if a.max_flow is not None else None
+    info = tpu_project(a.files, a.output, a.profiles, printer=a.printer, process=a.process, filament=a.filament,
                        bed_type=a.bed_type, filament_changes=fil, app_version=a.app_version)
     print(json.dumps(info, indent=2))
     return 0

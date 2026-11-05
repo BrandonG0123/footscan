@@ -456,26 +456,81 @@ def from_scan(mesh, foot: str, params: InsoleParams | None = None) -> Insole:
 # ---------------------------------------------------------------------------
 THREEMF_CORE = "http://schemas.microsoft.com/3dmanufacturing/core/2015/02"
 
+# The corner of the bed a Bambu X1 or P1 keeps for its nozzle wipe and flow check (``bed_exclude_area`` in its
+# printer profile: 0,0 to 18,28 mm, front left). Nothing may be printed there, so the plain 3MF keeps clear of it
+# too: Bambu Studio opens that file where it was placed.
+BAMBU_NO_PRINT_CORNER = ((0.0, 0.0), (18.0, 28.0))
+
+
+def footprint_outline(xy, step: float = 0.5) -> np.ndarray:
+    """The footprint's convex outline (points, mm), with points every ``step`` mm along it."""
+    from scipy.spatial import ConvexHull
+
+    P = np.asarray(xy, float)[:, :2]
+    hull = P[ConvexHull(P).vertices]
+    pts = []
+    for a, b in zip(hull, np.roll(hull, -1, axis=0)):
+        n = max(int(np.ceil(np.linalg.norm(b - a) / step)), 1)
+        pts.append(a + (b - a) * np.linspace(0, 1, n, endpoint=False)[:, None])
+    return np.vstack(pts)
+
+
+def _room_on_bed(outline: np.ndarray, lo, hi, exclude) -> float:
+    """Smallest gap (mm) from a placed outline to the bed's edge or the no-print corner; < 0 = overlaps."""
+    gap = float(min((outline - lo).min(), (hi - outline).min()))
+    if exclude is not None:
+        elo, ehi = np.asarray(exclude[0], float), np.asarray(exclude[1], float)
+        outside = np.maximum(np.maximum(elo - outline, outline - ehi), 0.0)
+        inside = np.all((outline > elo) & (outline < ehi), axis=1)
+        gap = min(gap, -1.0 if inside.any() else float(np.linalg.norm(outside, axis=1).min()))
+    return gap
+
+
+def place_on_bed(xy, lo, hi, exclude=None, clearance: float = 3.0) -> dict:
+    """Where a footprint (points, mm) goes on a bed from ``lo`` to ``hi`` (x, y), clear of ``exclude`` (a
+    no-print corner, (lo, hi)): turned about z, then moved so its middle is the bed's middle. Never scaled.
+
+    Straight (0 degrees) when that leaves ``clearance`` all round, as that's easiest to check by eye;
+    otherwise the half-degree turn that leaves the most room. -> angle_deg, cos/sin, shift (x, y) to apply
+    after turning, room_mm (the gap left; below ``clearance`` when nothing fits)."""
+    outline0 = footprint_outline(xy)
+    lo, hi = np.asarray(lo, float), np.asarray(hi, float)
+    centre = (lo + hi) / 2
+    best = None
+    for deg in np.arange(0.0, 360.0, 0.5):
+        a = np.radians(deg)
+        c, s = np.cos(a), np.sin(a)
+        turned = outline0 @ np.array([[c, s], [-s, c]])
+        shift = centre - (turned.min(0) + turned.max(0)) / 2
+        room = _room_on_bed(turned + shift, lo, hi, exclude)
+        if best is None or room > best["room_mm"]:
+            best = dict(angle_deg=float(deg), cos=float(c), sin=float(s), shift=(float(shift[0]), float(shift[1])),
+                        room_mm=float(room))
+        if deg == 0.0 and room >= clearance:
+            break
+    return best
+
 
 def write_3mf(mesh, path: Path, title: str, notes: str, bed_mm: float = 256.0) -> None:
     """A plain 3MF (core spec): one object, millimetres, placed in the middle of the bed.
 
     Slicers (Bambu Studio, Orca, Prusa) open this as geometry; it carries no
     printer or filament settings. If it doesn't fit straight, it is turned
-    to whichever angle fits best (``bed_fit_shape``).
+    to whichever angle leaves the most room to the bed's edges and to a
+    Bambu X1/P1's no-print corner (``place_on_bed``), so a long insole
+    opened as it is doesn't sit over the corner the printer wipes its
+    nozzle in. Only turned and moved, never scaled.
     """
     import zipfile
     from xml.sax.saxutils import escape
 
     V = np.asarray(mesh.vertices, dtype=float)
     F = np.asarray(mesh.faces, dtype=int)
-    angle = bed_fit_shape(V[:, :2], bed_mm)["angle_deg"]  # the turn that fits the bed best (0 if it fits straight)
-    c, s = np.cos(np.radians(angle)), np.sin(np.radians(angle))
+    at = place_on_bed(V[:, :2], (0.0, 0.0), (bed_mm, bed_mm), BAMBU_NO_PRINT_CORNER)
+    c, s = at["cos"], at["sin"]
     # build transform (3MF: 3 x 4, row vectors): rotate about z, then move the turned footprint's
     # middle to the bed's middle, bottom on z = 0
-    turned = V[:, :2] @ np.array([[c, s], [-s, c]])
-    mid = (turned.min(0) + turned.max(0)) / 2
-    tx, ty = bed_mm / 2 - mid[0], bed_mm / 2 - mid[1]
+    tx, ty = at["shift"]
     tz = -V[:, 2].min()
     transform = f"{c:.6f} {s:.6f} 0 {-s:.6f} {c:.6f} 0 0 0 1 {tx:.4f} {ty:.4f} {tz:.4f}"
 

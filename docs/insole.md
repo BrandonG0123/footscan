@@ -20,29 +20,6 @@ reconstructions are; mm, cm or m are detected. It writes:
 | `print-notes.txt` | Starting points for TPU. Untested on this design (that's Phase 5). |
 | `right-insole.json` | Everything above as data. |
 
-### A Bambu Studio project with TPU settings
-
-```bash
-.venv/bin/python -m footscan.bambu reports/my-insole/right-insole.3mf right-insole-tpu.3mf \
-  --profiles /Applications/BambuStudio.app/Contents/Resources/profiles/BBL --bed-type "High Temp Plate"
-```
-
-turns the plain 3MF into a Bambu Studio project (`src/footscan/bambu.py`):
-opening it selects the printer (default X1 Carbon 0.4 mm nozzle), Bambu's own
-TPU 95A HF filament profile, the plate type, and a process with 3 walls,
-20% gyroid infill and slow speeds (40 mm/s infill, 25 mm/s outer wall and
-top surface). The shape is copied unchanged at scale 1; it is only turned
-and moved to lie on the bed clear of the printer's no-print corner. The
-settings are starting points, not yet checked on a printed insole. Use the
-profile folder of the Bambu Studio that will open the file, and
-`--app-version` no newer than that app.
-
-Give it both insoles (`left.3mf right.3mf pair.3mf`) for one project with the
-left on plate 1 and the right on plate 2. For a different spool pick its
-profile with `--filament` (e.g. `"Bambu TPU 95A @BBL X1C"`, Bambu's standard,
-not-HF TPU) and slow the whole print with `--max-flow 2.5` (mm³/s), which
-caps every speed at what the spool can melt.
-
 `--length 270` lengthens the insole to a shoe's insole length (mm): only the
 flat front reaches further, the shape under the heel, arch and ball stays
 where the foot is, and it's never made shorter than the foot. In the studio
@@ -77,6 +54,41 @@ scan's card). How (`src/footscan/recon/shoe.py`):
   where the shoe's outline leaves room for it outside the heel.
 
 Not yet tried on a real shoe's insole.
+
+## A Bambu Studio project with TPU settings
+
+```bash
+.venv/bin/python -m footscan.bambu reports/my-insole/right-insole.3mf -o right-insole-tpu.3mf \
+  --profiles /Applications/BambuStudio.app/Contents/Resources/profiles/BBL --bed-type "High Temp Plate"
+```
+
+turns the plain 3MF into a Bambu Studio project (`src/footscan/bambu.py`):
+opening it selects the printer (default X1 Carbon 0.4 mm nozzle), Bambu's own
+TPU 95A HF filament profile, the plate type, and a process with 3 walls,
+20% gyroid infill and slow speeds (40 mm/s infill, 25 mm/s outer wall and
+top surface). The shape is copied unchanged at scale 1; it is only turned
+and moved to lie on the bed clear of the printer's no-print corner. The
+settings are starting points, not yet checked on a printed insole. Use the
+profile folder of the Bambu Studio that will open the file, and
+`--app-version` no newer than that app.
+
+Give it both insoles (`left.3mf right.3mf -o pair.3mf`) for one project with
+the left on plate 1 and the right on plate 2 (at most two). The project is
+always the `-o` file: it must be a new `.3mf` or an earlier Bambu project, never
+one of the insole files or a plain insole 3MF, so a forgotten name can't
+overwrite an insole. For a different spool pick its profile with `--filament`
+(e.g. `"Bambu TPU 95A @BBL X1C"`, Bambu's standard, not-HF TPU; presets in
+Bambu's sub-folders, such as the P1P's, are found through Bambu's own
+`BBL.json` index) and slow the whole print with `--max-flow 2.5` (mm³/s,
+more than 0 and at most 200), which caps every speed at what the spool can
+melt.
+
+The project's notes always carry the not-a-medical-device line (no posting;
+walking-only break-in; no sport until a clinician has signed the summary
+sheet), from an STL too, which has no notes of its own. The plain 3MF from
+`footscan insole` is placed by the same search, so it also keeps clear of the
+X1/P1 no-print corner when opened as it is.
+
 
 ## From the iPhone app
 
