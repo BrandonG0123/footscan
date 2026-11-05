@@ -889,6 +889,20 @@ def test_make_insole_can_fit_to_a_scanned_shoes_insole(servers):
     assert call(f"{op}/api/captures/{foot}/insole/insole.3mf")[0] == 409
 
 
+def test_a_default_the_studio_cant_write_answers_with_why(servers, monkeypatch):
+    """data/shoes not writable or the disk full: a JSON answer naming the folder, as a failed save gets."""
+    from footscan import shoes
+
+    op, _phone, _data = servers
+
+    def full(folder, sid):
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(shoes, "set_default", full)
+    st, raw, _ = call(f"{op}/api/shoes/default", "POST", {"id": None})
+    assert st == 500 and "couldn't choose the default" in json.loads(raw)["error"]
+
+
 def test_a_saved_shoe_is_the_default_outline_for_every_new_insole(servers):
     """POST /api/shoes saves a shoe's-insole capture as a saved shoe (one outline per shoe and size); made the
     default, POST insole {} takes its outline; {foot_outline: true} opts out; saving it again makes the insole
@@ -909,7 +923,9 @@ def test_a_saved_shoe_is_the_default_outline_for_every_new_insole(servers):
 
     assert body(call(f"{op}/api/shoes")) == {"shoes": [], "default": None, "default_problem": None}
     plain = body(call(f"{op}/api/captures/{foot}/insole", "POST", {}))  # no saved shoe yet: the foot's outline
-    assert plain["shoe"] is None and plain["length_mm"] < 265 and plain["outline"] == "foot"
+    # recorded as "the default" (there was none), not as a choice of the foot's outline: once a default is
+    # saved, this card's menu and Remake follow it instead of cutting the foot's outline again
+    assert plain["shoe"] is None and plain["length_mm"] < 265 and plain["outline"] == "default"
 
     new = {"capture": shoe, "name": "Test Trainer", "size": "US men's 9.5", "default": True}
     st, raw, _ = call(f"{op}/api/shoes", "POST", new)

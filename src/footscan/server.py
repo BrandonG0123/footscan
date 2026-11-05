@@ -699,6 +699,9 @@ def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check
                     shoes_mod.set_default(shoes_dir, sid or None)
                 except shoes_mod.ShoeLibraryError as e:
                     raise BadRequest(str(e)) from None
+                except OSError as e:  # the studio's own folder (not writable, disk full), as for a save
+                    return self.send_json({"error": f"couldn't choose the default in {shoes_dir} ({e})"},
+                                          HTTPStatus.INTERNAL_SERVER_ERROR)
                 return self.send_json(dict(default=shoes_mod.default_id(shoes_dir)))
             raise FileNotFoundError
 
@@ -769,6 +772,10 @@ def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check
                     shoe = shoe_capture(captures_dir, shoe_id) if shoe_id is not None else None
                     saved = saved_shoe(shoes_dir, saved_id) if saved_id is not None else None
                     result = make_insole(d, meta, length_mm=length, shoe=shoe, saved=saved)
+                    if result.get("outline") == "foot" and length is None and not opts.get("foot_outline"):
+                        # nothing was asked, and there was no default saved shoe: not a choice of the foot's
+                        # outline, so once a default is saved the menu (and Remake) follow it
+                        result["outline"] = "default"
                     if "error" in result:  # a failed attempt leaves nothing printable behind
                         shutil.rmtree(d / "insole", ignore_errors=True)
                     meta = read_json(d / "capture.json")  # re-read: don't undo other changes made meanwhile

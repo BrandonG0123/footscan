@@ -61,7 +61,8 @@
       // the captures and the saved shoes (one insole outline per shoe model and size; none is fine), together
       const [r, shoes] = await Promise.all([
         fetch("/api/captures"),
-        fetch("/api/shoes").then((r) => r.ok ? r.json() : saved).catch(() => saved),
+        // not listed (an error): the menu then asks for the default, so the studio applies it or says why
+        fetch("/api/shoes").then((r) => r.ok ? r.json() : UNLISTED).catch(() => UNLISTED),
       ]);
       all = await r.json();
       saved = shoes;
@@ -74,6 +75,7 @@
   }
 
   let saved = { shoes: [], default: null };
+  const UNLISTED = { shoes: [], default: null, unlisted: true };
 
   function render() {
     const cond = $("f-cond").value, foot = $("f-foot").value;
@@ -156,16 +158,17 @@
     if (ins && !shoe && (ins.outline === "foot" || ins.shoe_length_mm != null)) return "foot";
     // a default that was chosen but can't be read: ask for it anyway, so Make insole says what's wrong with it
     // instead of quietly cutting the insole to the foot's own outline
-    return saved.default ? `saved:${saved.default}` : saved.default_problem ? "" : "foot";
+    return saved.default ? `saved:${saved.default}` : saved.default_problem || saved.unlisted ? "" : "foot";
   }
 
   function shoePicker(c) {
     const scans = all.filter((s) => s.condition === "shoe_insole" && s.mesh);
-    if (!scans.length && !saved.shoes.length && !saved.default_problem) return "";
+    if (!scans.length && !saved.shoes.length && !saved.default_problem && !saved.unlisted) return "";
     const chosen = outlineChoice(c);
     const opt = (value, label) => `<option value="${esc(value)}" ${value === chosen ? "selected" : ""}>${label}</option>`;
     return `<select data-shoe-for="${esc(c.capture_id)}" aria-label="The insole's outline: a shoe's, or the foot's own">
       ${saved.default_problem ? opt("", "Outline: the default saved shoe (can't be read)") : ""}
+      ${saved.unlisted ? opt("", "Outline: the default saved shoe, if any (the saved shoes couldn't be listed)") : ""}
       ${saved.shoes.map((s) => opt(`saved:${s.id}`, `Outline: ${esc(s.name)}, ${esc(s.size)}${s.id === saved.default ? " (default)" : ""}`)).join("")}
       ${scans.map((s) => opt(`scan:${s.capture_id}`, `Outline: the shoe's insole scanned ${esc(s.created?.slice(0, 16).replace("T", " "))}`)).join("")}
       ${opt("foot", "Outline: the foot's own")}</select>`;
@@ -194,8 +197,7 @@
         body: JSON.stringify({ capture: btn.dataset.saveShoe, name, size, default: makeDefault }) });
       const out = await r.json();
       if (!r.ok) throw new Error(out.error || r.status);
-      saved = await fetch("/api/shoes").then((r) => r.json());
-      render();
+      await load(); // the captures too: insoles cut to an earlier save of this shoe are stale now
       alert(`Saved: ${out.name}, ${out.size} (${out.length_mm} × ${out.width_mm} mm).`);
     } catch (err) {
       alert(`Couldn't save the shoe: ${err.message}`);
