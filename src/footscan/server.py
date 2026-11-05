@@ -73,8 +73,8 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+from . import atomic, recon_jobs
 from . import mat as mat_mod
-from . import recon_jobs
 from . import survey as survey_mod
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -200,8 +200,6 @@ def read_json(path: Path) -> dict:
 def write_json(path: Path, obj: dict) -> None:
     """Written whole to this call's own temporary file, then swapped in (a reader sees the old file or the new),
     tried again for a moment while a reader has the old one open (Windows refuses the swap meanwhile)."""
-    from . import atomic
-
     atomic.write_utf8(path, json.dumps(obj, indent=2))
 
 
@@ -1096,7 +1094,8 @@ def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check
                         # upload (nothing in it but its capture.json) is removed; any other keeps what it had.
                         check = check_completeness(captures_dir, staged, meta)
                         if check and check.get("problems"):
-                            if not [f for f in d.iterdir() if f.name != "capture.json" and f != staged]:
+                            if not [f for f in d.iterdir()
+                                    if f.name != "capture.json" and f != staged and not atomic.is_temporary(f)]:
                                 shutil.rmtree(d, ignore_errors=True)
                             raise IncompleteScan(check["problems"])
                         new = {f.name for f in staged.iterdir()}
@@ -1235,16 +1234,26 @@ def insole_is_stale(folder: Path, meta: dict) -> bool:
     """Was this capture's model (or the shoe's it was fitted to) replaced or rebuilt after its insole was made,
     or the way a sole scan is prepared changed?"""
     ins = meta.get("insole") or {}
-    return bool(ins) and "error" not in ins and (ins.get("source") != source_stamp(insole_source(folder, meta))
-                                                 or _shoe_changed(folder, ins) or _prepared_another_way(meta, ins))
+    if not ins or "error" in ins:
+        return False
+    try:
+        return (ins.get("source") != source_stamp(insole_source(folder, meta))
+                or _shoe_changed(folder, ins) or _prepared_another_way(meta, ins))
+    except (ValueError, OSError):  # what it was made from can't be read (or is mid-rebuild): not current
+        return True
 
 
 def insole_downloadable(folder: Path, meta: dict) -> bool:
     """Only an insole from a successful build whose source model is still the current one."""
     ins = meta.get("insole") or {}
-    current = source_stamp(insole_source(folder, meta))
-    return (bool(ins) and "error" not in ins and current is not None and ins.get("source") == current
-            and not _shoe_changed(folder, ins) and not _prepared_another_way(meta, ins))
+    if not ins or "error" in ins:
+        return False
+    try:
+        current = source_stamp(insole_source(folder, meta))
+        return (current is not None and ins.get("source") == current
+                and not _shoe_changed(folder, ins) and not _prepared_another_way(meta, ins))
+    except (ValueError, OSError):  # what it was made from can't be read (or is mid-rebuild): not current
+        return False
 
 
 def parse_shoe_length(value) -> float | None:
@@ -1513,9 +1522,10 @@ def list_submissions(submissions_dir: Path) -> list[dict]:
     out = []
     for f in submissions_dir.glob("*/submission.json") if submissions_dir.exists() else []:
         try:
-            out.append(public_meta(read_json(f)))
+            meta = read_json(f)
         except (ValueError, OSError):  # garbled or not UTF-8 (ValueErrors), or removed since the glob saw it
             continue
+        out.append(public_meta(meta))
     return sorted(out, key=lambda m: m.get("created", ""), reverse=True)
 
 
@@ -1527,13 +1537,8 @@ def list_captures(captures_dir: Path) -> list[dict]:
         except (ValueError, OSError):  # garbled or not UTF-8, or removed since the glob saw it (a refused upload)
             continue
         meta.pop("frames", None)
-        if meta.get("insole"):
-            try:
-                stale = insole_is_stale(f.parent, meta)
-            except (ValueError, OSError):  # what it was made from can't be read (or is mid-rebuild): not current
-                stale = True
-            if stale:
-                meta["insole"] = {**meta["insole"], "stale": True}
+        if meta.get("insole") and insole_is_stale(f.parent, meta):
+            meta["insole"] = {**meta["insole"], "stale": True}
         out.append(meta)
     return sorted(out, key=lambda m: m.get("created", ""), reverse=True)
 
@@ -1622,17 +1627,26 @@ def serve(host: str = "127.0.0.1", port: int = 8765, https: bool = False, public
     """Run the site. ``public``: reachable from the internet through a tunnel or
     proxy, so nothing is trusted for being "local" and only the studio key
     opens the studio."""
+    def read_only_checkout(what: Path, detail: str = "") -> SystemExit:
+        return SystemExit(f"can't write {what}{detail}: this account may only read the checkout (the Windows "
+                          f"service runs as Local Service). Start footscan serve{' --https' if https else ''} once "
+                          f"as yourself to make it, then start the service.")
+
     try:
         studio_key = load_studio_key(ROOT / ".studio_key")
     except PermissionError:
-        raise SystemExit(f"can't write the studio key {ROOT / '.studio_key'}: this account may only read the "
-                         f"checkout (the Windows service runs as Local Service). Start footscan serve once as "
-                         f"yourself to make it, then start the service.") from None
+        raise read_only_checkout(ROOT / ".studio_key") from None
     if allow_indexing is None:
         allow_indexing = not public  # on the internet, hidden from search engines unless asked otherwise
     cert_fp = None
     if https:
-        cert_path, key_path = ensure_cert(ROOT / ".certs")
+        try:
+            cert_path, key_path = ensure_cert(ROOT / ".certs")
+        except PermissionError:
+            raise read_only_checkout(ROOT / ".certs") from None
+        except subprocess.CalledProcessError as e:  # openssl couldn't write the certificate there
+            said = (e.stderr or b"").decode("utf-8", "replace").strip().splitlines()
+            raise read_only_checkout(ROOT / ".certs", f" (openssl: {said[-1]})" if said else "") from None
         cert_fp = cert_fingerprint(cert_path)
     handler = make_handler(data_dir=(data_dir or DATA_DIR).resolve(), studio_key=studio_key,
                            secure_cookie=https or public, local_check=never_local if public else is_loopback,

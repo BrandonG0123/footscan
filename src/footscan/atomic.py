@@ -35,11 +35,23 @@ def replace(tmp: Path, path: Path, retry_for_s: float | None = None) -> None:
             time.sleep(RETRY_EVERY_S)
 
 
+def temporary_name(path: Path) -> Path:
+    """This write's own temporary file beside ``path``: ``.<name>.<random>.tmp``."""
+    return path.with_name(f".{path.name}.{secrets.token_hex(4)}.tmp")
+
+
+def is_temporary(path: Path) -> bool:
+    """One of ``write_utf8``'s temporary files: left behind only if the process was killed mid-write, and
+    never a file anyone made."""
+    name = Path(path).name
+    return name.startswith(".") and name.endswith(".tmp")
+
+
 def write_utf8(path: Path, text: str) -> None:
     """Write ``text`` (UTF-8) whole to this call's own temporary file beside ``path``, then swap it in
     (``replace``): two writers never share a temporary file, and a reader sees the old file or the new."""
     path = Path(path)
-    tmp = path.with_name(f".{path.name}.{secrets.token_hex(4)}.tmp")
+    tmp = temporary_name(path)
     try:
         tmp.write_text(text, encoding="utf-8")
         replace(tmp, path)

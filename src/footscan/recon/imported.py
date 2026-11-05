@@ -245,7 +245,7 @@ def score_capture(folder, up: str = "y") -> dict:
 
     folder = Path(folder)
     calipers_file = folder / "calipers.json"
-    calipers = json.loads(calipers_file.read_text(encoding="utf-8")) if calipers_file.exists() else None
+    calipers = json.loads(calipers_file.read_text(encoding="utf-8-sig")) if calipers_file.exists() else None  # a BOM too, like --calipers
     mesh = trimesh.load(folder / "mesh.ply", force="mesh")
     try:
         report = evaluate_imported(mesh, up=up, calipers=calipers)

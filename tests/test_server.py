@@ -1386,9 +1386,109 @@ def test_a_capture_whose_insole_cant_be_checked_is_listed_as_stale_not_left_out(
     def unreadable(folder, meta):
         raise ValueError("not UTF-8")
 
-    monkeypatch.setattr(server, "insole_is_stale", unreadable)
+    monkeypatch.setattr(server, "insole_source", unreadable)
     [c] = server.list_captures(tmp_path / "captures")
     assert c["capture_id"] == "A" and c["insole"]["stale"] is True
+
+
+def test_an_insole_whose_source_cant_be_read_is_not_downloadable_and_the_review_loop_carries_on(tmp_path, monkeypatch):
+    """The same unreadable source answers "not current" wherever it's asked (the download, the review
+    loop), instead of an error that stops the review of every other capture."""
+    from footscan import review, server
+
+    for cid in ("A", "B"):
+        d = tmp_path / "captures" / cid
+        (d / "insole").mkdir(parents=True)
+        (d / "insole" / "insole.json").write_text("{}", encoding="utf-8")
+        server.write_json(d / "capture.json", {"capture_id": cid, "insole": {"made": "x", "source": "m"}})
+
+    def source(folder, meta):
+        if folder.name == "A":
+            raise OSError("removed mid-rebuild")
+        return folder / "mesh.ply"
+
+    monkeypatch.setattr(server, "insole_source", source)
+    monkeypatch.setattr(server, "source_stamp", lambda path: "m")
+    assert server.insole_downloadable(tmp_path / "captures" / "A", {"insole": {"made": "x", "source": "m"}}) is False
+    assert server.insole_is_stale(tmp_path / "captures" / "A", {"insole": {"made": "x", "source": "m"}}) is True
+    assert [f.name for f, _m in review.pending(tmp_path)] == ["B"]
+
+
+def test_a_list_of_submissions_still_shows_a_bug_in_reading_one(tmp_path, monkeypatch):
+    """Only a submission.json that can't be read is left out; a ValueError from turning it into the studio's
+    view is a bug, and is raised, not hidden by leaving that submission out."""
+    from footscan import server
+
+    (tmp_path / "S1").mkdir()
+    server.write_json(tmp_path / "S1" / "submission.json", {"created": "1", "scans": {}})
+
+    def broken(meta):
+        raise ValueError("a bug")
+
+    monkeypatch.setattr(server, "public_meta", broken)
+    with pytest.raises(ValueError, match="a bug"):
+        server.list_submissions(tmp_path)
+
+
+def test_a_build_from_before_the_computer_last_started_has_stopped(monkeypatch):
+    """After a restart or a power cut, the number in a build's status.json may belong to another account's
+    process now, which can't be asked (access denied) and would look alive for good. A status written
+    before the computer started is from a process that has stopped."""
+    import os
+
+    from footscan import recon_jobs
+
+    monkeypatch.setattr(recon_jobs, "booted_at", lambda: 1000.0)
+    assert recon_jobs.pid_alive(os.getpid(), since=999.0) is False
+    assert recon_jobs.pid_alive(os.getpid(), since=1001.0) is True
+    assert recon_jobs.pid_alive(os.getpid()) is True  # no time written: asked as before
+
+
+def test_a_build_page_reads_a_bom_calipers_file_and_skips_a_garbled_plantar_file(tmp_path):
+    """calipers.json saved by Notepad starts with a byte-order mark, which --calipers accepts; the status
+    must too. A plantar.json cut short (being rewritten, or removed by a rebuild) leaves its profile out
+    instead of failing the whole status."""
+    import json
+
+    from footscan import recon_jobs
+
+    out = tmp_path / "recon"
+    out.mkdir()
+    (out / "status.json").write_text(json.dumps({"state": "done", "stage": "done"}), encoding="utf-8")
+    (out / "plantar.json").write_bytes(b'{"medial_prof')
+    (tmp_path / "calipers.json").write_bytes(b"\xef\xbb\xbf" + json.dumps({"length": 50.0}).encode())
+    s = recon_jobs.summary(tmp_path)
+    assert s["state"] == "done" and s["medial_profile"] is None and s["calipers"] == {"length": 50.0}
+
+
+@pytest.mark.parametrize("failure", ["permission", "openssl"])
+def test_a_studio_that_cant_write_its_certificate_says_how_to_make_it(monkeypatch, failure):
+    """Under Local Service the checkout is read-only, so a missing .certs (first start, or deleted to make
+    a new certificate) can't be made there: say to start it once as yourself, not a traceback."""
+    import subprocess
+
+    from footscan import server
+
+    def refused(cert_dir):
+        if failure == "permission":
+            raise PermissionError(13, "Access is denied", str(cert_dir))
+        raise subprocess.CalledProcessError(1, ["openssl"], stderr=b"req: Can't open key.pem for writing")
+
+    monkeypatch.setattr(server, "load_studio_key", lambda path: "k")
+    monkeypatch.setattr(server, "ensure_cert", refused)
+    with pytest.raises(SystemExit, match="Start footscan serve --https once as yourself"):
+        server.serve(https=True)
+
+
+def test_a_temporary_file_left_by_a_killed_write_is_known_as_one(tmp_path):
+    """A write killed between writing its temporary file and the swap leaves that file behind. It isn't
+    something anyone made, so a refused upload's capture with only that beside capture.json is still
+    removed."""
+    from footscan import atomic
+
+    assert atomic.is_temporary(atomic.temporary_name(tmp_path / "capture.json"))
+    assert not atomic.is_temporary(tmp_path / "capture.json")
+    assert not atomic.is_temporary(tmp_path / "mesh.ply")
 
 
 def test_a_request_refused_for_two_lengths_still_gets_its_answer(servers):

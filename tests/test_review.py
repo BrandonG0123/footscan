@@ -364,10 +364,19 @@ def test_the_windows_service_runs_nssm_from_where_only_an_administrator_can_chan
     user's own folder, so the commands copy it
     to Program Files and put that copy first before `nssm install` records which nssm the service runs."""
     lines = service.render("windows", tmp_path / "footscan", tmp_path / "data")["content"].splitlines()
-    copy = next(i for i, ln in enumerate(lines) if ln.startswith("Copy-Item") and "Program Files\\nssm" in ln)
+    copy = next(i for i, ln in enumerate(lines) if "Copy-Item" in ln and "Program Files\\nssm" in ln)
     first = next(i for i, ln in enumerate(lines) if ln.startswith('$env:Path = "C:\\Program Files\\nssm;"'))
     install = next(i for i, ln in enumerate(lines) if ln.startswith("nssm install Footscan"))
     assert copy < first < install
+
+
+def test_pasting_the_windows_service_commands_again_leaves_the_running_nssm_alone(tmp_path):
+    """The second time, (Get-Command nssm) is already the Program Files copy, which Copy-Item can't copy onto
+    itself or overwrite while a service runs from it; PowerShell would print the error and carry on."""
+    lines = service.render("windows", tmp_path / "footscan", tmp_path / "data")["content"].splitlines()
+    copy = next(ln for ln in lines if "Copy-Item" in ln)
+    assert copy.startswith('if (-not (Test-Path "C:\\Program Files\\nssm\\nssm.exe")) {')
+    assert "-ErrorAction Stop" in copy
 
 
 def test_the_windows_service_runs_the_studio_as_local_service_not_localsystem(tmp_path):

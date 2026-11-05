@@ -170,7 +170,8 @@ def _nssm(root, exe, args, log, port, python_home, data_dir) -> dict:
         "# whenever you type nssm here), first on the computer's PATH so every later Administrator PowerShell's nssm",
         "# is this one",
         f'New-Item -ItemType Directory -Force "{NSSM_DIR}" | Out-Null',
-        f'Copy-Item (Get-Command nssm).Source "{NSSM_EXE}"',
+        "# (pasted a second time: that nssm is already there, and may be running a service, so it's left as it is)",
+        f'if (-not (Test-Path "{NSSM_EXE}")) {{ Copy-Item (Get-Command nssm).Source "{NSSM_EXE}" -ErrorAction Stop }}',
         '$machine = [Environment]::GetEnvironmentVariable("Path", "Machine")',
         f'if (($machine -split ";") -notcontains "{NSSM_DIR}") {{ '
         f'[Environment]::SetEnvironmentVariable("Path", "{NSSM_DIR};" + $machine, "Machine") }}',

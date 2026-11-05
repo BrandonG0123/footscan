@@ -105,7 +105,7 @@ code in the checkout can't take over the computer), and in Python's UTF-8 mode
 
 ```powershell
 New-Item -ItemType Directory -Force "C:\Program Files\nssm" | Out-Null
-Copy-Item (Get-Command nssm).Source "C:\Program Files\nssm\nssm.exe"
+if (-not (Test-Path "C:\Program Files\nssm\nssm.exe")) { Copy-Item (Get-Command nssm).Source "C:\Program Files\nssm\nssm.exe" -ErrorAction Stop }
 $machine = [Environment]::GetEnvironmentVariable("Path", "Machine")
 if (($machine -split ";") -notcontains "C:\Program Files\nssm") { [Environment]::SetEnvironmentVariable("Path", "C:\Program Files\nssm;" + $machine, "Machine") }
 $env:Path = "C:\Program Files\nssm;" + $env:Path
