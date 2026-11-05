@@ -44,6 +44,167 @@ struct ConnectCodes {
     }
 }
 
+// MARK: - a studio with more than one address (home Wi-Fi and Tailscale)
+
+@Suite("Studio addresses")
+struct StudioAddresses {
+    let fp = String(repeating: "ab", count: 32)
+
+    @Test func aCodeCarriesTheTailscaleAddressAsAnAlternate() throws {
+        let code = "footscan-capture://connect?url=https://192.168.11.233:8766&key=k&fp=\(fp)"
+            + "&alt=https%3A%2F%2F100.101.102.103%3A8766&alt=https://192.168.11.233:8766" // a repeat of url is dropped
+        let parsed = try #require(StudioStore.parse(code))
+        #expect(parsed.link.url.absoluteString == "https://192.168.11.233:8766")
+        #expect(parsed.link.alternates.map(\.absoluteString) == ["https://100.101.102.103:8766"])
+        #expect(parsed.link.fingerprint == fp) // one pin for every address: it's the same computer
+    }
+
+    @Test func aCodeWithNoPinnedCertificateUsesOnlyTheAddressItNames() throws {
+        // every address is sent the key at once: without a pin, an "alternate" could be anyone's host
+        let code = "footscan-capture://connect?url=https://footscan.example.dev&key=k&alt=https://other.example.com"
+        let parsed = try #require(StudioStore.parse(code))
+        #expect(parsed.link.alternates.isEmpty && parsed.link.url.absoluteString == "https://footscan.example.dev")
+    }
+
+    @Test func anAlternateInTheClearRefusesTheWholeCode() {
+        #expect(StudioStore.parse("footscan-capture://connect?url=https://192.168.11.233:8766&key=k&alt=http://100.101.102.103:8766") == nil)
+    }
+
+    @Test func aLinkSavedBeforeAlternatesStillLoads() throws {
+        let saved = Data(#"{"url":"https://192.168.1.20:8765","fingerprint":"\#(fp)"}"#.utf8)
+        let link = try JSONDecoder().decode(StudioLink.self, from: saved)
+        #expect(link.alternates.isEmpty && link.fingerprint == fp)
+    }
+
+    @Test func theAddressThatAnsweredGoesFirstAndNoneIsLost() throws {
+        let home = try #require(URL(string: "https://192.168.11.233:8766"))
+        let tailnet = try #require(URL(string: "https://100.101.102.103:8766"))
+        let link = StudioLink(url: home, fingerprint: fp, alternates: [tailnet]).using(tailnet)
+        #expect(link.url == tailnet && link.alternates == [home])
+    }
+
+    @Test(arguments: [
+        ("192.168.11.233", StudioAddressKind.homeNetwork), ("10.0.0.4", .homeNetwork), ("172.20.1.1", .homeNetwork),
+        ("mac.local", .homeNetwork), ("100.101.102.103", .tailscale), ("100.64.0.1", .tailscale),
+        ("tank.example.ts.net", .tailscale), ("100.128.0.1", .other), ("172.32.0.1", .other),
+        ("footscan.example.dev", .other), ("999.1.1.1", .other),
+    ])
+    func addressesAreToldApart(_ host: String, _ kind: StudioAddressKind) {
+        #expect(StudioAddressKind(host: host) == kind)
+    }
+}
+
+// MARK: - why "Test the connection" failed
+
+@Suite("Connection test failures")
+struct ConnectionTestFailures {
+    let home = URL(string: "https://192.168.11.233:8766")!
+    let tailnet = URL(string: "https://100.101.102.103:8766")!
+
+    @Test func awayFromHomeTheHomeAddressIsSaidToNeedTheSameWiFi() {
+        let text = StudioClient.Failure.explain([.init(address: home, miss: .noAnswer)], pinned: true)
+        #expect(text.contains("192.168.11.233 is the studio's home Wi-Fi address"))
+        #expect(text.contains("same Wi-Fi"))
+        #expect(text.contains("Check Footscan is running"))
+        #expect(!text.contains("Mac")) // the studio may be on any computer
+    }
+
+    @Test func withTailscaleBothAddressesAreExplainedInOrder() throws {
+        let text = StudioClient.Failure.explain([.init(address: home, miss: .noAnswer), .init(address: tailnet, miss: .noAnswer)], pinned: true)
+        let homeAt = try #require(text.range(of: "192.168.11.233")), tailnetAt = try #require(text.range(of: "100.101.102.103"))
+        #expect(homeAt.lowerBound < tailnetAt.lowerBound)
+        #expect(text.contains("Tailscale is on"))
+    }
+
+    @Test func aDifferentCertificateIsNotCalledUnreachable() {
+        let text = StudioClient.Failure.explain([.init(address: tailnet, miss: .wrongCertificate)], pinned: true)
+        #expect(text.contains("isn't the studio this phone connected to"))
+        #expect(!text.contains("Check Footscan is running")) // something did answer
+    }
+
+    @Test func anotherDeviceAtTheHomeAddressOnAnotherWiFiIsSaidToBeAnotherWiFi() {
+        // a café's router using 192.168.11.x too: a printer there answers at the studio's home address
+        let text = StudioClient.Failure.explain([.init(address: home, miss: .wrongCertificate)], pinned: true)
+        #expect(text.contains("another Wi-Fi that uses the same addresses"))
+        #expect(!text.contains("Check Footscan is running"))
+    }
+
+    @Test func localNetworkAccessIsMentionedOnlyWhenThePhoneHadNoRouteHome() {
+        let blocked = StudioClient.Failure.explain([.init(address: home, miss: .noRoute)], pinned: true)
+        #expect(blocked.contains("Local Network"))
+        let silent = StudioClient.Failure.explain([.init(address: home, miss: .noAnswer)], pinned: true)
+        #expect(!silent.contains("Local Network"))
+    }
+
+    @Test func aHomeAddressThatDoesntAnswerSuggestsScanningTheCodeAgain() {
+        // the router may have given the studio a new address: the old advice to scan the code again stays
+        let text = StudioClient.Failure.explain([.init(address: home, miss: .noAnswer)], pinned: true)
+        #expect(text.contains("Wi-Fi address has changed") && text.contains("scan it again"))
+        let away = StudioClient.Failure.explain([.init(address: tailnet, miss: .noAnswer)], pinned: true)
+        #expect(!away.contains("Wi-Fi address has changed"))
+    }
+
+    @Test func noRouteAnywhereIsPutDownToThePhonesOwnConnection() {
+        // abroad with Data Roaming off, Airplane Mode, or mobile data off for the app: no address can be reached
+        let text = StudioClient.Failure.explain([.init(address: home, miss: .noRoute), .init(address: tailnet, miss: .noRoute)], pinned: true)
+        #expect(text.contains("this phone's own connection") && text.contains("Data Roaming") && text.contains("Airplane Mode"))
+        #expect(text.contains("100.101.102.103 is the studio's Tailscale address, but this phone has no connection"))
+        #expect(!text.contains("answers from anywhere while Tailscale is on")) // it is on: that's not the problem
+        let silent = StudioClient.Failure.explain([.init(address: tailnet, miss: .noAnswer)], pinned: true)
+        #expect(!silent.contains("this phone's own connection"))
+        // at home with Local Network access refused and Tailscale off: the phone's connection is fine
+        let localOnly = StudioClient.Failure.explain([.init(address: home, miss: .noRoute), .init(address: tailnet, miss: .noAnswer)], pinned: true)
+        #expect(!localOnly.contains("this phone's own connection") && localOnly.contains("Local Network"))
+        // no route to either address: Local Network access can't stop the Tailscale one, so it isn't the cause
+        #expect(!text.contains("Local Network"))
+        // a code with only the home address and no route there: it may be either, so both are said
+        let homeOnly = StudioClient.Failure.explain([.init(address: home, miss: .noRoute)], pinned: true)
+        #expect(homeOnly.contains("this phone's own connection") && homeOnly.contains("Local Network"))
+    }
+
+    @Test func theSameAddressWrittenAnotherWayIsntTriedTwice() throws {
+        let code = "footscan-capture://connect?url=https://192.168.11.233:8766/&key=k&fp=" + String(repeating: "a", count: 64)
+            + "&alt=https://192.168.11.233:8766&alt=https://100.101.102.103:8766&alt=https://100.101.102.103:8766/"
+        let parsed = try #require(StudioStore.parse(code))
+        #expect(parsed.link.alternates == [URL(string: "https://100.101.102.103:8766")!])
+    }
+
+    @Test func theAddressKindsHaveOneLabelEverywhere() {
+        #expect(StudioConnection.describe(home) == "192.168.11.233 (home Wi-Fi)")
+        #expect(StudioConnection.describe(tailnet) == "100.101.102.103 (Tailscale)")
+        let text = StudioClient.Failure.explain([.init(address: home, miss: .noAnswer), .init(address: tailnet, miss: .noAnswer)], pinned: true)
+        #expect(text.contains("home Wi-Fi address") && text.contains("Tailscale address"))
+    }
+
+    @Test func aDropMidSendIsNotBlamedOnTheWiFiAndTheScanWaits() {
+        let failure = StudioClient.Failure.dropped(host: "192.168.11.233")
+        #expect(failure.isUnreachable) // sent again once the studio is back
+        #expect(!failure.offersReconnect) // it answered: no need to scan its code again
+        #expect(StudioClient.Failure.unreachable([], pinned: true).offersReconnect)
+        // no address tried at all still says what to do, not a blank line
+        #expect(StudioClient.Failure.unreachable([], pinned: true).errorDescription?.contains("Check Footscan is running") == true)
+        #expect(failure.errorDescription?.contains("same Wi-Fi") == false)
+    }
+
+    @Test(arguments: [
+        // cancelled alone says nothing (the pin's own verdict is what tells a wrong certificate, below)
+        (URLError.Code.cancelled, StudioClient.Miss.noAnswer),
+        (.serverCertificateUntrusted, .wrongCertificate),
+        (.secureConnectionFailed, .noAnswer), // a failed TLS set-up says nothing about which certificate
+        (.notConnectedToInternet, .noRoute),
+        (.timedOut, .noAnswer), (.cannotConnectToHost, .noAnswer),
+    ])
+    func networkErrorsAreSorted(_ code: URLError.Code, _ miss: StudioClient.Miss) {
+        #expect(StudioClient.Miss(URLError(code)) == miss)
+    }
+
+    @Test func aCertificateThePinTurnedAwayIsAWrongCertificateWhateverTheErrorSays() {
+        #expect(StudioClient.Miss(URLError(.cancelled), pinRefused: true) == .wrongCertificate)
+        #expect(StudioClient.Miss(URLError(.secureConnectionFailed), pinRefused: true) == .wrongCertificate)
+        #expect(PinnedTrust(fingerprint: String(repeating: "a", count: 64)).refusedCertificate == false)
+    }
+}
+
 // MARK: - the studio refusing an incomplete scan
 
 @Suite("Incomplete scans")

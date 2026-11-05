@@ -21,37 +21,65 @@ final class StudioConnection {
         return StudioClient(link: link, key: key)
     }
 
-    /// Try a connect code; save it only if the studio answers to it.
+    /// Try a connect code; save it only if the studio answers to it (at any of its addresses).
     func connect(_ text: String) async -> Bool {
         guard let parsed = StudioStore.parse(text) else {
             status = "That isn't a Footscan studio code. In the studio, open Import 3D and tap Show the connect code."
             return false
         }
-        status = "Checking \(parsed.link.host)…"
+        status = "Checking \(parsed.link.addresses.map(StudioLink.host(of:)).joined(separator: " and "))…"
+        let reached: StudioClient
         do {
-            try await StudioClient(link: parsed.link, key: parsed.key).check()
+            reached = try await StudioClient(link: parsed.link, key: parsed.key).reach()
         } catch {
             status = error.localizedDescription
             return false
         }
-        StudioStore.save(parsed.link, key: parsed.key)
-        link = parsed.link
+        guard StudioStore.save(reached.link, key: parsed.key) else {
+            status = "The studio answered, but this phone couldn't keep its key (the iPhone's Keychain refused it). Try again; if it keeps happening, restart the phone."
+            return false
+        }
+        link = reached.link
         key = parsed.key
         connections += 1
-        status = "Connected to \(parsed.link.host)."
+        status = "Connected to \(Self.describe(reached.link.url))."
         return true
     }
 
+    /// Test the connection: try every address the studio has, and say which one answered.
     func check() async {
         guard let client else { return }
         status = "Checking…"
         do {
-            try await client.check()
-            status = "The studio is answering."
+            let reached = try await client.reach()
+            remember(reached.link)
+            status = "The studio is answering at \(Self.describe(reached.link.url))."
             connections += 1 // back in touch: let waiting scans go
         } catch {
             status = error.localizedDescription
         }
+    }
+
+    /// Before opening the studio's camera page: use whichever address answers from here. Quiet: if none
+    /// does, the page itself says it couldn't reach the studio.
+    func findAddress() async {
+        guard let client, !client.link.alternates.isEmpty,
+              let reached = try? await client.reach(timeout: 3) else { return }
+        remember(reached.link)
+    }
+
+    /// The studio answered at this address: use it first from now on. Ignored if the studio changed meanwhile.
+    func remember(_ reached: StudioLink) {
+        guard let link, reached != link, Set(reached.addresses) == Set(link.addresses),
+              reached.fingerprint == link.fingerprint, key != nil else { return }
+        self.link = reached
+        StudioStore.saveLink(reached) // only the address order changed: the key in the Keychain stays as it is
+    }
+
+    /// "100.88.1.2 (Tailscale)": the address, and how it's reached.
+    nonisolated static func describe(_ url: URL) -> String {
+        let host = StudioLink.host(of: url)
+        return StudioAddressKind(host: host).label.map { "\(host) (\($0))" } ?? host
     }
 
     func disconnect() {
@@ -78,7 +106,7 @@ struct StudioView: View {
                     VStack(alignment: .leading, spacing: 6) {
                         Text(studio.link == nil ? "Connect to your studio" : "Your studio")
                             .font(.system(.title, design: .rounded, weight: .bold))
-                        Text("Scans go straight from this phone to the Footscan studio on your Mac, over your Wi-Fi.")
+                        Text("Scans go straight from this phone to the Footscan studio on your computer: over your Wi-Fi at home, or over Tailscale from anywhere if the studio has it.")
                             .foregroundStyle(Color.fsMuted)
                     }
                     if let link = studio.link { connected(link) } else { howTo }
@@ -127,7 +155,7 @@ struct StudioView: View {
 
     private var howTo: some View {
         VStack(alignment: .leading, spacing: 12) {
-            step(1, "On your Mac, open the Footscan studio")
+            step(1, "On your computer, open the Footscan studio")
             step(2, "Go to Import 3D and tap Show the connect code")
             step(3, "Tap the button below and point this camera at it")
             if !canScan {
@@ -152,10 +180,12 @@ struct StudioView: View {
                 Image(systemName: "checkmark.circle.fill").font(.title2).foregroundStyle(Color.fsOK)
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Connected").font(.headline)
-                    Text(link.host).font(.subheadline.monospaced()).foregroundStyle(Color.fsMuted)
+                    ForEach(link.addresses, id: \.self) { address in
+                        Text(StudioConnection.describe(address)).font(.subheadline.monospaced()).foregroundStyle(Color.fsMuted)
+                    }
                 }
             }
-            Label(link.fingerprint == nil ? "Public address, checked the normal way" : "Talks only to this Mac (its certificate is pinned)",
+            Label(link.fingerprint == nil ? "Public address, checked the normal way" : "Talks only to this studio's computer (its certificate is pinned)",
                   systemImage: "lock.fill")
                 .font(.footnote).foregroundStyle(Color.fsMuted)
             HStack {

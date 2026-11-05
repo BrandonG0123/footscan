@@ -3,6 +3,7 @@ import sys
 import threading
 import urllib.error
 import urllib.request
+from pathlib import Path
 
 import pytest
 
@@ -665,6 +666,224 @@ def test_pairing_through_the_public_address_uses_it_and_needs_no_fingerprint(tmp
         assert p == {"available": True, "url": "https://footscan.example.dev", "key": KEY, "fingerprint": None}
     finally:
         httpd.shutdown()
+
+
+def _phone_ready_studio(tmp_path, monkeypatch, tailnet):
+    """A studio as the tank runs it (every address, HTTPS, a pinned certificate), on a home network."""
+    import footscan.server as srv
+
+    monkeypatch.setattr(srv, "lan_ip", lambda: "192.168.11.233")
+    monkeypatch.setattr(srv, "tailnet_ip", lambda: tailnet)
+    handler = make_handler(WEB_DIR, tmp_path, local_check=lambda h: False, studio_key=KEY, secure_cookie=True,
+                           cert_fingerprint="ab" * 32)
+    httpd = StudioServer(("127.0.0.1", 0), handler)  # listening on this computer only, while the tests run
+    port = httpd.server_address[1]
+    httpd.server_address = ("0.0.0.0", port)  # but answering as a studio bound to every address, as tank's is
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    return httpd, f"http://127.0.0.1:{port}"
+
+
+def test_pairing_offers_the_tailscale_address_too_so_the_phone_reaches_the_studio_away_from_home(tmp_path, monkeypatch):
+    httpd, url = _phone_ready_studio(tmp_path, monkeypatch, tailnet="100.101.102.103")
+    port = httpd.server_address[1]
+    try:
+        p = body(call(f"{url}/api/studio/pairing", headers={"X-Studio-Key": KEY}))
+        assert p["available"] is True and p["fingerprint"] == "ab" * 32
+        assert p["url"] == f"https://192.168.11.233:{port}"                 # home Wi-Fi first, as before
+        assert p["alt_urls"] == [f"https://100.101.102.103:{port}"]         # same port, same pinned certificate
+    finally:
+        httpd.shutdown()
+
+
+def test_pairing_without_tailscale_offers_only_the_home_network_address(tmp_path, monkeypatch):
+    httpd, url = _phone_ready_studio(tmp_path, monkeypatch, tailnet=None)
+    try:
+        p = body(call(f"{url}/api/studio/pairing", headers={"X-Studio-Key": KEY}))
+        assert p["available"] is True and p["alt_urls"] == []
+    finally:
+        httpd.shutdown()
+
+
+def test_pairing_with_no_wifi_address_offers_the_tailscale_one_instead_of_failing(tmp_path, monkeypatch):
+    """Reachable only over Tailscale (no Wi-Fi address): the connect code names the Tailscale address. With
+    neither, the page says so, instead of answering 500."""
+    import footscan.server as srv
+
+    httpd, url = _phone_ready_studio(tmp_path, monkeypatch, tailnet="100.101.102.103")
+    monkeypatch.setattr(srv, "lan_ip", lambda: None)
+    port = httpd.server_address[1]
+    try:
+        p = body(call(f"{url}/api/studio/pairing", headers={"X-Studio-Key": KEY}))
+        assert p["available"] is True and p["url"] == f"https://100.101.102.103:{port}" and p["alt_urls"] == []
+    finally:
+        httpd.shutdown()
+    httpd, url = _phone_ready_studio(tmp_path, monkeypatch, tailnet=None)
+    monkeypatch.setattr(srv, "lan_ip", lambda: None)
+    try:
+        st, raw, _ = call(f"{url}/api/studio/pairing", headers={"X-Studio-Key": KEY})
+        assert st == 200 and json.loads(raw)["available"] is False and "no network address" in json.loads(raw)["reason"]
+    finally:
+        httpd.shutdown()
+
+
+def test_the_tailscale_address_is_asked_for_at_most_once_a_minute(tmp_path, monkeypatch):
+    """Each Show the connect code asks for it; a stuck tailscaled costs 3 s a try."""
+    import footscan.server as srv
+
+    asked = []
+    httpd, url = _phone_ready_studio(tmp_path, monkeypatch, tailnet=None)
+    monkeypatch.setattr(srv, "tailnet_ip", lambda: asked.append(1) or "100.101.102.103")
+    try:
+        for _ in range(3):
+            assert body(call(f"{url}/api/studio/pairing", headers={"X-Studio-Key": KEY}))["alt_urls"]
+    finally:
+        httpd.shutdown()
+    assert len(asked) == 1
+
+
+def test_tailnet_address_is_read_from_the_tailscale_command(monkeypatch, tmp_path):
+    import subprocess
+
+    import footscan.server as srv
+
+    exe = tmp_path / "tailscale"
+    exe.write_text("")
+    monkeypatch.setattr(srv.shutil, "which", lambda name: str(exe))
+    monkeypatch.setattr(srv.subprocess, "run", lambda *a, **k: subprocess.CompletedProcess(a, 0, "100.88.1.2\n", ""))
+    assert srv.tailnet_ip() == "100.88.1.2"
+
+
+def test_tailnet_address_is_found_through_the_mac_app_when_the_command_isnt_on_path(monkeypatch):
+    import subprocess
+
+    import footscan.server as srv
+
+    mac_cli = "/Applications/Tailscale.app/Contents/MacOS/Tailscale"
+    ran = []
+    monkeypatch.setattr(srv.shutil, "which", lambda name: None)
+    monkeypatch.setattr(srv.Path, "is_file", lambda self: self == Path(mac_cli))  # Path, not str: works on Windows
+
+    def run(cmd, **kw):
+        ran.append(cmd[0])
+        return subprocess.CompletedProcess(cmd, 0, "100.88.1.2\n", "")
+
+    monkeypatch.setattr(srv.subprocess, "run", run)
+    assert srv.tailnet_ip() == "100.88.1.2" and ran == [mac_cli]
+
+
+def test_a_stopped_tailscale_means_no_tailnet_address(monkeypatch, tmp_path):
+    """Tailscale stopped: its command runs and gives no address, and that is the answer. (The computer's own
+    addresses aren't looked at: a 100.64.0.0/10 one then is someone else's, such as Cloudflare WARP's.)"""
+    import subprocess
+
+    import footscan.server as srv
+
+    exe = tmp_path / "tailscale"
+    exe.write_text("")
+    monkeypatch.setattr(srv.shutil, "which", lambda name: str(exe))
+    monkeypatch.setattr(srv.subprocess, "run",
+                        lambda cmd, **k: subprocess.CompletedProcess(cmd, 1, "", "Tailscale is stopped.\n"))
+    assert srv.tailnet_ip() is None
+    # with no tailscale command anywhere (WARP on, Tailscale not installed), still none
+    monkeypatch.setattr(srv.shutil, "which", lambda name: None)
+    monkeypatch.setattr(srv.Path, "is_file", lambda self: False)
+    assert srv.tailnet_ip() is None
+
+
+def test_the_tailscale_command_runs_once_when_path_finds_an_install_location(monkeypatch):
+    """which() on tank finds C:\\Program Files\\Tailscale\\tailscale.exe, which is also on the fixed list: a stuck
+    tailscaled would cost 3 s twice on every pairing request if it ran twice."""
+    import subprocess
+
+    import footscan.server as srv
+
+    win = r"C:\Program Files\Tailscale\tailscale.exe"
+    ran = []
+    monkeypatch.setattr(srv.shutil, "which", lambda name: win)
+    monkeypatch.setattr(srv.Path, "is_file", lambda self: self == Path(win))
+
+    def run(cmd, **kw):
+        ran.append(cmd[0])
+        raise subprocess.TimeoutExpired(cmd, 3)
+
+    monkeypatch.setattr(srv.subprocess, "run", run)
+    assert srv.tailnet_ip() is None and ran == [win]
+
+
+def test_a_stuck_tailscaled_is_waited_on_once_not_once_per_program(monkeypatch):
+    """The Mac's command-line tailscale is a script, not a link to the app's program, so both are on the list;
+    when the first times out, the second would only wait on the same stuck tailscaled."""
+    import subprocess
+
+    import footscan.server as srv
+
+    mac_cli, wrapper = "/Applications/Tailscale.app/Contents/MacOS/Tailscale", "/usr/local/bin/tailscale"
+    ran = []
+    monkeypatch.setattr(srv.shutil, "which", lambda name: wrapper)
+    monkeypatch.setattr(srv.Path, "is_file", lambda self: self in (Path(mac_cli), Path(wrapper)))
+
+    def run(cmd, **kw):
+        ran.append(cmd[0])
+        raise subprocess.TimeoutExpired(cmd, 3)
+
+    monkeypatch.setattr(srv.subprocess, "run", run)
+    assert srv.tailnet_ip() is None and ran == [wrapper]
+
+
+def test_a_tailscale_exit_node_doesnt_hide_the_home_network_address(monkeypatch):
+    """With an exit node (or a subnet route over 10/8) the route toward a private address goes through
+    Tailscale, so the connect code's home address would be the Tailscale one and the phone at home without
+    Tailscale couldn't reach the studio. The computer's own private address is used instead."""
+    import socket
+
+    import footscan.server as srv
+
+    class Routed:
+        def __init__(self, *a):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def connect(self, addr):
+            pass
+
+        def getsockname(self):
+            return ("100.113.53.83", 50000)
+
+    monkeypatch.setattr(srv.socket, "socket", Routed)
+    monkeypatch.setattr(srv.socket, "getaddrinfo", lambda *a, **k: [
+        (socket.AF_INET, 0, 0, "", ("100.113.53.83", 0)), (socket.AF_INET, 0, 0, "", ("127.0.0.1", 0)),
+        (socket.AF_INET, 0, 0, "", ("192.168.11.233", 0))])
+    assert srv.lan_ip() == "192.168.11.233"
+    monkeypatch.setattr(srv.socket, "getaddrinfo", lambda *a, **k: [(socket.AF_INET, 0, 0, "", ("100.113.53.83", 0))])
+    assert srv.lan_ip() is None  # only the Tailscale address: no home address to offer
+
+
+def test_no_tailscale_address_is_asked_again_after_ten_seconds_not_a_minute(monkeypatch):
+    """A service started at boot may ask before Tailscale is up; that "none" mustn't stand for a minute."""
+    import time
+
+    import footscan.server as srv
+
+    answers = iter([None, "100.88.1.2"])
+    monkeypatch.setattr(srv, "tailnet_ip", lambda: next(answers))
+    cached = srv.make_handler().tailnet_cached
+    now = time.monotonic()
+    monkeypatch.setattr(time, "monotonic", lambda: now)
+    assert cached() is None
+    monkeypatch.setattr(time, "monotonic", lambda: now + srv.TAILNET_RETRY_S + 1)
+    assert cached() == "100.88.1.2"
+
+
+def test_only_addresses_in_tailscales_range_count_as_tailnet():
+    from footscan.server import first_tailnet_ip
+
+    assert first_tailnet_ip(["192.168.11.233", "100.63.255.255", "100.128.0.1", "fd7a:115c:a1e0::1"]) is None
+    assert first_tailnet_ip(["192.168.11.233", "not an ip", "100.64.0.1", "100.100.1.1"]) == "100.64.0.1"
 
 
 def test_certificate_fingerprint_is_the_sha256_of_the_certificate(tmp_path):

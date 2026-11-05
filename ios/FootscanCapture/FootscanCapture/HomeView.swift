@@ -58,6 +58,9 @@ struct HomeView: View {
     @State private var error: String?
     @State private var startAfterPrep: Subject?
     @State private var photoCapture: Subject?
+    /// Finding which of the studio's addresses answers before the camera page opens (up to 3 s): the button
+    /// says so and can't be tapped again meanwhile.
+    @State private var findingStudio: Subject?
     /// Scanning again after a refusal: what to change, for the get-ready sheet and the camera.
     @State private var retake: [RetakeAdvice] = []
 
@@ -208,13 +211,14 @@ struct HomeView: View {
             Button {
                 if method == .photos && studio.client == nil { showStudio = true } else { start() }
             } label: {
-                Label(method == .photos && studio.client == nil
-                      ? "Connect to your studio first"
+                Label(findingStudio != nil ? "Finding your studio…"
+                      : method == .photos && studio.client == nil ? "Connect to your studio first"
                       : "Scan \(subject.label.lowercased())",
                       systemImage: method == .photos && studio.client == nil ? "desktopcomputer" : "camera.viewfinder")
                     .contentTransition(.numericText())
             }
             .buttonStyle(PrimaryButtonStyle())
+            .disabled(findingStudio != nil)
             .animation(.smooth, value: subjectRaw)
             .animation(.smooth, value: method)
 
@@ -356,7 +360,7 @@ struct HomeView: View {
             }
             .sensoryFeedback(.selection, trigger: settings.method)
         } else {
-            Label("This iPhone scans with photos on the printed mat (it can't run Apple's 3D capture). The studio on your Mac builds the model.",
+            Label("This iPhone scans with photos on the printed mat (it can't run Apple's 3D capture). Your Footscan studio builds the model.",
                   systemImage: "camera.on.rectangle")
                 .font(.footnote).foregroundStyle(Color.fsMuted)
         }
@@ -381,7 +385,18 @@ struct HomeView: View {
         if method == .photos {
             // photos go straight to the studio: nothing big is kept on the phone
             guard studio.client != nil else { showStudio = true; return }
-            photoCapture = s
+            // home Wi-Fi or Tailscale: open the camera page at whichever address answers from here. One search at
+            // a time; when it ends, the page opens only if nothing else happened meanwhile (another subject or
+            // method chosen, a LiDAR scan started, disconnected).
+            guard findingStudio == nil else { return }
+            findingStudio = s
+            Task {
+                await studio.findAddress()
+                findingStudio = nil
+                if studio.client != nil, subject == s, method == .photos, capturing == nil, photoCapture == nil {
+                    photoCapture = s
+                }
+            }
             return
         }
         if let problem = DiskSpace.captureProblem() {
@@ -539,7 +554,7 @@ private struct InsolePath: View {
     ]
 
     private var title: String {
-        ["Scan the bottom of your foot", "Send it to your studio", "Make the insole on your Mac"][step]
+        ["Scan the bottom of your foot", "Send it to your studio", "Make the insole in your studio"][step]
     }
 
     private var detail: String {
@@ -548,9 +563,9 @@ private struct InsolePath: View {
             ? "Sole up or a foam print: it's the shape the insole is made from."
             : "Sole and foam-print scans need an iPhone with LiDAR (a Pro model)."
         case 1:
-            if !studioConnected { autoSend ? "Connect to the studio on your Mac; then it goes by itself."
-                                           : "Connect to the studio on your Mac, then open the scan and tap Send." }
-            else if autoSend { "It goes by itself when the phone is on the same Wi-Fi as the Mac." }
+            if !studioConnected { autoSend ? "Connect to the studio on your computer; then it goes by itself."
+                                           : "Connect to the studio on your computer, then open the scan and tap Send." }
+            else if autoSend { "It goes by itself whenever the phone can reach the studio (same Wi-Fi, or Tailscale)." }
             else { "Sending automatically is off: tap here to open the scan, then Send." }
         default: "Research library, then Make insole. A podiatrist or athletic trainer signs the summary sheet before you play in it."
         }

@@ -176,7 +176,7 @@
   drop.addEventListener("dragleave", () => drop.classList.remove("over"));
   drop.addEventListener("drop", (e) => { e.preventDefault(); drop.classList.remove("over"); pick(e.dataTransfer.files[0]); });
 
-  // The connect code for the iPhone app: footscan-capture://connect?url=…&key=…&fp=…
+  // The connect code for the iPhone app: footscan-capture://connect?url=…&key=…&fp=…[&alt=…]
   $("btn-pair").addEventListener("click", async () => {
     if (!$("pair").hidden) { $("pair").hidden = true; $("btn-pair").textContent = "Show the connect code"; return; }
     $("pair-msg").textContent = "";
@@ -187,6 +187,7 @@
       if (!p.available) { $("pair-msg").textContent = p.reason; return; }
       const q = new URLSearchParams({ url: p.url, key: p.key });
       if (p.fingerprint) q.set("fp", p.fingerprint);
+      for (const alt of p.alt_urls || []) q.append("alt", alt);  // e.g. its Tailscale address, for away from home
       const code = qrcode(0, "M");
       code.addData(`footscan-capture://connect?${q}`);
       code.make();

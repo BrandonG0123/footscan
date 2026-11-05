@@ -60,6 +60,7 @@ import datetime as dt
 import hashlib
 import hmac
 import http.cookies
+import ipaddress
 import json
 import mimetypes
 import re
@@ -369,6 +370,21 @@ def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check
                  submissions_per_hour: int = SUBMISSIONS_PER_HOUR, allow_indexing: bool = True,
                  public: bool = False, cert_fingerprint: str | None = None):
     runner = recon_jobs.ReconRunner()
+    # This computer's Tailscale address, asked of the tailscale command at most once a minute: a stuck
+    # tailscaled costs 3 s a try, and each "Show the connect code" asks for it. No address is asked again
+    # sooner (TAILNET_RETRY_S): a service started at boot can ask before Tailscale is up. One asks at a time,
+    # and the rest wait for that answer instead of each running the command.
+    tailnet = dict(at=None, ip=None)
+    tailnet_lock = threading.Lock()
+
+    def tailnet_cached() -> str | None:
+        import time
+
+        with tailnet_lock:
+            keep = TAILNET_CACHE_S if tailnet["ip"] else TAILNET_RETRY_S
+            if tailnet["at"] is None or time.monotonic() - tailnet["at"] > keep:
+                tailnet.update(at=time.monotonic(), ip=tailnet_ip())
+            return tailnet["ip"]
     captures_dir = data_dir / "captures"
     submissions_dir = data_dir / "submissions"
     limiter = RateLimiter(submissions_per_hour)
@@ -700,7 +716,32 @@ def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check
                 return dict(available=False,
                             reason="Phones can't reach this studio yet. Restart footscan with "
                                    "--host 0.0.0.0 --https, then open this page again.")
-            return dict(available=True, url=info["scan_url"].rstrip("/"), key=studio_key, fingerprint=cert_fingerprint)
+            if info["scan_url"] is None:  # no Wi-Fi address right now: the Tailscale one, if there is one
+                alt = self.other_addresses(None)
+                if not alt:
+                    return dict(available=False,
+                                reason="This computer has no network address a phone can reach right now (is its "
+                                       "Wi-Fi or network cable connected?). Open this page again once it has.")
+                return dict(available=True, url=alt[0], key=studio_key, fingerprint=cert_fingerprint, alt_urls=[])
+            url = info["scan_url"].rstrip("/")
+            return dict(available=True, url=url, key=studio_key, fingerprint=cert_fingerprint,
+                        alt_urls=self.other_addresses(url))
+
+        def other_addresses(self, url: str | None) -> list[str]:
+            """This studio's other addresses for the phone, tried alongside the home-network one.
+
+            The home-network address (192.168.x.x) only answers on the same Wi-Fi. With Tailscale on this
+            computer and the phone, its tailnet address (100.x.x.x) answers from anywhere. It is given as the
+            bare IP, never the .ts.net name: the phone accepts this computer's self-made certificate only at
+            IP and local addresses (Apple's App Transport Security refuses it at a full domain name). The
+            phone pins the same certificate fingerprint at every address.
+            """
+            host, port = self.server.server_address[:2]
+            if host not in ("0.0.0.0", "::"):
+                return []  # bound to one address: no other address answers
+            ts = tailnet_cached()
+            alt = f"https://{ts}:{port}" if ts else None
+            return [alt] if alt and alt != url else []
 
         def insole_api(self, method: str, d: Path, rest: list[str]):
             """First-fit insole from a foot capture: POST makes it, GET <file> downloads it."""
@@ -1157,6 +1198,7 @@ def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check
         def do_DELETE(self):
             self.route("DELETE")
 
+    Handler.tailnet_cached = staticmethod(tailnet_cached)  # serve() prints it at start, and fills the cache
     return Handler
 
 
@@ -1619,13 +1661,84 @@ def cert_fingerprint(cert_path: Path) -> str:
     return hashlib.sha256(der).hexdigest()
 
 
+TAILNET = ipaddress.ip_network("100.64.0.0/10")  # the addresses Tailscale gives its devices
+
+
+TAILNET_CACHE_S = 60.0
+TAILNET_RETRY_S = 10.0
+
+
+def tailnet_ip() -> str | None:
+    """This computer's Tailscale address (100.64.0.0/10), or None without Tailscale.
+
+    Asks the tailscale command first (`tailscale ip -4`). It is often not on the studio's PATH (a Windows service
+    started before Tailscale was installed; the Mac app, whose command sits inside the app), so the install
+    locations are tried too, each program once however many of those name it.
+
+    Only the tailscale command's answer counts. A 100.64.0.0/10 address the computer has otherwise (Tailscale
+    stopped or logged out, or not installed) belongs to something else (Cloudflare WARP, a carrier's NAT), and
+    handing it to the phone as "Tailscale, from anywhere" would send it to the wrong place.
+    """
+    candidates = [shutil.which("tailscale"), r"C:\Program Files\Tailscale\tailscale.exe",
+                  "/Applications/Tailscale.app/Contents/MacOS/Tailscale"]
+    tried = set()
+    for exe in filter(None, candidates):
+        if not Path(exe).is_file():
+            continue
+        try:
+            key = Path(exe).resolve()
+        except OSError:
+            key = Path(exe)
+        if key in tried:  # which() found one of the install locations: don't wait on it twice
+            continue
+        tried.add(key)
+        try:
+            out = subprocess.run([exe, "ip", "-4"], capture_output=True, text=True, encoding="utf-8",
+                                 errors="replace", timeout=3).stdout
+        except subprocess.TimeoutExpired:
+            # tailscaled is stuck: every program asks the same one (the Mac's /usr/local/bin/tailscale is a
+            # script, not a link, so it isn't seen as the app's own program), and each would wait as long
+            break
+        except (OSError, subprocess.SubprocessError):
+            continue
+        if ip := first_tailnet_ip(out.split()):
+            return ip
+    return None
+
+
+def first_tailnet_ip(texts) -> str | None:
+    """The first of these that is an IPv4 address inside Tailscale's range."""
+    for t in texts:
+        try:
+            if (ip := ipaddress.ip_address(t.strip())).version == 4 and ip in TAILNET:
+                return str(ip)
+        except ValueError:
+            continue
+    return None
+
+
 def lan_ip() -> str | None:
+    """This computer's address on its own network (192.168.x.x and the like), the one phones on the same Wi-Fi
+    reach: the address it would send from toward a private address (nothing is sent). With a Tailscale exit
+    node or a subnet route over 10/8, that is the Tailscale address instead; then a private address of this
+    computer's own is used, or None if it has none."""
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
             s.connect(("10.255.255.255", 1))
-            return s.getsockname()[0]
+            ip = s.getsockname()[0]
     except OSError:
         return None
+    if ipaddress.ip_address(ip) not in TAILNET:
+        return ip
+    try:
+        found = socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET)
+    except OSError:
+        return None
+    for *_rest, (addr, *_port) in found:
+        a = ipaddress.ip_address(addr)
+        if a.is_private and a not in TAILNET and not a.is_loopback and not a.is_link_local:
+            return addr
+    return None
 
 
 def serve(host: str = "127.0.0.1", port: int = 8765, https: bool = False, public: bool = False,
@@ -1676,6 +1789,9 @@ def serve(host: str = "127.0.0.1", port: int = 8765, https: bool = False, public
         print(f"studio on YOUR phone (keep this private): {scheme}://{ip}:{port}/studio/?key={studio_key}")
     else:
         print(f"scan page: {scheme}://localhost:{port}/")
+    # the same answer the connect code gives (and its cache), also with no Wi-Fi address
+    if https and host in ("0.0.0.0", "::") and (ts := handler.tailnet_cached()):
+        print(f"over Tailscale, from anywhere (the connect code includes it): {scheme}://{ts}:{port}/")
     print("", flush=True)
     try:
         httpd.serve_forever()
