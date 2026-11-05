@@ -127,6 +127,127 @@ def test_an_unreadable_saved_shoe_is_left_out_and_never_stays_the_default(tmp_pa
     assert shoes.listed(tmp_path) == [] and shoes.default_id(tmp_path) is None
 
 
+def test_a_default_that_cant_be_read_stops_an_insole_instead_of_falling_back_to_the_foot(tmp_path, capsys):
+    """A chosen default whose file is broken (a merge conflict, a hand edit) or gone must not quietly cut the
+    insole to the foot's own outline (the scan's size): strict reads say what's wrong."""
+    from footscan import cli, shoes
+
+    outline, read = _shoe_outline()
+    s = shoes.save(tmp_path, outline, "Test Trainer", "9.5", "synthetic", read, default=True)
+    (tmp_path / f"{s['id']}.json").write_text("<<<<<<< HEAD\n")
+    with pytest.raises(shoes.ShoeLibraryError, match="default saved shoe can't be used"):
+        shoes.default_id(tmp_path, strict=True)
+    foot = _foot_file(tmp_path)
+    assert cli.main(["insole", str(foot), "--foot", "right", "-o", str(tmp_path / "out"),
+                     "--shoes", str(tmp_path)]) == 1
+    err = capsys.readouterr().err
+    assert "default saved shoe can't be used" in err and "footscan shoe default" in err
+    assert not (tmp_path / "out").exists()
+    (tmp_path / f"{s['id']}.json").unlink()  # gone altogether: the same
+    with pytest.raises(shoes.ShoeLibraryError, match="no saved shoe"):
+        shoes.default_id(tmp_path, strict=True)
+    # told to use the foot's own outline, it still can
+    assert cli.main(["insole", str(foot), "--foot", "right", "-o", str(tmp_path / "out"), "--shoes", str(tmp_path),
+                     "--foot-outline"]) == 0
+
+
+def test_a_saved_shoe_is_the_one_its_file_name_says(tmp_path, capsys):
+    """The id is the file's name: a file copied by hand under another name (keeping the original's id inside), or
+    one with no id inside, lists under its own name and loads its own outline."""
+    import json
+
+    from footscan import cli, shoes
+
+    outline, read = _shoe_outline()
+    s = shoes.save(tmp_path, outline, "Test Trainer", "9.5", "synthetic", read)
+    copy = json.loads((tmp_path / f"{s['id']}.json").read_text())
+    copy.update(name="Other Model", size="10")
+    (tmp_path / "other-model-10.json").write_text(json.dumps(copy))
+    del copy["id"]
+    (tmp_path / "hand-copied-9-5.json").write_text(json.dumps(dict(copy, name="Hand Copied", size="9.5")))
+    listed = {x["id"]: shoes.label(x) for x in shoes.listed(tmp_path)}
+    assert listed == {"hand-copied-9-5": "Hand Copied, 9.5", "other-model-10": "Other Model, 10",
+                      "test-trainer-9-5": "Test Trainer, 9.5"}
+    assert shoes.load(tmp_path, "other-model-10")["id"] == "other-model-10"
+    assert cli.main(["shoe", "list", "--shoes", str(tmp_path)]) == 0
+    assert "hand-copied-9-5: Hand Copied, 9.5" in capsys.readouterr().out
+
+
+def test_choosing_the_default_never_leaves_a_moment_with_no_default(tmp_path):
+    """set_default swaps a whole file in: a reader at the same moment sees the old default or the new, never
+    an empty file (which would read as no default, and an insole cut to the foot's outline)."""
+    import threading
+
+    from footscan import shoes
+
+    outline, read = _shoe_outline()
+    a = shoes.save(tmp_path, outline, "Test Trainer", "9.5", "synthetic", read, default=True)
+    b = shoes.save(tmp_path, outline, "Test Trainer", "10", "synthetic", read)
+    stop, seen = threading.Event(), []
+
+    def write():
+        i = 0
+        while not stop.is_set():
+            shoes.set_default(tmp_path, (a, b)[i % 2]["id"])
+            i += 1
+
+    t = threading.Thread(target=write)
+    t.start()
+    try:
+        for _ in range(2000):
+            seen.append(shoes.default_id(tmp_path))
+    finally:
+        stop.set()
+        t.join()
+    assert set(seen) <= {a["id"], b["id"]}
+    assert sorted(p.name for p in tmp_path.iterdir()) == sorted([f"{a['id']}.json", f"{b['id']}.json", "default.txt"])
+
+
+def test_two_long_names_that_differ_only_at_the_end_stay_two_saved_shoes(tmp_path):
+    """Nothing is cut off the name, so a 2E and a 4E of one long-named shoe never overwrite each other (and the
+    default never switches to the other's outline)."""
+    from footscan import shoes
+
+    base = "ASICS Gel-Resolution X Clay Court Tennis Shoe Men's Wide "  # 57 characters, then the width
+    narrow, _ = _shoe_outline(ball=105.0)
+    wide, read = _shoe_outline(ball=115.0)
+    a = shoes.save(tmp_path, narrow, base + "2E", "US 9.5", "synthetic", read, default=True)
+    b = shoes.save(tmp_path, wide, base + "4E", "US 9.5", "synthetic", read)
+    assert a["id"] != b["id"] and len(shoes.listed(tmp_path)) == 2
+    assert shoes.default_id(tmp_path) == a["id"]
+    assert shoes.load(tmp_path, a["id"])["width_mm"] == a["width_mm"] < b["width_mm"]
+    longest = shoes.shoe_id("x" * shoes.NAME_MAX, "y" * shoes.SIZE_MAX)  # the longest name and size still make an id
+    assert longest == "x" * shoes.NAME_MAX + "-" + "y" * shoes.SIZE_MAX
+
+
+def test_a_mistyped_shoe_scan_is_reported_as_a_missing_file(tmp_path, capsys):
+    from footscan import cli
+
+    foot = _foot_file(tmp_path)
+    assert cli.main(["insole", str(foot), "--foot", "right", "-o", str(tmp_path / "out"), "--shoes",
+                     str(tmp_path / "shoes"), "--shoe", str(tmp_path / "stock-insol.obj")]) == 1
+    err = capsys.readouterr().err
+    assert "stock-insol.obj: no such file" in err and str(foot) not in err
+
+
+def test_a_saved_shoe_serves_both_feet_without_a_false_scan_warning(tmp_path):
+    """One saved outline (from the right shoe's insole) is mirrored for the left foot. That's how a saved shoe
+    works, so the left insole's sheet mustn't say the shoe's scan was upside down; a one-off scan of the wrong
+    shoe still gets the warning."""
+    from footscan import insole, shoes
+
+    outline, read = _shoe_outline(ball=114.0, foot="right")
+    s = shoes.save(tmp_path, outline, "Test Trainer", "9.5", "synthetic", read)
+    saved = insole.InsoleParams(shoe_outline=shoes.outline_param(s), shoe_name=shoes.label(s), shoe_saved=True)
+    one_off = insole.InsoleParams(shoe_outline=shoes.outline_param(s))
+    left = synth.curved_foot("left", leg=False)
+    ins = insole.from_scan(left, "left", saved)
+    assert ins.report["shoe_fit"]["mirrored"]
+    assert not any("upside down" in w for w in ins.report["warnings"])
+    assert "upside down" not in insole.summary_html(ins, "test")
+    assert any("upside down" in w for w in insole.from_scan(left, "left", one_off).report["warnings"])
+
+
 def test_two_sizes_of_a_shoe_with_a_long_name_stay_two_saved_shoes():
     from footscan import shoes
 

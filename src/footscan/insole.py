@@ -105,6 +105,8 @@ class InsoleParams:
     shoe_outline: tuple | None = None   # if set, the outline is this shoe's own insole's ((x, y), ...) mm, heel at
                                         # the origin (recon/shoe.py), fitted round the foot; see build()
     shoe_name: str | None = None        # which shoe that outline is (a saved shoe, footscan/shoes.py), for the sheet
+    shoe_saved: bool = False            # that outline is a saved shoe's, kept once for both feet: mirroring it for
+                                        # the other foot is expected, not a sign the scan was upside down
     bed_mm: float = 256.0           # printer bed (Bambu X1/P1/A1); for the fit check only
 
 
@@ -369,7 +371,7 @@ def build(foot_mesh, foot: str, params: InsoleParams | None = None) -> Insole:
         warnings.append(f"{holes:.0%} of the area under the foot is a hole in the scan (taken as flat).")
     warnings += outline_notes
     if shoe_fit is not None:
-        warnings += shoe_mod.fit_warnings(shoe_fit)
+        warnings += shoe_mod.fit_warnings(shoe_fit, saved=p.shoe_saved)
     if extended:
         warnings.append(f"lengthened to {p.target_length_mm:.0f} mm for the shoe: the flat front was extended by "
                         f"{extended:.0f} mm past the toes; the shape under the heel, arch and ball is unchanged")

@@ -302,7 +302,10 @@ def fit_to_foot(shoe, sil, foot: str, heel_gap_mm: float):
     return placed, report
 
 
-def fit_warnings(fit: dict) -> list[str]:
+def fit_warnings(fit: dict, saved: bool = False) -> list[str]:
+    """What the clinician's sheet should say about the fit. ``saved``: the outline is a saved shoe's
+    (footscan/shoes.py), kept once from one of the pair's insoles and used for both feet, so mirroring it for the
+    other foot is how it's meant to work and says nothing about the scan."""
     w = []
     o = fit["overhang"]
     if o["max_mm"] > OVERHANG_WARN_MM:
@@ -312,10 +315,14 @@ def fit_warnings(fit: dict) -> list[str]:
     if fit["room_past_toes_mm"] < 0:
         w.append(f"the shoe's insole is {-fit['room_past_toes_mm']} mm shorter than the foot: is this the right "
                  f"shoe, and the whole insole in the scan?")
-    if fit["mirrored"]:
+    if fit["mirrored"] and not saved:
         w.append(f"the shoe's insole is a {fit['shoe']} shoe's as scanned (scanned upside down, or from the other "
                  f"shoe), so it was mirrored for this foot. If it was the right shoe, top side up, check the scan")
-    if fit["shoe"] is None:
+    if fit["shoe"] is None and saved:
+        w.append("couldn't tell whether the saved shoe's outline is a left or a right shoe's (its toe end is nearly "
+                 "straight ahead of the heel), so both feet use it as saved and one of the pair may be its mirror "
+                 "image: check this insole against this foot's own stock insole")
+    elif fit["shoe"] is None:
         w.append("couldn't tell which shoe the insole is from (its toe end is nearly straight ahead of the heel), "
                  "so it was used as scanned: check it was top side up, from this foot's shoe")
     return w

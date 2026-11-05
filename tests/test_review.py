@@ -88,6 +88,51 @@ def test_a_left_and_right_of_different_lengths_are_flagged_and_drawn_together(da
         assert (p / "pair.png").read_bytes().startswith(b"\x89PNG")
 
 
+def test_an_insole_cut_to_a_saved_shoe_is_checked_against_that_shoe_not_the_chart_length(tmp_path):
+    """The insole takes the saved shoe's outline (the design rule: the shoe sets the outline), so its length
+    check is against that outline. The spec's 275 mm chart length would FLAG it, and the skill's fix for that
+    used to rebuild from the foot's own outline. A saved shoe that isn't the spec's shoe is flagged by name."""
+    from footscan import shoes
+    from footscan.recon import shoe as shoe_mod
+
+    data = tmp_path / "data"
+    outline, read = shoe_mod.outline_from_scan(synth.shoe_insole(ball=114.0))
+    s = shoes.save(data / "shoes", outline, "ASICS Gel Resolution X", "US men's 9.5", "synthetic", read)
+    d = data / "captures" / "Rsaved"
+    d.mkdir(parents=True)
+    m = synth.block_foot(0.0, "right", origin=(0, 0))
+    m.apply_transform(np.block([[imported.UP["y"].T, np.zeros((3, 1))], [np.zeros((1, 3)), np.ones((1, 1))]]))
+    m.apply_scale(0.001)
+    m.export(d / "mesh.ply")
+    meta = dict(capture_id="Rsaved", foot="right", method="imported_mesh", condition="swb", scan_kind="foot",
+                mesh=dict(up="y"))
+    meta["insole"] = server.make_insole(d, meta, saved=server.saved_shoe(data / "shoes", s["id"]))
+    assert "error" not in meta["insole"], meta["insole"]
+    server.write_json(d / "capture.json", meta)
+    assert abs(meta["insole"]["length_mm"] - 275.0) > 1.0  # the saved shoe isn't the chart's 275 mm
+
+    [p] = review.run_once(data, SPEC)
+    c = _check(p, "length")
+    assert c["ok"] and "the saved shoe ASICS Gel Resolution X, US men's 9.5" in c["found"]
+    assert _check(p, "shoe")["ok"]
+    md = (p / "packet.md").read_text()
+    assert "Outline: the saved shoe ASICS Gel Resolution X, US men's 9.5" in md
+
+    other = dict(SPEC, shoe="Some Other Shoe", size="US men's 10")
+    shutil.rmtree(data / "reviews")
+    [p] = review.run_once(data, other)
+    c = _check(p, "shoe")
+    assert not c["ok"] and "review-spec.json names Some Other Shoe" in c["found"]
+    assert _check(p, "length")["ok"]
+
+
+def test_an_insole_with_the_foots_own_outline_says_so_in_its_packet(data):
+    _only(data, "Lfoot")
+    [p] = review.run_once(data, SPEC)
+    assert "the outline is the foot's own" in _check(p, "length")["found"]
+    assert "Outline: the foot's own" in (p / "packet.md").read_text()
+
+
 def test_pictures_are_real_pngs_at_half_a_millimetre_per_pixel(data):
     _only(data, "R275")
     [p] = review.run_once(data, SPEC)

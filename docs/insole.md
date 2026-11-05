@@ -59,7 +59,24 @@ saved shoe; with their own outlines, 20,144 and 17,532 mm2 (13.0% less). Without
 the summary sheet and the studio say so: trim it to the stock insole.
 
 Saving a shoe again (a better scan of it) makes insoles made from the old
-outline stale in the studio, as a re-scanned foot does.
+outline stale in the studio, as a re-scanned foot does, and the studio says
+it was the shoe that changed.
+
+One saved outline serves both feet: it's kept as scanned (from the left or
+the right shoe's insole) and mirrored for the other foot, so that insole's
+sheet doesn't warn about mirroring. If the saved outline's side can't be told
+(its toe end points nearly straight ahead), both feet use it as saved and the
+sheet says to check each insole against its own stock insole.
+
+A default saved shoe that can't be read (its file was edited by hand or is
+gone) stops *Make insole* and `footscan insole` with a message saying so,
+rather than quietly cutting the insole to the foot's own outline. Save it
+again, choose another (`footscan shoe default <id>`), or ask for the foot's
+own outline (`--foot-outline`). A saved shoe's id is its file's name.
+
+The review packet (docs/ALWAYS-ON.md) checks an insole cut to a saved shoe
+against that shoe's outline length, not `review-spec.json`'s chart length,
+and FLAGs `shoe` if the saved shoe isn't the one the spec names.
 
 No saved shoe exists yet: the stock ASICS insole hasn't been scanned.
 

@@ -907,9 +907,9 @@ def test_a_saved_shoe_is_the_default_outline_for_every_new_insole(servers):
     assert call(f"{op}/api/captures/{shoe}/mesh?ext=obj&up=y", "PUT",
                 synth.shoe_insole().export(file_type="obj").encode(), {"Content-Type": "application/octet-stream"})[0] == 200
 
-    assert body(call(f"{op}/api/shoes")) == {"shoes": [], "default": None}
+    assert body(call(f"{op}/api/shoes")) == {"shoes": [], "default": None, "default_problem": None}
     plain = body(call(f"{op}/api/captures/{foot}/insole", "POST", {}))  # no saved shoe yet: the foot's outline
-    assert plain["shoe"] is None and plain["length_mm"] < 265
+    assert plain["shoe"] is None and plain["length_mm"] < 265 and plain["outline"] == "foot"
 
     new = {"capture": shoe, "name": "Test Trainer", "size": "US men's 9.5", "default": True}
     st, raw, _ = call(f"{op}/api/shoes", "POST", new)
@@ -924,10 +924,14 @@ def test_a_saved_shoe_is_the_default_outline_for_every_new_insole(servers):
 
     r = body(call(f"{op}/api/captures/{foot}/insole", "POST", {}))  # nothing chosen: the default saved shoe
     assert r["shoe"]["saved"] == s["id"] and r["shoe"]["name"] == "Test Trainer, US men's 9.5"
+    assert r["outline"] == "saved"
     assert r["length_mm"] == pytest.approx(271, abs=2)
     assert "Test Trainer" in call(f"{op}/api/captures/{foot}/insole/summary.html")[1].decode()
     own = body(call(f"{op}/api/captures/{foot}/insole", "POST", {"foot_outline": True}))
-    assert own["shoe"] is None and own["length_mm"] == plain["length_mm"]
+    assert own["shoe"] is None and own["length_mm"] == plain["length_mm"] and own["outline"] == "foot"
+    # recorded, so the studio's menu shows "the foot's own" for this card after a reload, not the default shoe
+    mine = [c for c in body(call(f"{op}/api/captures")) if c["capture_id"] == foot][0]
+    assert mine["insole"]["outline"] == "foot"
     assert call(f"{op}/api/captures/{foot}/insole", "POST", {"saved_shoe": s["id"], "length_mm": 280})[0] == 400
     assert call(f"{op}/api/captures/{foot}/insole", "POST", {"saved_shoe": "no-such-shoe"})[0] == 400
     assert call(f"{op}/api/captures/{foot}/insole", "POST", {"saved_shoe": "../x"})[0] == 400
@@ -937,8 +941,17 @@ def test_a_saved_shoe_is_the_default_outline_for_every_new_insole(servers):
     time.sleep(0.01)
     assert call(f"{op}/api/shoes", "POST", new)[0] == 201
     listed = [c for c in body(call(f"{op}/api/captures")) if c["capture_id"] == foot][0]
-    assert listed["insole"].get("stale") is True
-    assert call(f"{op}/api/captures/{foot}/insole/insole.3mf")[0] == 409
+    assert listed["insole"].get("stale") is True and listed["insole"]["stale_reason"] == "shoe"
+    st, raw, _ = call(f"{op}/api/captures/{foot}/insole/insole.3mf")
+    assert st == 409 and "shoe" in json.loads(raw)["error"] and "3D model" not in json.loads(raw)["error"]
+
+    # the default's file broken by hand: Make insole says so, rather than cutting to the foot's own outline
+    good = (data / "shoes" / f"{s['id']}.json").read_bytes()
+    (data / "shoes" / f"{s['id']}.json").write_text("<<<<<<< HEAD\n")
+    st, raw, _ = call(f"{op}/api/captures/{foot}/insole", "POST", {})
+    assert st == 400 and "default saved shoe can't be used" in json.loads(raw)["error"]
+    assert "can't be used" in body(call(f"{op}/api/shoes"))["default_problem"]
+    (data / "shoes" / f"{s['id']}.json").write_bytes(good)
 
     assert body(call(f"{op}/api/shoes/default", "POST", {"id": None})) == {"default": None}
     assert call(f"{op}/api/shoes/default", "POST", {"id": "no-such-shoe"})[0] == 400
@@ -946,6 +959,29 @@ def test_a_saved_shoe_is_the_default_outline_for_every_new_insole(servers):
     (data / "captures" / shoe / "mesh.ply").write_bytes(b"ply\nnot a model")  # broken: an answer, not a dropped line
     st, raw, _ = call(f"{op}/api/shoes", "POST", new)
     assert st == 400 and "couldn't read" in json.loads(raw)["error"]
+
+
+def test_saving_a_shoe_into_a_folder_that_cant_be_written_is_the_studios_fault_not_the_scans(servers, monkeypatch):
+    """A save that fails on the studio's own disk (not writable, full) answers 500 naming the folder, not a 400
+    that sends the user off to scan a good insole again."""
+    import synth
+
+    from footscan import shoes
+
+    op, _, _ = servers
+    shoe = body(call(f"{op}/api/captures", "POST", {"condition": "shoe_insole", "session": "LIDAR",
+                                                    "method": "imported_mesh"}))["id"]
+    assert call(f"{op}/api/captures/{shoe}/mesh?ext=obj&up=y", "PUT",
+                synth.shoe_insole().export(file_type="obj").encode(), {"Content-Type": "application/octet-stream"})[0] == 200
+
+    def refuse(*a, **k):
+        raise PermissionError(13, "Permission denied")
+
+    monkeypatch.setattr(shoes, "save", refuse)
+    st, raw, _ = call(f"{op}/api/shoes", "POST", {"capture": shoe, "name": "Test Trainer", "size": "9.5"})
+    assert st == 500
+    err = json.loads(raw)["error"]
+    assert "couldn't save the shoe" in err and "Permission denied" in err and "read the shoe's insole" not in err
 
 
 def test_the_studio_compares_two_scans_of_the_same_foot(servers):

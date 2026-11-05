@@ -193,6 +193,9 @@ def insole_outline(args):
     folder = Path(args.shoes)
     sid = None
     if args.shoe and not Path(args.shoe).exists():
+        if looks_like_a_path(args.shoe):  # e.g. a mistyped scan's name: say the file isn't there
+            raise ValueError(f"--shoe {args.shoe}: no such file (a saved shoe's id has no dots or slashes: "
+                             f"footscan shoe list)")
         sid = args.shoe  # not a file: a saved shoe's id
     elif args.shoe:
         outline, info = shoe.outline_from_scan(load_geometry(args.shoe), up=args.shoe_up)
@@ -203,7 +206,7 @@ def insole_outline(args):
         return (InsoleParams(target_length_mm=args.length),
                 f"outline: the foot's own, lengthened to {args.length:g} mm (no shoe's outline)")
     elif not args.foot_outline:
-        sid = shoes.default_id(folder)
+        sid = shoes.default_id(folder, strict=True)  # chosen but broken: stop and say so, not the foot's outline
     if sid is None:
         hint = "" if args.foot_outline else " (no default saved shoe: footscan shoe add)"
         return None, f"outline: the foot's own{hint}"
@@ -213,13 +216,22 @@ def insole_outline(args):
             f"{'' if args.shoe else ' (the default)'}")
 
 
+def looks_like_a_path(value: str) -> bool:
+    """A file name (has an extension or a folder in it) rather than a saved shoe's id, which never does."""
+    return bool(Path(value).suffix) or "/" in value or "\\" in value
+
+
 def cmd_insole(args) -> int:
     from .insole import InsoleError, from_scan, write_outputs
     from .recon.imported import load_geometry, to_millimetres
 
+    try:  # the outline first: a problem with the shoe is the shoe's, not the foot scan's
+        params, which = insole_outline(args)
+    except (FileNotFoundError, ValueError) as err:
+        print(f"footscan insole: {err}", file=sys.stderr)
+        return 1
     try:
         mesh, units, _ = to_millimetres(load_geometry(args.mesh))
-        params, which = insole_outline(args)
         print(which)
         ins = from_scan(mesh, args.foot, params)
     except (InsoleError, ValueError) as err:
@@ -256,7 +268,11 @@ def cmd_shoe(args) -> int:
             shoes.set_default(folder, None if args.id == "none" else args.id)
             print(f"default saved shoe: {shoes.default_id(folder) or 'none (insoles follow the foot)'}")
         else:
-            default = shoes.default_id(folder)
+            try:
+                default = shoes.default_id(folder, strict=True)
+            except shoes.ShoeLibraryError as e:  # still list the shoes, and say what's wrong with the default
+                default = None
+                print(f"footscan shoe: {e}", file=sys.stderr)
             listed = shoes.listed(folder)
             for s in listed:
                 print(f"{'*' if s['id'] == default else ' '} {s['id']}: {shoes.label(s)}, {s['length_mm']} x {s['width_mm']} mm")

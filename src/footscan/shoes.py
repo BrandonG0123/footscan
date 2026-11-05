@@ -28,29 +28,33 @@ import secrets
 from datetime import datetime
 from pathlib import Path
 
+from .filestamp import file_stamp
+
 DEFAULT_DIR = Path(__file__).resolve().parents[2] / "data" / "shoes"  # the studio's: <its data folder>/shoes
-ID_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,79}$")
+ID_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,89}$")
 DEFAULT_FILE = "default.txt"
-NAME_MAX = 60   # characters: the id keeps up to 55 of the name's and all of the size's
-SIZE_MAX = 24
+NAME_MAX = 60   # characters. The id keeps all of the name's and the size's letters and numbers (at most 60 + 1 +
+SIZE_MAX = 24   # 24 = 85 characters), so two shoes get the same id only if they differ just in case or punctuation
 
 
 class ShoeLibraryError(ValueError):
     pass
 
 
-def _slug(text: str) -> str:
+def slug(text: str) -> str:
+    """Lower case letters and numbers, runs of anything else as one "-": how ids and names are compared."""
     return re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")
 
 
 def shoe_id(name: str, size: str) -> str:
-    """"ASICS Gel Resolution X", "US men's 9.5" -> "asics-gel-resolution-x-us-men-s-9-5". The size is always
-    whole in it, so two sizes of one shoe are never the same saved shoe."""
-    n, z = _slug(name)[:55].strip("-"), _slug(size)
-    slug = f"{n}-{z}" if n and z else ""
-    if not ID_RE.match(slug):
+    """"ASICS Gel Resolution X", "US men's 9.5" -> "asics-gel-resolution-x-us-men-s-9-5". The name and the size
+    are both whole in it (nothing is cut off), so two shoes, or two sizes of one shoe, are never the same saved
+    shoe unless their names differ only in case or punctuation."""
+    n, z = slug(name), slug(size)
+    sid = f"{n}-{z}" if n and z else ""
+    if not ID_RE.match(sid):
         raise ShoeLibraryError("a saved shoe needs a name and a size with some letters or numbers")
-    return slug
+    return sid
 
 
 def _path(folder: Path, sid: str) -> Path:
@@ -82,7 +86,7 @@ def save(folder: Path, outline, name: str, size: str, source: str, read: dict, d
     path = _path(folder, shoe["id"])
     tmp = path.with_name(f"{path.name}.part-{secrets.token_hex(4)}")  # this save's own: two at once never share one
     try:
-        tmp.write_text(json.dumps(shoe, indent=1))
+        tmp.write_text(json.dumps(shoe, indent=1), encoding="utf-8")
         tmp.replace(path)
     finally:
         tmp.unlink(missing_ok=True)
@@ -92,11 +96,13 @@ def save(folder: Path, outline, name: str, size: str, source: str, read: dict, d
 
 
 def load(folder: Path, sid: str) -> dict:
+    """A saved shoe by its id. The id is the file's name (``<id>.json``), whatever the file says inside: a file
+    copied or renamed by hand is the shoe its name says."""
     path = _path(folder, sid)
     if not path.is_file():
         raise ShoeLibraryError(f"no saved shoe {sid!r} (footscan shoe list shows them)")
     try:
-        shoe = json.loads(path.read_text())
+        shoe = json.loads(path.read_text(encoding="utf-8"))
         ok = (isinstance(shoe, dict) and all(isinstance(shoe.get(k), str) for k in ("name", "size"))
               and all(isinstance(shoe.get(k), (int, float)) for k in ("length_mm", "width_mm"))
               and isinstance(shoe.get("outline"), list) and len(shoe["outline"]) >= 3
@@ -106,6 +112,7 @@ def load(folder: Path, sid: str) -> dict:
         ok = False
     if not ok:
         raise ShoeLibraryError(f"saved shoe {sid!r} can't be read: save it again from its insole's scan")
+    shoe["id"] = sid
     return shoe
 
 
@@ -131,18 +138,26 @@ def listed(folder: Path) -> list[dict]:
     return sorted(out, key=lambda s: (s["name"].lower(), s["size"].lower()))
 
 
-def default_id(folder: Path) -> str | None:
-    """The default saved shoe's id, or None (none chosen, or it's gone)."""
+def default_id(folder: Path, strict: bool = False) -> str | None:
+    """The default saved shoe's id, or None when none is chosen.
+
+    A default that was chosen but can't be used (its file is gone or can't be read, or default.txt itself is
+    garbled) is None too, unless ``strict``: then it raises ShoeLibraryError saying so. Making an insole asks
+    strictly, so a broken default stops it with that message rather than quietly cutting the insole to the
+    foot's own outline (the scan's size, not the shoe's)."""
     f = Path(folder) / DEFAULT_FILE
     if not f.is_file():
         return None
-    sid = f.read_text().strip()
-    if not ID_RE.match(sid):
-        return None
     try:
+        sid = f.read_text(encoding="utf-8").strip()
+        if not ID_RE.match(sid):
+            raise ShoeLibraryError(f"the default saved shoe ({f}) names no saved shoe: {sid[:40]!r}")
         load(folder, sid)
-    except ShoeLibraryError:  # gone or unreadable: no default, rather than every insole refused
-        return None
+    except (ShoeLibraryError, OSError, UnicodeDecodeError) as e:
+        if not strict:
+            return None
+        raise ShoeLibraryError(f"the default saved shoe can't be used ({e}). Save it again, or choose another "
+                               f"(footscan shoe default <id>, or none for the foot's own outline)") from None
     return sid
 
 
@@ -153,16 +168,19 @@ def set_default(folder: Path, sid: str | None) -> None:
         f.unlink(missing_ok=True)
         return
     load(folder, sid)  # it has to exist
-    f.write_text(sid + "\n")
+    # Written whole, then swapped in, as save() writes a shoe: an insole made at that moment reads the old
+    # default or the new one, never an empty file (which would read as no default).
+    tmp = f.with_name(f"{f.name}.part-{secrets.token_hex(4)}")
+    try:
+        tmp.write_text(sid + "\n", encoding="utf-8")
+        tmp.replace(f)
+    finally:
+        tmp.unlink(missing_ok=True)
 
 
 def stamp(folder: Path, sid: str) -> str | None:
     """Cheap fingerprint of a saved shoe's file: changes when it's saved again (an insole made from it is stale)."""
-    path = _path(folder, sid)
-    if not path.is_file():
-        return None
-    st = path.stat()
-    return f"{path.name}:{st.st_size}:{st.st_mtime_ns}"
+    return file_stamp(_path(folder, sid))
 
 
 def outline_param(shoe: dict) -> tuple:

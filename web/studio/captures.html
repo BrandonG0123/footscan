@@ -139,23 +139,30 @@
 
   // The insole's outline: a saved shoe's (one outline per shoe model and size, footscan/shoes.py), a scanned
   // shoe's insole (recon/shoe.py), or the foot's own (optionally lengthened). A saved shoe or a scan, or a length.
-  // What the menu shows: what was picked on this card since the page loaded, else the shoe the last insole was
-  // fitted to, else the default saved shoe (an insole made before there was one doesn't hold the foot's outline).
+  // What the menu shows: what was picked on this card since the page loaded, else what the last insole was made
+  // with (the server records it: a saved shoe, a shoe's scan, or the foot's own, lengthened or not), else the
+  // default saved shoe. An insole made before the server recorded the choice counts as the foot's own if it
+  // was lengthened (a length was only ever given with the foot's outline).
   const picked = {};
   function outlineChoice(c) {
     if (picked[c.capture_id]) return picked[c.capture_id];
-    const shoe = c.insole && !c.insole.error ? c.insole.shoe : undefined;
+    const ins = c.insole && !c.insole.error ? c.insole : undefined;
+    const shoe = ins?.shoe;
     if (shoe?.saved && saved.shoes.some((s) => s.id === shoe.saved)) return `saved:${shoe.saved}`;
     if (shoe?.capture && all.some((s) => s.capture_id === shoe.capture)) return `scan:${shoe.capture}`;
-    return saved.default ? `saved:${saved.default}` : "foot";
+    if (ins && !shoe && (ins.outline === "foot" || ins.shoe_length_mm != null)) return "foot";
+    // a default that was chosen but can't be read: ask for it anyway, so Make insole says what's wrong with it
+    // instead of quietly cutting the insole to the foot's own outline
+    return saved.default ? `saved:${saved.default}` : saved.default_problem ? "" : "foot";
   }
 
   function shoePicker(c) {
     const scans = all.filter((s) => s.condition === "shoe_insole" && s.mesh);
-    if (!scans.length && !saved.shoes.length) return "";
+    if (!scans.length && !saved.shoes.length && !saved.default_problem) return "";
     const chosen = outlineChoice(c);
     const opt = (value, label) => `<option value="${esc(value)}" ${value === chosen ? "selected" : ""}>${label}</option>`;
     return `<select data-shoe-for="${esc(c.capture_id)}" aria-label="The insole's outline: a shoe's, or the foot's own">
+      ${saved.default_problem ? opt("", "Outline: the default saved shoe (can't be read)") : ""}
       ${saved.shoes.map((s) => opt(`saved:${s.id}`, `Outline: ${esc(s.name)}, ${esc(s.size)}${s.id === saved.default ? " (default)" : ""}`)).join("")}
       ${scans.map((s) => opt(`scan:${s.capture_id}`, `Outline: the shoe's insole scanned ${esc(s.created?.slice(0, 16).replace("T", " "))}`)).join("")}
       ${opt("foot", "Outline: the foot's own")}</select>`;
@@ -227,11 +234,18 @@
     }
   });
 
+  // Why an insole no longer matches what it was made from (server.insole_stale_reason)
+  const STALE = {
+    model: "The 3D model has changed since this insole was made, so it no longer matches.",
+    shoe: "The shoe this insole was cut to has been saved again (or its scan replaced or removed) since, so it no longer matches.",
+    prep: "The way this kind of scan is prepared has changed since this insole was made.",
+  };
+
   // First-fit insole: not a medical device; no posting; walking-only until a clinician signs the sheet.
   function insoleHtml(id, r) {
     if (r.error) return `<p class="hint" style="color:var(--warn);margin:8px 0 0">${esc(r.error)}</p>`;
-    if (r.stale) return `<p class="hint" style="color:var(--warn);margin:8px 0 0">The 3D model has changed since this insole was
-      made, so it no longer matches. Press Make insole to make it again.</p>`;
+    if (r.stale) return `<p class="hint" style="color:var(--warn);margin:8px 0 0">${STALE[r.stale_reason] || STALE.model}
+      Press Make insole to make it again.</p>`;
     const base = `/api/captures/${encodeURIComponent(id)}/insole/`;
     const warn = (r.warnings || []).map((w) => `<li>${esc(w)}</li>`).join("");
     return `<div class="card" style="margin-top:10px;padding:12px">
