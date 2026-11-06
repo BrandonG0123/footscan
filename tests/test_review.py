@@ -374,11 +374,20 @@ def test_the_windows_service_runs_nssm_from_where_only_an_administrator_can_chan
 def test_windows_service_commands_made_on_another_computer_ask_the_checkouts_own_python(tmp_path, monkeypatch):
     """Made on the Mac for the tank: the Mac's Python folder is no use there, so the commands ask the
     checkout's .venv for its Python, as DEPLOY-TANK.md does, and grant that."""
-    monkeypatch.setattr(service.os, "name", "posix")
+    monkeypatch.setattr(service, "made_on_windows", lambda: False)
     lines = service.render("windows", tmp_path / "footscan", tmp_path / "data")["content"].splitlines()
     ask = next(i for i, ln in enumerate(lines) if ln.startswith("$py = & "))
     assert "python.exe" in lines[ask] and "sys.base_prefix" in lines[ask]
     assert lines[ask + 1].startswith("icacls $py /grant") and not any(sys.base_prefix in ln for ln in lines)
+
+
+def test_windows_service_commands_made_on_the_windows_computer_grant_this_python(tmp_path, monkeypatch):
+    """Made on the tank itself: this Python is the one the checkout's .venv runs on, so its folder is granted
+    directly. Faked without touching os.name, which pathlib reads too (a PosixPath can't be made on Windows)."""
+    monkeypatch.setattr(service, "made_on_windows", lambda: True)
+    lines = service.render("windows", tmp_path / "footscan", tmp_path / "data")["content"].splitlines()
+    assert any(ln.startswith(f'icacls "{sys.base_prefix}" /grant') for ln in lines)
+    assert not any(ln.startswith("$py = & ") for ln in lines)
 
 
 def test_pasting_the_windows_service_commands_again_leaves_the_running_nssm_alone(tmp_path):
