@@ -75,6 +75,6 @@ enum DiskSpace {
         guard let free, free < neededForCapture else { return nil }
         let have = ByteCountFormatter.string(fromByteCount: free, countStyle: .file)
         let need = ByteCountFormatter.string(fromByteCount: neededForCapture, countStyle: .file)
-        return "Only \(have) free on this iPhone. A scan needs about \(need): delete some old scans (Settings shows how much they use) or other files, then try again."
+        return "Only \(have) free on this \(DeviceKind.current.model). A scan needs about \(need): delete some old scans (Settings shows how much they use) or other files, then try again."
     }
 }

@@ -119,7 +119,7 @@ enum Subject: String, CaseIterable, Identifiable, Codable {
         case .rightSole, .leftSole:
             "Lie face down on a bed, bend this knee so the sole faces the ceiling, and let the foot relax. Someone else scans the sole from above and round both sides."
         case .rightSoleFlat, .leftSoleFlat:
-            "Lie face down on a bed with your legs straight and your feet just past the end, hanging relaxed. Someone else sweeps the phone round behind the foot."
+            "Lie face down on a bed with your legs straight and your feet just past the end, hanging relaxed. Someone else sweeps the \(DeviceKind.current.noun) round behind the foot."
         case .rightPrint, .leftPrint:
             "Press this foot straight down into a foam impression box while seated, lift it straight out, and scan the print from all round, with the box on a table."
         case .shoeInsole:
@@ -127,7 +127,7 @@ enum Subject: String, CaseIterable, Identifiable, Codable {
         case .calibration:
             "Put the printed calibration object on a plain, matte table with space to walk all the way round. Even light, no harsh shadows."
         case .rightFoot, .leftFoot:
-            "Sit on a chair with this foot bare and flat on the printed mat. Keep the foot completely still. Someone else holds the phone and walks round you."
+            "Sit on a chair with this foot bare and flat on the printed mat. Keep the foot completely still. Someone else holds the \(DeviceKind.current.noun) and walks round you."
         case .other:
             "Any object on a table, to get a feel for how capture works. Matte, textured things scan best; shiny or plain white ones (like earbuds) come out patchy."
         }
