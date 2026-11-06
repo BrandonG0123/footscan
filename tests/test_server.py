@@ -812,6 +812,7 @@ def test_a_stopped_tailscale_means_no_tailnet_address(monkeypatch, tmp_path):
     exe = tmp_path / "tailscale"
     exe.write_text("")
     monkeypatch.setattr(srv.shutil, "which", lambda name: str(exe))
+    monkeypatch.setattr(srv.Path, "is_file", lambda self: self == exe)  # not this computer's own Tailscale
     ran = []
     monkeypatch.setattr(srv.subprocess, "run", lambda cmd, **k: ran.append(cmd[0]) or subprocess.CompletedProcess(
         cmd, 1, "", "Tailscale is stopped.\n"))

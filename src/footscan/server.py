@@ -1726,7 +1726,6 @@ def tailnet_ip() -> str | None:
     candidates = [shutil.which("tailscale"), r"C:\Program Files\Tailscale\tailscale.exe",
                   "/Applications/Tailscale.app/Contents/MacOS/Tailscale"]
     tried = set()
-    said_off = False
     for exe in filter(None, candidates):
         if not Path(exe).is_file():
             continue
@@ -1749,8 +1748,9 @@ def tailnet_ip() -> str | None:
             continue
         if ip := first_tailnet_ip(run.stdout.split()):
             return ip
-        said_off = said_off or bool(TAILSCALE_OFF.search(run.stdout + run.stderr))
-    if tried and ON_WINDOWS and not said_off:  # Tailscale is installed, and didn't say its address
+        if TAILSCALE_OFF.search(run.stdout + run.stderr):  # every program asks the same tailscaled
+            return None
+    if tried and ON_WINDOWS:  # Tailscale is installed, and didn't say its address
         return windows_tailscale_adapter_ip()
     return None
 
