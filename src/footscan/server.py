@@ -1763,7 +1763,7 @@ def windows_tailscale_adapter_ip() -> str | None:
     try:
         out = subprocess.run([str(powershell), "-NoProfile", "-NonInteractive", "-Command", WINDOWS_TAILSCALE_ADAPTER],
                              capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10).stdout
-    except (OSError, subprocess.SubprocessError):  # no PowerShell, or it took too long (0.46 s on tank, warm)
+    except (OSError, subprocess.SubprocessError):  # no PowerShell, or it took too long (1-2 s on tank)
         return None
     return first_tailnet_ip(out.split())
 
