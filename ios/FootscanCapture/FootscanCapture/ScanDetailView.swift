@@ -40,6 +40,7 @@ struct ScanDetailView: View {
                 }
             }
             .padding(20)
+            .readableWidth()
         }
         .scrollDismissesKeyboard(.interactively)
         .background(Color.fsBackground.ignoresSafeArea())
@@ -53,7 +54,7 @@ struct ScanDetailView: View {
         .navigationBarTitleDisplayMode(.inline)
         .sheet(isPresented: $showStudio) { StudioView() }
         .quickLookPreview($preview)
-        .confirmationDialog("Delete this scan from the phone?", isPresented: $confirmDelete, titleVisibility: .visible) {
+        .confirmationDialog("Delete this scan from the \(DeviceKind.current.noun)?", isPresented: $confirmDelete, titleVisibility: .visible) {
             Button("Delete", role: .destructive) { library.delete(scan); dismiss() }
         } message: {
             Text(rec?.studioCaptureID == nil ? "Its photos and model will be gone." : "The copy in the studio stays.")
@@ -146,11 +147,11 @@ struct ScanDetailView: View {
 
     private func modelDetail(_ rec: ScanRecord?) -> String {
         switch library.work[scan.folder] {
-        case .building(let f): return "Building on the phone… \(Int(f * 100))%"
+        case .building(let f): return "Building on the \(DeviceKind.current.noun)… \(Int(f * 100))%"
         case .converting: return "Saving a copy for the studio…"
         default:
             if scan.hasModel && !scan.hasOBJ { return "Built, but the copy for the studio wasn't saved" }
-            if scan.hasModel { return rec?.modelSeconds.map { "Built on the phone in \(Int($0)) s" } ?? "Built on the phone" }
+            if scan.hasModel { return rec?.modelSeconds.map { "Built on the \(DeviceKind.current.noun) in \(Int($0)) s" } ?? "Built on the \(DeviceKind.current.noun)" }
             return scan.photoCount > 0 ? "Not built yet" : "Nothing to build from"
         }
     }
@@ -248,7 +249,7 @@ struct ScanDetailView: View {
         VStack(alignment: .leading, spacing: 10) {
             Text("Details").font(.headline)
             if let d = rec?.created { row("Scanned", d.formatted(date: .abbreviated, time: .shortened)) }
-            row("Phone", "\(ScanStore.phoneName(rec?.device ?? "?")), iOS \(rec?.systemVersion ?? "?")")
+            row("Device", "\(ScanStore.phoneName(rec?.device ?? "?")), iOS \(rec?.systemVersion ?? "?")")
             if let l = rec?.loadKg { row("Scale reading", String(format: "%.1f kg", l)) }
             if let id = rec?.studioCaptureID { row("In the studio", id) }
             if let err = rec?.error { row("Last problem", err) }
@@ -270,7 +271,7 @@ struct ScanDetailView: View {
                 if scan.hasOBJ { ShareLink(item: scan.obj) { Label("model.obj", systemImage: "square.and.arrow.up") }.buttonStyle(.bordered) }
                 ShareLink(item: scan.usdz) { Label("model.usdz", systemImage: "square.and.arrow.up") }.buttonStyle(.bordered)
             }
-            Text("model.obj goes into the studio's Import 3D. To rebuild in more detail on a Mac, copy this scan's Images folder over (Finder > iPhone > Files > Footscan).")
+            Text("model.obj goes into the studio's Import 3D. To rebuild in more detail on a Mac, copy this scan's Images folder over (Finder > \(DeviceKind.current.model) > Files > Footscan).")
                 .font(.footnote).foregroundStyle(Color.fsMuted)
         }
         .card()

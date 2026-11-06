@@ -27,6 +27,27 @@ With a free account the app stops opening after **7 days**; plug in and
 press Run again. (A paid account, US$99 a year, makes it last a year and
 allows TestFlight.)
 
+## On an iPad
+
+The app is built for iPhone and iPad (not an iPhone app magnified on an iPad). What works depends on the iPad:
+
+- **3D capture** (Apple's Object Capture: sole, foam-print and other LiDAR scans) needs LiDAR and an A14 chip or
+  later. On an iPad that means an **iPad Pro from 2021 (M1) onwards**. The 2020 iPad Pro has LiDAR but an A12Z, so
+  it can't; no iPad Air, iPad mini or plain iPad has LiDAR. The app doesn't go by this list: it asks
+  `ObjectCaptureSession.isSupported` and, where that says no, hides the sole and foam-print scans and offers
+  **Photos + mat** (which any iPad can do, with the studio building the model), the same as on an iPhone without
+  LiDAR.
+- It turns with the iPad (all four ways round) and works in Split View, Slide Over and resizable windows. Text and
+  buttons keep to a readable column on the big screen. When scanning with the iPad held sideways, the instructions
+  and buttons go beside the camera rather than under it.
+- In a window smaller than the screen, the scan panel says that the camera may pause while another app shares the
+  screen, and to make Footscan full screen if the picture stops.
+- The words on screen say "iPad" rather than "phone" (`DeviceKind` in `AppSettings.swift`).
+- An iPhone stays portrait only.
+
+Not checked on a real iPad yet: the simulator can't run Object Capture, so the camera screen's sideways layout and
+what the camera does in Split View have only been seen in the layout tests and the simulator, not in a real scan.
+
 ## Scan the calibration object
 
 1. Print it (Project page in the studio, or `footscan calib-object`) at
@@ -108,7 +129,8 @@ cd ios/FootscanCapture && xcodebuild test -project FootscanCapture.xcodeproj \
   -scheme FootscanCapture -destination 'platform=iOS Simulator,name=iPhone 17 Pro'
 ```
 
-Capture itself needs a phone with LiDAR and isn't covered.
+For the iPad, run the same with an iPad simulator (e.g. `name=iPad Pro 13-inch (M5)`). Capture itself needs a
+phone or iPad with LiDAR and isn't covered.
 
 ## What's been checked so far
 

@@ -36,16 +36,23 @@ struct CaptureView: View {
                 // The camera view gets its own space and nothing is drawn over its
                 // middle or bottom, where Object Capture draws the box and the
                 // progress ring: the hints sit along its top edge, the
-                // instructions and buttons in a panel below it.
-                VStack(spacing: 8) {
-                    ObjectCaptureView(session: session)
-                        .clipShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
-                        .overlay(alignment: .top) {
-                            Controls(session: session, subject: scan.record?.subject ?? .other, retake: retake, passes: $passes,
-                                     allSides: $allSides, part: .top, onCancel: cancel)
-                        }
-                    Controls(session: session, subject: scan.record?.subject ?? .other, retake: retake, passes: $passes,
-                             allSides: $allSides, part: .panel, onCancel: cancel)
+                // instructions and buttons in a panel below it. On an iPad held
+                // sideways (a window wider than it is tall, and wide), the panel
+                // goes beside the camera instead, so the camera keeps its height.
+                GeometryReader { g in
+                    let beside = Self.panelBeside(g.size)
+                    let layout = beside ? AnyLayout(HStackLayout(spacing: 8)) : AnyLayout(VStackLayout(spacing: 8))
+                    layout {
+                        ObjectCaptureView(session: session)
+                            .clipShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
+                            .overlay(alignment: .top) {
+                                Controls(session: session, subject: scan.record?.subject ?? .other, retake: retake, passes: $passes,
+                                         allSides: $allSides, part: .top, onCancel: cancel)
+                            }
+                        Controls(session: session, subject: scan.record?.subject ?? .other, retake: retake, passes: $passes,
+                                 allSides: $allSides, part: .panel, sharingScreen: Self.sharingScreen(g), onCancel: cancel)
+                            .frame(width: beside ? 380 : nil)
+                    }
                 }
                 .task { await follow(session) }
             } else if let startError {
@@ -63,6 +70,28 @@ struct CaptureView: View {
         }
         .onDisappear { releaseScreen?(); releaseScreen = nil }
         .statusBarHidden()
+    }
+
+    /// Panel beside the camera rather than below it: only in a window that is wider than tall and has room
+    /// for both (an iPad held sideways). An iPhone is portrait only, so it always has the panel below.
+    static func panelBeside(_ size: CGSize) -> Bool { size.width > size.height && size.width >= 700 }
+
+    /// Footscan in a window smaller than the screen (Split View, Slide Over, a Stage Manager or iPadOS window):
+    /// the camera may pause while another app shares the screen, so the panel says how to get it back.
+    /// `g` is inside the safe area, so its insets are added back to get the window's own size.
+    private static func sharingScreen(_ g: GeometryProxy) -> Bool {
+        guard DeviceKind.current == .pad,
+              let screen = UIApplication.shared.connectedScenes.compactMap({ ($0 as? UIWindowScene)?.screen }).first
+        else { return false }
+        let window = CGSize(width: g.size.width + g.safeAreaInsets.leading + g.safeAreaInsets.trailing,
+                            height: g.size.height + g.safeAreaInsets.top + g.safeAreaInsets.bottom)
+        return isSmaller(window: window, than: screen.bounds.size)
+    }
+
+    /// A window smaller than the screen it's on, in either orientation (a point of slack for rounding).
+    static func isSmaller(window: CGSize, than screen: CGSize) -> Bool {
+        let long = max(screen.width, screen.height), short = min(screen.width, screen.height)
+        return max(window.width, window.height) < long - 1 || min(window.width, window.height) < short - 1
     }
 
     private func start() {
@@ -121,6 +150,8 @@ private struct Controls: View {
     /// The cancel button, photo count and hints (over the top edge of the camera), or the panel below it.
     enum Part { case top, panel }
     var part: Part
+    /// The app is in a window smaller than the screen (iPad): say how to get the camera back if it pauses.
+    var sharingScreen = false
     var onCancel: () -> Void
 
     static let legsFlatPhotos = 40
@@ -193,6 +224,13 @@ private struct Controls: View {
     private var panel: some View {
         VStack(spacing: 14) {
             StepDots(index: stepIndex)
+            if sharingScreen {
+                Label("Footscan is sharing the screen, and the camera may pause. If the picture stops, make Footscan full screen.",
+                      systemImage: "rectangle.split.2x1")
+                    .font(.footnote.weight(.semibold)).foregroundStyle(Color.fsAccent)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             Text(instruction)
                 .font(.title3.weight(.semibold))
                 .multilineTextAlignment(.center)
@@ -203,7 +241,7 @@ private struct Controls: View {
             buttons
         }
         .padding(18)
-        .frame(maxWidth: .infinity)
+        .frame(maxWidth: 600) // the whole width on an iPhone; on an iPad, a readable column
         .background(Color.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 28, style: .continuous))
         .environment(\.colorScheme, .dark)
         .padding(.horizontal, 12)
@@ -238,10 +276,10 @@ private struct Controls: View {
         case .initializing: "Getting the camera ready…"
         case .ready:
             switch subject.scanKind {
-            case "sole_up": "Point the phone down at the sole, from about arm's length."
-            case "sole_hanging": "Stand behind the feet and point the phone at the sole."
-            case "impression": "Point the phone at the foam box, from about arm's length."
-            default: "Point the phone at it, from about arm's length."
+            case "sole_up": "Point the \(DeviceKind.current.noun) down at the sole, from about arm's length."
+            case "sole_hanging": "Stand behind the feet and point the \(DeviceKind.current.noun) at the sole."
+            case "impression": "Point the \(DeviceKind.current.noun) at the foam box, from about arm's length."
+            default: "Point the \(DeviceKind.current.noun) at it, from about arm's length."
             }
         case .detecting:
             switch subject.scanKind {

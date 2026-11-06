@@ -56,7 +56,7 @@ struct SettingsView: View {
                 }
 
                 Section {
-                    LabeledContent("Scans on this phone", value: "\(library.scans.count)")
+                    LabeledContent("Scans on this \(DeviceKind.current.noun)", value: "\(library.scans.count)")
                     LabeledContent("Space used", value: ByteCountFormatter.string(fromByteCount: storage, countStyle: .file))
                     Button(role: .destructive) { confirmDeleteAll = true } label: {
                         Label("Delete all scans", systemImage: "trash")
@@ -77,14 +77,14 @@ struct SettingsView: View {
                         Label("Help and support", systemImage: "questionmark.circle")
                     }
                     LabeledContent("Version", value: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "?")
-                    Text("Footscan measures how accurate iPhone scanning is. It is not a medical device: it designs and treats nothing.")
+                    Text("Footscan measures how accurate iPhone and iPad scanning is. It is not a medical device: it designs and treats nothing.")
                         .font(.footnote).foregroundStyle(Color.fsMuted)
                 }
             }
             .navigationTitle("Settings")
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
             .sheet(isPresented: $showStudio) { StudioView() }
-            .confirmationDialog("Delete every scan on this phone?", isPresented: $confirmDeleteAll, titleVisibility: .visible) {
+            .confirmationDialog("Delete every scan on this \(DeviceKind.current.noun)?", isPresented: $confirmDeleteAll, titleVisibility: .visible) {
                 Button("Delete all \(library.scans.count)", role: .destructive) {
                     library.deleteAll()
                     storage = 0

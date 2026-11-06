@@ -1,6 +1,8 @@
-// Tests for the iPhone app's own logic: the parts that don't need a camera.
+// Tests for the iPhone and iPad app's own logic: the parts that don't need a camera.
 // Run: xcodebuild test -project FootscanCapture.xcodeproj -scheme FootscanCapture
 //      -destination 'platform=iOS Simulator,name=iPhone 17 Pro'
+// (and the same with an iPad simulator, e.g. name=iPad Pro 13-inch (M5), for the iPad).
+import CoreGraphics
 import Foundation
 import Testing
 @testable import FootscanCapture
@@ -200,7 +202,7 @@ struct ConnectionTestFailures {
     let tailnet = URL(string: "https://100.101.102.103:8766")!
 
     @Test func awayFromHomeTheHomeAddressIsSaidToNeedTheSameWiFi() {
-        let text = StudioClient.Failure.explain([.init(address: home, miss: .noAnswer)], pinned: true)
+        let text = StudioClient.Failure.explain([.init(address: home, miss: .noAnswer)], pinned: true, device: .phone)
         #expect(text.contains("192.168.11.233 is the studio's home Wi-Fi address"))
         #expect(text.contains("same Wi-Fi"))
         #expect(text.contains("Check Footscan is running"))
@@ -208,55 +210,55 @@ struct ConnectionTestFailures {
     }
 
     @Test func withTailscaleBothAddressesAreExplainedInOrder() throws {
-        let text = StudioClient.Failure.explain([.init(address: home, miss: .noAnswer), .init(address: tailnet, miss: .noAnswer)], pinned: true)
+        let text = StudioClient.Failure.explain([.init(address: home, miss: .noAnswer), .init(address: tailnet, miss: .noAnswer)], pinned: true, device: .phone)
         let homeAt = try #require(text.range(of: "192.168.11.233")), tailnetAt = try #require(text.range(of: "100.101.102.103"))
         #expect(homeAt.lowerBound < tailnetAt.lowerBound)
         #expect(text.contains("Tailscale is on"))
     }
 
     @Test func aDifferentCertificateIsNotCalledUnreachable() {
-        let text = StudioClient.Failure.explain([.init(address: tailnet, miss: .wrongCertificate)], pinned: true)
+        let text = StudioClient.Failure.explain([.init(address: tailnet, miss: .wrongCertificate)], pinned: true, device: .phone)
         #expect(text.contains("isn't the studio this phone connected to"))
         #expect(!text.contains("Check Footscan is running")) // something did answer
     }
 
     @Test func anotherDeviceAtTheHomeAddressOnAnotherWiFiIsSaidToBeAnotherWiFi() {
         // a café's router using 192.168.11.x too: a printer there answers at the studio's home address
-        let text = StudioClient.Failure.explain([.init(address: home, miss: .wrongCertificate)], pinned: true)
+        let text = StudioClient.Failure.explain([.init(address: home, miss: .wrongCertificate)], pinned: true, device: .phone)
         #expect(text.contains("another Wi-Fi that uses the same addresses"))
         #expect(!text.contains("Check Footscan is running"))
     }
 
     @Test func localNetworkAccessIsMentionedOnlyWhenThePhoneHadNoRouteHome() {
-        let blocked = StudioClient.Failure.explain([.init(address: home, miss: .noRoute)], pinned: true)
+        let blocked = StudioClient.Failure.explain([.init(address: home, miss: .noRoute)], pinned: true, device: .phone)
         #expect(blocked.contains("Local Network"))
-        let silent = StudioClient.Failure.explain([.init(address: home, miss: .noAnswer)], pinned: true)
+        let silent = StudioClient.Failure.explain([.init(address: home, miss: .noAnswer)], pinned: true, device: .phone)
         #expect(!silent.contains("Local Network"))
     }
 
     @Test func aHomeAddressThatDoesntAnswerSuggestsScanningTheCodeAgain() {
         // the router may have given the studio a new address: the old advice to scan the code again stays
-        let text = StudioClient.Failure.explain([.init(address: home, miss: .noAnswer)], pinned: true)
+        let text = StudioClient.Failure.explain([.init(address: home, miss: .noAnswer)], pinned: true, device: .phone)
         #expect(text.contains("Wi-Fi address has changed") && text.contains("scan it again"))
-        let away = StudioClient.Failure.explain([.init(address: tailnet, miss: .noAnswer)], pinned: true)
+        let away = StudioClient.Failure.explain([.init(address: tailnet, miss: .noAnswer)], pinned: true, device: .phone)
         #expect(!away.contains("Wi-Fi address has changed"))
     }
 
     @Test func noRouteAnywhereIsPutDownToThePhonesOwnConnection() {
         // abroad with Data Roaming off, Airplane Mode, or mobile data off for the app: no address can be reached
-        let text = StudioClient.Failure.explain([.init(address: home, miss: .noRoute), .init(address: tailnet, miss: .noRoute)], pinned: true)
+        let text = StudioClient.Failure.explain([.init(address: home, miss: .noRoute), .init(address: tailnet, miss: .noRoute)], pinned: true, device: .phone)
         #expect(text.contains("this phone's own connection") && text.contains("Data Roaming") && text.contains("Airplane Mode"))
         #expect(text.contains("100.101.102.103 is the studio's Tailscale address, but this phone has no connection"))
         #expect(!text.contains("answers from anywhere while Tailscale is on")) // it is on: that's not the problem
-        let silent = StudioClient.Failure.explain([.init(address: tailnet, miss: .noAnswer)], pinned: true)
+        let silent = StudioClient.Failure.explain([.init(address: tailnet, miss: .noAnswer)], pinned: true, device: .phone)
         #expect(!silent.contains("this phone's own connection"))
         // at home with Local Network access refused and Tailscale off: the phone's connection is fine
-        let localOnly = StudioClient.Failure.explain([.init(address: home, miss: .noRoute), .init(address: tailnet, miss: .noAnswer)], pinned: true)
+        let localOnly = StudioClient.Failure.explain([.init(address: home, miss: .noRoute), .init(address: tailnet, miss: .noAnswer)], pinned: true, device: .phone)
         #expect(!localOnly.contains("this phone's own connection") && localOnly.contains("Local Network"))
         // no route to either address: Local Network access can't stop the Tailscale one, so it isn't the cause
         #expect(!text.contains("Local Network"))
         // a code with only the home address and no route there: it may be either, so both are said
-        let homeOnly = StudioClient.Failure.explain([.init(address: home, miss: .noRoute)], pinned: true)
+        let homeOnly = StudioClient.Failure.explain([.init(address: home, miss: .noRoute)], pinned: true, device: .phone)
         #expect(homeOnly.contains("this phone's own connection") && homeOnly.contains("Local Network"))
     }
 
@@ -270,7 +272,7 @@ struct ConnectionTestFailures {
     @Test func theAddressKindsHaveOneLabelEverywhere() {
         #expect(StudioConnection.describe(home) == "192.168.11.233 (home Wi-Fi)")
         #expect(StudioConnection.describe(tailnet) == "100.101.102.103 (Tailscale)")
-        let text = StudioClient.Failure.explain([.init(address: home, miss: .noAnswer), .init(address: tailnet, miss: .noAnswer)], pinned: true)
+        let text = StudioClient.Failure.explain([.init(address: home, miss: .noAnswer), .init(address: tailnet, miss: .noAnswer)], pinned: true, device: .phone)
         #expect(text.contains("home Wi-Fi address") && text.contains("Tailscale address"))
     }
 
@@ -316,6 +318,72 @@ struct ConnectionTestFailures {
                              newRequest: URLRequest(url: URL(string: "https://203.0.113.5/api/studio")!)) { done.resume(returning: $0) }
         }
         #expect(followed == .some(nil))
+    }
+}
+
+// MARK: - on an iPad
+
+@Suite("iPad")
+@MainActor
+struct OnIPad {
+    /// The built app's own Info.plist (tests run inside the app, so this is the app's bundle).
+    private var info: [String: Any] { Bundle.main.infoDictionary ?? [:] }
+
+    @Test func theAppIsBuiltForIPhoneAndIPad() {
+        // UIDeviceFamily 1 is iPhone, 2 is iPad: without 2 an iPad runs it as a magnified iPhone app
+        let families = info["UIDeviceFamily"] as? [Int] ?? []
+        #expect(Set(families) == [1, 2])
+    }
+
+    @Test func anIPadCanHoldItAnyWayRoundAndShareTheScreen() {
+        let iPad = Set(info["UISupportedInterfaceOrientations~ipad"] as? [String] ?? [])
+        #expect(iPad == ["UIInterfaceOrientationPortrait", "UIInterfaceOrientationPortraitUpsideDown",
+                         "UIInterfaceOrientationLandscapeLeft", "UIInterfaceOrientationLandscapeRight"])
+        // full-screen-only is deprecated from iPadOS 26 and ignored by apps built with the iOS 27 SDK:
+        // the layout copes with any window size instead
+        #expect(info["UIRequiresFullScreen"] as? Bool != true)
+        // an iPhone stays portrait: you walk round a foot holding it upright
+        #expect(info["UISupportedInterfaceOrientations"] as? [String] == ["UIInterfaceOrientationPortrait"])
+    }
+
+    @Test func connectionAdviceNamesTheIPadOnAnIPad() {
+        let home = URL(string: "https://192.168.11.233:8766")!, tailnet = URL(string: "https://100.101.102.103:8766")!
+        let cases: [[StudioClient.Missed]] = [
+            [.init(address: home, miss: .noRoute), .init(address: tailnet, miss: .noRoute)],
+            [.init(address: home, miss: .wrongCertificate)],
+            [.init(address: tailnet, miss: .wrongCertificate)],
+            [.init(address: home, miss: .noAnswer), .init(address: tailnet, miss: .noAnswer)],
+            [.init(address: URL(string: "https://studio.example.dev")!, miss: .noRoute)],
+        ]
+        for misses in cases {
+            let text = StudioClient.Failure.explain(misses, pinned: true, device: .pad)
+            #expect(text.contains("iPad"), "\(text)")
+            #expect(!text.lowercased().contains("phone"), "\(text)")
+        }
+        // and the same advice on an iPhone still says phone
+        #expect(StudioClient.Failure.explain(cases[0], pinned: true, device: .phone).contains("this phone's own connection"))
+    }
+
+    @Test func whereThreeDCaptureCantRunItSaysWhichModelsCan() {
+        #expect(DeviceKind.pad.needsLiDAR.contains("iPad Pro"))
+        #expect(DeviceKind.phone.needsLiDAR.contains("iPhone"))
+        #expect(DeviceKind.pad.noun == "iPad" && DeviceKind.phone.noun == "phone")
+    }
+
+    @Test func theScanPanelGoesBesideTheCameraOnlyInAWideLandscapeWindow() {
+        #expect(CaptureView.panelBeside(CGSize(width: 1376, height: 1032)))   // 13-inch iPad Pro, sideways
+        #expect(CaptureView.panelBeside(CGSize(width: 1210, height: 834)))    // 11-inch, sideways
+        #expect(!CaptureView.panelBeside(CGSize(width: 1032, height: 1376)))  // upright: panel below
+        #expect(!CaptureView.panelBeside(CGSize(width: 402, height: 874)))    // an iPhone
+        #expect(!CaptureView.panelBeside(CGSize(width: 600, height: 400)))    // sideways but narrow: no room
+    }
+
+    @Test func aWindowSmallerThanTheScreenIsSharingIt() {
+        let screen = CGSize(width: 1032, height: 1376)
+        #expect(!CaptureView.isSmaller(window: screen, than: screen))
+        #expect(!CaptureView.isSmaller(window: CGSize(width: 1376, height: 1032), than: screen)) // full screen, sideways
+        #expect(CaptureView.isSmaller(window: CGSize(width: 678, height: 1032), than: screen))   // Split View
+        #expect(CaptureView.isSmaller(window: CGSize(width: 320, height: 980), than: screen))    // Slide Over
     }
 }
 
