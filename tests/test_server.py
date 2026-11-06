@@ -818,6 +818,57 @@ def test_a_stopped_tailscale_means_no_tailnet_address(monkeypatch, tmp_path):
     assert srv.tailnet_ip() is None
 
 
+def test_the_windows_service_finds_its_tailscale_address_on_tailscales_adapter(monkeypatch):
+    """On tank the studio runs as Local Service, and `tailscale ip -4` gave that account no address (6 Nov 2026,
+    "Run unattended" on too), so the connect code had only the home address. The "Tailscale" adapter has it."""
+    import subprocess
+
+    import footscan.server as srv
+
+    win = r"C:\Program Files\Tailscale\tailscale.exe"
+    ran = []
+    monkeypatch.setattr(srv, "ON_WINDOWS", True)
+    monkeypatch.setattr(srv.shutil, "which", lambda name: None)
+    monkeypatch.setattr(srv.Path, "is_file", lambda self: self == Path(win))
+
+    def run(cmd, **kw):
+        ran.append("tailscale" if cmd[0] == win else Path(cmd[0]).name)
+        if cmd[0] == win:  # what the service got: no address
+            return subprocess.CompletedProcess(cmd, 1, "", "")
+        assert cmd[-1] == srv.WINDOWS_TAILSCALE_ADAPTER
+        return subprocess.CompletedProcess(cmd, 0, "100.113.53.83\r\n", "")
+
+    monkeypatch.setattr(srv.subprocess, "run", run)
+    assert srv.tailnet_ip() == "100.113.53.83" and ran == ["tailscale", "powershell.exe"]
+
+
+def test_the_tailscale_adapter_is_read_only_on_windows_with_tailscale_installed(monkeypatch, tmp_path):
+    """Without Tailscale (Cloudflare WARP's 100.64/10 address, say) nothing is read, and an answer outside
+    Tailscale's range from the adapter doesn't count."""
+    import subprocess
+
+    import footscan.server as srv
+
+    ran = []
+    monkeypatch.setattr(srv.subprocess, "run",
+                        lambda cmd, **k: ran.append(cmd[0]) or subprocess.CompletedProcess(cmd, 0, "100.64.0.9\n", ""))
+    monkeypatch.setattr(srv, "ON_WINDOWS", True)
+    monkeypatch.setattr(srv.shutil, "which", lambda name: None)
+    monkeypatch.setattr(srv.Path, "is_file", lambda self: False)
+    assert srv.tailnet_ip() is None and ran == []  # not installed: PowerShell never runs
+
+    exe = tmp_path / "tailscale"
+    exe.write_text("")
+    monkeypatch.setattr(srv.shutil, "which", lambda name: str(exe))
+    monkeypatch.setattr(srv.Path, "is_file", lambda self: self == exe)
+    monkeypatch.setattr(srv.subprocess, "run",
+                        lambda cmd, **k: subprocess.CompletedProcess(cmd, 0, "" if cmd[0] == str(exe) else "169.254.3.4", ""))
+    assert srv.tailnet_ip() is None
+    monkeypatch.setattr(srv, "ON_WINDOWS", False)  # the Mac and Linux: only the command's answer
+    monkeypatch.setattr(srv.subprocess, "run", lambda cmd, **k: ran.append(cmd[0]) or subprocess.CompletedProcess(cmd, 1, "", ""))
+    assert srv.tailnet_ip() is None and ran == [str(exe)]
+
+
 def test_the_tailscale_command_runs_once_when_path_finds_an_install_location(monkeypatch):
     """which() on tank finds C:\\Program Files\\Tailscale\\tailscale.exe, which is also on the fixed list: a stuck
     tailscaled would cost 3 s twice on every pairing request if it ran twice."""

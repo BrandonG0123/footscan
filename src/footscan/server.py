@@ -63,6 +63,7 @@ import http.cookies
 import ipaddress
 import json
 import mimetypes
+import os
 import re
 import secrets
 import shutil
@@ -1709,9 +1710,14 @@ def tailnet_ip() -> str | None:
     started before Tailscale was installed; the Mac app, whose command sits inside the app), so the install
     locations are tried too, each program once however many of those name it.
 
-    Only the tailscale command's answer counts. A 100.64.0.0/10 address the computer has otherwise (Tailscale
-    stopped or logged out, or not installed) belongs to something else (Cloudflare WARP, a carrier's NAT), and
-    handing it to the phone as "Tailscale, from anywhere" would send it to the wrong place.
+    The tailscale command's answer counts, and on Windows so does Tailscale's own network adapter. A
+    100.64.0.0/10 address the computer has on any other adapter (or with Tailscale stopped, logged out or not
+    installed) belongs to something else (Cloudflare WARP, a carrier's NAT), and handing it to the phone as
+    "Tailscale, from anywhere" would send it to the wrong place.
+
+    The adapter is needed on Windows because the studio's service runs as Local Service, and there the command
+    gave the service no address (tank, 6 Nov 2026, also with Tailscale's "Run unattended" on), while the same
+    command run by the signed-in user gave 100.113.53.83. Reading the adapter doesn't ask tailscaled.
     """
     candidates = [shutil.which("tailscale"), r"C:\Program Files\Tailscale\tailscale.exe",
                   "/Applications/Tailscale.app/Contents/MacOS/Tailscale"]
@@ -1731,13 +1737,35 @@ def tailnet_ip() -> str | None:
                                  errors="replace", timeout=3).stdout
         except subprocess.TimeoutExpired:
             # tailscaled is stuck: every program asks the same one (the Mac's /usr/local/bin/tailscale is a
-            # script, not a link, so it isn't seen as the app's own program), and each would wait as long
-            break
+            # script, not a link, so it isn't seen as the app's own program), and each would wait as long;
+            # so would reading its adapter
+            return None
         except (OSError, subprocess.SubprocessError):
             continue
         if ip := first_tailnet_ip(out.split()):
             return ip
+    if tried and ON_WINDOWS:  # Tailscale is installed, and didn't say its address
+        return windows_tailscale_adapter_ip()
     return None
+
+
+ON_WINDOWS = os.name == "nt"
+# Tailscale's adapter on Windows is called "Tailscale" (description "Tailscale Tunnel"). Its address counts only
+# while the adapter is up, so a disconnected Tailscale's leftover address isn't offered.
+WINDOWS_TAILSCALE_ADAPTER = ("$a = Get-NetAdapter -Name Tailscale -ErrorAction Stop; "
+                             "if ($a.Status -eq 'Up') { (Get-NetIPAddress -InterfaceIndex $a.ifIndex "
+                             "-AddressFamily IPv4 -ErrorAction Stop).IPAddress }")
+
+
+def windows_tailscale_adapter_ip() -> str | None:
+    """The 100.64.0.0/10 address on Windows' "Tailscale" network adapter, while that adapter is up, or None."""
+    powershell = Path(os.environ.get("SystemRoot", r"C:\Windows")) / "System32/WindowsPowerShell/v1.0/powershell.exe"
+    try:
+        out = subprocess.run([str(powershell), "-NoProfile", "-NonInteractive", "-Command", WINDOWS_TAILSCALE_ADAPTER],
+                             capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10).stdout
+    except (OSError, subprocess.SubprocessError):  # no PowerShell, or it took too long (0.46 s on tank, warm)
+        return None
+    return first_tailnet_ip(out.split())
 
 
 def first_tailnet_ip(texts) -> str | None:
