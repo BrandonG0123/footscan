@@ -109,10 +109,14 @@ computer:
   PowerShell; the home Wi-Fi rule above is for Private networks only):
 
   ```powershell
-  New-NetFirewallRule -DisplayName "footscan (Tailscale)" -Direction Inbound -Protocol TCP -LocalPort 8766 -RemoteAddress 100.64.0.0/10 -Action Allow
+  New-NetFirewallRule -DisplayName "footscan (Tailscale)" -Direction Inbound -Protocol TCP -LocalPort 8766 -RemoteAddress 100.64.0.0/10 -InterfaceAlias Tailscale -Action Allow
   ```
 
-  (8766 is tank's port; use the studio's own.)
+  (8766 is tank's port; use the studio's own.) `-InterfaceAlias Tailscale`
+  keeps it to the Tailscale adapter: some other networks (a phone hotspot,
+  carrier NAT, Cloudflare WARP) also hand out 100.64.0.0/10 addresses. A rule
+  made without it is narrowed with `Set-NetFirewallRule -DisplayName "footscan
+  (Tailscale)" -InterfaceAlias Tailscale`.
 - Windows: in Tailscale's settings turn on **Run unattended**, so Tailscale
   keeps running after a restart when nobody has signed in yet.
 
@@ -120,9 +124,9 @@ The studio then prints `over Tailscale, from anywhere (the connect code
 includes it): https://100.x.x.x:<port>/` when it starts, and the connect code
 carries that address as well as the home one. On Windows the service runs as
 Local Service, and Tailscale doesn't tell that account its address (tank, 6 Nov
-2026), so the studio reads it from the adapter called "Tailscale" instead. If
-the line is missing, check the adapter is there and up: `Get-NetAdapter
-Tailscale`.
+2026), so the studio reads it from the adapter called "Tailscale" instead
+(unless Tailscale says it is stopped or logged out). If the line is missing,
+check the adapter is there and up: `Get-NetAdapter Tailscale`.
 
 ### 6. Pair the phone with it
 

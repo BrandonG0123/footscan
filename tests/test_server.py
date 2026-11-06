@@ -801,16 +801,23 @@ def test_tailnet_address_is_found_through_the_mac_app_when_the_command_isnt_on_p
 
 def test_a_stopped_tailscale_means_no_tailnet_address(monkeypatch, tmp_path):
     """Tailscale stopped: its command runs and gives no address, and that is the answer. (The computer's own
-    addresses aren't looked at: a 100.64.0.0/10 one then is someone else's, such as Cloudflare WARP's.)"""
+    addresses aren't looked at: a 100.64.0.0/10 one then is someone else's, such as Cloudflare WARP's. On
+    Windows, neither is Tailscale's adapter, below.)"""
     import subprocess
 
     import footscan.server as srv
 
+    monkeypatch.setattr(srv, "ON_WINDOWS", True)
+
     exe = tmp_path / "tailscale"
     exe.write_text("")
     monkeypatch.setattr(srv.shutil, "which", lambda name: str(exe))
-    monkeypatch.setattr(srv.subprocess, "run",
-                        lambda cmd, **k: subprocess.CompletedProcess(cmd, 1, "", "Tailscale is stopped.\n"))
+    ran = []
+    monkeypatch.setattr(srv.subprocess, "run", lambda cmd, **k: ran.append(cmd[0]) or subprocess.CompletedProcess(
+        cmd, 1, "", "Tailscale is stopped.\n"))
+    assert srv.tailnet_ip() is None and ran == [str(exe)]  # it said so: the adapter isn't read
+    monkeypatch.setattr(srv.subprocess, "run", lambda cmd, **k: subprocess.CompletedProcess(
+        cmd, 0, "" if cmd[0] == str(exe) else "100.88.1.2", "Logged out.\n" if cmd[0] == str(exe) else ""))
     assert srv.tailnet_ip() is None
     # with no tailscale command anywhere (WARP on, Tailscale not installed), still none
     monkeypatch.setattr(srv.shutil, "which", lambda name: None)
@@ -821,6 +828,7 @@ def test_a_stopped_tailscale_means_no_tailnet_address(monkeypatch, tmp_path):
 def test_the_windows_service_finds_its_tailscale_address_on_tailscales_adapter(monkeypatch):
     """On tank the studio runs as Local Service, and `tailscale ip -4` gave that account no address (6 Nov 2026,
     "Run unattended" on too), so the connect code had only the home address. The "Tailscale" adapter has it."""
+    import ntpath
     import subprocess
 
     import footscan.server as srv
@@ -832,7 +840,7 @@ def test_the_windows_service_finds_its_tailscale_address_on_tailscales_adapter(m
     monkeypatch.setattr(srv.Path, "is_file", lambda self: self == Path(win))
 
     def run(cmd, **kw):
-        ran.append("tailscale" if cmd[0] == win else Path(cmd[0]).name)
+        ran.append("tailscale" if cmd[0] == win else ntpath.basename(cmd[0]))
         if cmd[0] == win:  # what the service got: no address
             return subprocess.CompletedProcess(cmd, 1, "", "")
         assert cmd[-1] == srv.WINDOWS_TAILSCALE_ADAPTER
@@ -869,6 +877,44 @@ def test_the_tailscale_adapter_is_read_only_on_windows_with_tailscale_installed(
     assert srv.tailnet_ip() is None and ran == [str(exe)]
 
 
+def test_a_stuck_tailscaled_on_windows_still_leaves_the_adapter_to_read(monkeypatch):
+    """Reading the adapter doesn't ask tailscaled, so a command that times out (the service's own access to it
+    stalling, say) doesn't cost the connect code its Tailscale address."""
+    import subprocess
+
+    import footscan.server as srv
+
+    win = r"C:\Program Files\Tailscale\tailscale.exe"
+    monkeypatch.setattr(srv, "ON_WINDOWS", True)
+    monkeypatch.setattr(srv.shutil, "which", lambda name: None)
+    monkeypatch.setattr(srv.Path, "is_file", lambda self: self == Path(win))
+
+    def run(cmd, **kw):
+        if cmd[0] == win:
+            raise subprocess.TimeoutExpired(cmd, 3)
+        return subprocess.CompletedProcess(cmd, 0, "100.113.53.83\n", "")
+
+    monkeypatch.setattr(srv.subprocess, "run", run)
+    assert srv.tailnet_ip() == "100.113.53.83"
+
+
+def test_powershell_is_never_run_from_a_relative_path(monkeypatch):
+    """An empty or relative SystemRoot in the service's environment would run powershell.exe from the service's
+    own folder, which its owner can change."""
+    import subprocess
+
+    import footscan.server as srv
+
+    ran = []
+    monkeypatch.setattr(srv.subprocess, "run", lambda cmd, **k: ran.append(cmd[0]) or subprocess.CompletedProcess(
+        cmd, 0, "100.88.1.2", ""))
+    for root in ("", "Windows", r"D:\Win"):
+        monkeypatch.setenv("SystemRoot", root)
+        assert srv.windows_tailscale_adapter_ip() == "100.88.1.2"
+    assert ran == [r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe"] * 2 + [
+        r"D:\Win\System32\WindowsPowerShell\v1.0\powershell.exe"]
+
+
 def test_the_tailscale_command_runs_once_when_path_finds_an_install_location(monkeypatch):
     """which() on tank finds C:\\Program Files\\Tailscale\\tailscale.exe, which is also on the fixed list: a stuck
     tailscaled would cost 3 s twice on every pairing request if it ran twice."""
@@ -877,6 +923,7 @@ def test_the_tailscale_command_runs_once_when_path_finds_an_install_location(mon
     import footscan.server as srv
 
     win = r"C:\Program Files\Tailscale\tailscale.exe"
+    monkeypatch.setattr(srv, "ON_WINDOWS", False)  # the command only (Windows reads the adapter after)
     ran = []
     monkeypatch.setattr(srv.shutil, "which", lambda name: win)
     monkeypatch.setattr(srv.Path, "is_file", lambda self: self == Path(win))
@@ -897,6 +944,7 @@ def test_a_stuck_tailscaled_is_waited_on_once_not_once_per_program(monkeypatch):
     import footscan.server as srv
 
     mac_cli, wrapper = "/Applications/Tailscale.app/Contents/MacOS/Tailscale", "/usr/local/bin/tailscale"
+    monkeypatch.setattr(srv, "ON_WINDOWS", False)  # the command only (Windows reads the adapter after)
     ran = []
     monkeypatch.setattr(srv.shutil, "which", lambda name: wrapper)
     monkeypatch.setattr(srv.Path, "is_file", lambda self: self in (Path(mac_cli), Path(wrapper)))
