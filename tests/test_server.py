@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from footscan.server import WEB_DIR, StudioServer, make_handler
+from footscan.server import PUBLIC_PAIRING_NOTE, WEB_DIR, StudioServer, make_handler
 
 JPEG = b"\xff\xd8\xff\xe0" + b"\x00" * 64
 KEY = "test-studio-key"
@@ -663,9 +663,37 @@ def test_pairing_through_the_public_address_uses_it_and_needs_no_fingerprint(tmp
     try:
         assert call(f"{url}/api/studio/pairing")[0] == 403
         p = body(call(f"{url}/api/studio/pairing", headers={"X-Studio-Key": KEY, "Host": "footscan.example.dev"}))
-        assert p == {"available": True, "url": "https://footscan.example.dev", "key": KEY, "fingerprint": None}
+        assert p == {"available": True, "url": "https://footscan.example.dev", "key": KEY, "fingerprint": None,
+                     "note": PUBLIC_PAIRING_NOTE}  # the App Store build won't take it: said where the code is shown
     finally:
         httpd.shutdown()
+
+
+def test_the_studio_knows_the_apps_own_network_rule():
+    """The same rule as the app's StudioStore.isOwnNetwork, so the studio can say when the App Store build
+    will refuse the code it shows (a computer given a public address, on a campus network say)."""
+    from footscan.server import own_network
+
+    for own in ("192.168.11.233", "10.0.0.5", "172.20.1.1", "169.254.3.4", "100.113.53.83", "mac-mini.local",
+                "mac.local.", "[fd7a:115c:a1e0::1]", "fe90::1", "::ffff:192.168.1.5"):
+        assert own_network(own), own
+    for other in ("172.32.0.1", "100.128.0.1", "128.32.10.1", "footscan.example.dev", "mac.tail1234.ts.net",
+                  "2001:db8::1", "fe7f::1", "fd::1"):  # fd::1 is 00fd::1, not unique-local
+        assert not own_network(other), other
+
+
+def test_a_lan_pairing_code_at_an_address_the_app_store_build_refuses_says_so(tmp_path, monkeypatch):
+    from footscan import server
+
+    handler = make_handler(WEB_DIR, tmp_path, studio_key=KEY, cert_fingerprint="ab" * 32)
+    monkeypatch.setattr(handler, "other_addresses", lambda self, url: [])
+    monkeypatch.setattr(handler, "studio_info", lambda self: {"phones_can_connect": True,
+                                                              "scan_url": "https://128.32.10.1:8766/"})
+    p = handler.pairing(object.__new__(handler))
+    assert p["url"] == "https://128.32.10.1:8766" and p["note"] == server.OWN_NETWORK_NOTE
+    monkeypatch.setattr(handler, "studio_info", lambda self: {"phones_can_connect": True,
+                                                              "scan_url": "https://192.168.11.233:8766/"})
+    assert "note" not in handler.pairing(object.__new__(handler))
 
 
 def _phone_ready_studio(tmp_path, monkeypatch, tailnet):

@@ -70,6 +70,7 @@ import socket
 import ssl
 import subprocess
 import threading
+import urllib.parse
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -363,6 +364,33 @@ _capture_locks_guard = threading.Lock()
 def capture_lock(capture_id: str) -> threading.Lock:
     with _capture_locks_guard:
         return _capture_locks.setdefault(capture_id, threading.Lock())
+
+
+# A public studio's code has no certificate fingerprint, and the App Store build of the app pairs only with a
+# studio on the person's own computer whose certificate the code pins (docs/PRIVACY.md).
+PUBLIC_PAIRING_NOTE = ("This code pairs only with a development build of the Footscan app. The App Store version "
+                       "connects only to a studio on your own computer, over your Wi-Fi or Tailscale.")
+
+
+OWN_NETWORK_NOTE = ("This address isn't on a home network or Tailscale, so the App Store version of the Footscan "
+                    "app won't take this code (development builds will). Connect this computer to your Wi-Fi, or "
+                    "turn on Tailscale, and show the code again.")
+
+
+def own_network(host: str) -> bool:
+    """The app's own-network rule (StudioStore.isOwnNetwork in ios/.../Studio.swift): a private or link-local
+    IP, Tailscale's 100.64/10, or a .local name. The App Store build pairs only with a studio at one."""
+    host = host.strip("[]").rstrip(".").lower()
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        return host.endswith(".local")
+    if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped:
+        ip = ip.ipv4_mapped
+    if ip.version == 4:
+        return any(ip in ipaddress.ip_network(n) for n in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16",
+                                                            "169.254.0.0/16", "100.64.0.0/10"))  # last: Tailscale
+    return ip in ipaddress.ip_network("fc00::/7") or ip in ipaddress.ip_network("fe80::/10")
 
 
 def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check=is_loopback,
@@ -710,7 +738,9 @@ def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check
                 host = self.headers.get("Host", "")
                 if not host:
                     return dict(available=False, reason="Open the studio through its public address to pair.")
-                return dict(available=True, url=f"https://{host}", key=studio_key, fingerprint=None)
+                # said here, where the code is shown, not only on the phone after scanning it
+                return dict(available=True, url=f"https://{host}", key=studio_key, fingerprint=None,
+                            note=PUBLIC_PAIRING_NOTE)
             info = self.studio_info()
             if not info["phones_can_connect"] or not cert_fingerprint:
                 return dict(available=False,
@@ -722,10 +752,14 @@ def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check
                     return dict(available=False,
                                 reason="This computer has no network address a phone can reach right now (is its "
                                        "Wi-Fi or network cable connected?). Open this page again once it has.")
-                return dict(available=True, url=alt[0], key=studio_key, fingerprint=cert_fingerprint, alt_urls=[])
-            url = info["scan_url"].rstrip("/")
-            return dict(available=True, url=url, key=studio_key, fingerprint=cert_fingerprint,
-                        alt_urls=self.other_addresses(url))
+                url, alt_urls = alt[0], []
+            else:
+                url = info["scan_url"].rstrip("/")
+                alt_urls = self.other_addresses(url)
+            out = dict(available=True, url=url, key=studio_key, fingerprint=cert_fingerprint, alt_urls=alt_urls)
+            if not own_network(urllib.parse.urlsplit(url).hostname or ""):
+                out["note"] = OWN_NETWORK_NOTE  # the App Store build will refuse it: say so where it's shown
+            return out
 
         def other_addresses(self, url: str | None) -> list[str]:
             """This studio's other addresses for the phone, tried alongside the home-network one.

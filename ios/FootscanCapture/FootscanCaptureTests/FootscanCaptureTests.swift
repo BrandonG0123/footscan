@@ -21,8 +21,50 @@ struct ConnectCodes {
     }
 
     @Test func aPublicAddressNeedsNoFingerprint() throws {
-        let parsed = try #require(StudioStore.parse("footscan-capture://connect?url=https://footscan.example.dev&key=k"))
+        let parsed = try #require(StudioStore.parse("footscan-capture://connect?url=https://footscan.example.dev&key=k",
+                                                    allowPublic: true))
         #expect(parsed.link.fingerprint == nil)
+    }
+
+    @Test func withPublicStudiosRefusedOnlyACodeThatPinsItsCertificateIsAccepted() {
+        // as in the App Store build (acceptsPublicStudios is false outside DEBUG; these tests build in Debug):
+        // a public studio could be the developer's, and scans sent there would be collected data (docs/PRIVACY.md)
+        #expect(StudioStore.parse("footscan-capture://connect?url=https://footscan.example.dev&key=k", allowPublic: false) == nil)
+        let pin = String(repeating: "a", count: 64)
+        #expect(StudioStore.parse("footscan-capture://connect?url=https://192.168.1.20:8765&key=k&fp=\(pin)", allowPublic: false) != nil)
+        #expect(StudioStore.parse("footscan-capture://connect?url=https://100.113.53.83:8766&key=k&fp=\(pin)", allowPublic: false) != nil) // Tailscale
+        // a pin alone isn't enough: a hosted studio at a public address can pin a self-made certificate too
+        #expect(StudioStore.parse("footscan-capture://connect?url=https://studio.example.com&key=k&fp=\(pin)", allowPublic: false) == nil)
+        #expect(StudioStore.parse("footscan-capture://connect?url=https://203.0.113.9:8766&key=k&fp=\(pin)", allowPublic: false) == nil)
+    }
+
+    @Test func withPublicStudiosRefusedTheKeyGoesOnlyToOwnNetworkAddresses() throws {
+        let pin = String(repeating: "ab", count: 32)
+        // a public alternate is dropped and the home and Tailscale addresses kept: every address is sent the key
+        let parsed = try #require(StudioStore.parse(
+            "footscan-capture://connect?url=https://192.168.1.20:8765&key=k&fp=\(pin)&alt=https://203.0.113.9:8765&alt=https://100.113.53.83:8765",
+            allowPublic: false))
+        #expect(parsed.link.alternates == [URL(string: "https://100.113.53.83:8765")!])
+        // a development build keeps it
+        #expect(StudioStore.parse("footscan-capture://connect?url=https://192.168.1.20:8765&key=k&fp=\(pin)&alt=https://203.0.113.9:8765",
+                                  allowPublic: true)?.link.alternates.count == 1)
+        // a saved studio with a public address among its addresses (saved by a development build) isn't used
+        let saved = StudioLink(url: URL(string: "https://192.168.1.20:8765")!, fingerprint: pin,
+                               alternates: [URL(string: "https://203.0.113.9:8765")!])
+        #expect(!StudioStore.accepts(saved, allowPublic: false) && StudioStore.accepts(saved.using(saved.url), allowPublic: true))
+        #expect(StudioStore.accepts(StudioLink(url: saved.url, fingerprint: pin), allowPublic: false))
+    }
+
+    @Test func ownNetworkAddressesAreTheHomeNetworkAndTailscaleOnly() {
+        for own in ["https://192.168.11.233:8766", "https://10.0.0.5", "https://172.20.1.1", "https://169.254.3.4",
+                    "https://100.64.0.1", "https://mac-mini.local:8766", "https://[fd7a:115c:a1e0::1]:8766",
+                    "https://mac.local.:8766", "https://[fe90::1]", "https://[::ffff:192.168.1.5]"] {
+            #expect(StudioStore.isOwnNetwork(URL(string: own)!), "\(own)")
+        }
+        for other in ["https://172.32.0.1", "https://100.128.0.1", "https://8.8.8.8", "https://footscan.example.dev",
+                      "https://fd.example.com", "https://[2001:db8::1]", "https://[fd::1]", "https://[fc0::5]"] {
+            #expect(!StudioStore.isOwnNetwork(URL(string: other)!), "\(other)")
+        }
     }
 
     @Test(arguments: [
@@ -40,7 +82,63 @@ struct ConnectCodes {
     }
 
     @Test func spacesRoundACodeAreIgnored() {
-        #expect(StudioStore.parse("  footscan-capture://connect?url=https://h&key=k \n") != nil)
+        #expect(StudioStore.parse("  footscan-capture://connect?url=https://h&key=k \n", allowPublic: true) != nil)
+    }
+}
+
+// MARK: - the studio's key after the app is deleted
+
+// Uses the real settings and Keychain of the app the tests run in, and puts back whatever was there. These are
+// the only tests that touch them (the others parse codes or build messages); they run one at a time, since
+// they share the one studio key.
+@Suite("Studio key storage", .serialized)
+struct StudioKeyStorage {
+    @Test func aKeyLeftFromAnEarlierInstallIsDeletedNotReused() throws {
+        // what was there, as stored (load() would leave out a link it won't use, and then lose it)
+        let savedLink = UserDefaults.standard.data(forKey: StudioStore.linkKey), savedKey = StudioStore.readKey()
+        defer {
+            UserDefaults.standard.set(savedLink, forKey: StudioStore.linkKey) // nil removes it
+            if let savedKey { StudioStore.writeKey(savedKey) } else { StudioStore.deleteKey() }
+        }
+        let link = StudioLink(url: URL(string: "https://192.168.1.20:8765")!, fingerprint: String(repeating: "a", count: 64))
+
+        // a public studio saved by a development build isn't used where public studios aren't accepted (the
+        // App Store build, updated in place over a development one, keeps its settings and Keychain)
+        StudioStore.save(StudioLink(url: URL(string: "https://footscan.example.dev")!, fingerprint: nil), key: "k")
+        #expect(StudioStore.load(allowPublic: false) == nil && StudioStore.load(allowPublic: true)?.key == "k")
+        // and the launch-time cleanup removes it, key and all: the app has no Disconnect for a studio it won't use
+        StudioStore.removeLeftoverKey(allowPublic: false)
+        #expect(StudioStore.load(allowPublic: true) == nil && StudioStore.readKey() == nil)
+
+        StudioStore.save(link, key: "old-key")
+        #expect(StudioStore.load(allowPublic: false)?.key == "old-key")
+        StudioStore.removeLeftoverKey(allowPublic: false) // a paired studio: nothing is left over
+        #expect(StudioStore.load()?.key == "old-key")
+        // Deleting the app clears its settings, but iOS keeps the Keychain item.
+        UserDefaults.standard.removeObject(forKey: StudioStore.linkKey)
+        #expect(StudioStore.load() == nil)
+        // Reading doesn't delete anything; the launch-time cleanup does.
+        UserDefaults.standard.set(try JSONEncoder().encode(link), forKey: StudioStore.linkKey)
+        #expect(StudioStore.load()?.key == "old-key")
+        UserDefaults.standard.removeObject(forKey: StudioStore.linkKey)
+        StudioStore.removeLeftoverKey()
+        // The key went with it: the address coming back doesn't bring the old password back.
+        UserDefaults.standard.set(try JSONEncoder().encode(link), forKey: StudioStore.linkKey)
+        #expect(StudioStore.load() == nil)
+    }
+
+    @Test func disconnectSaysItWorkedOnlyOnceTheKeyIsGone() {
+        let savedLink = UserDefaults.standard.data(forKey: StudioStore.linkKey), savedKey = StudioStore.readKey()
+        defer {
+            UserDefaults.standard.set(savedLink, forKey: StudioStore.linkKey)
+            if let savedKey { StudioStore.writeKey(savedKey) } else { StudioStore.deleteKey() }
+        }
+        StudioStore.save(StudioLink(url: URL(string: "https://192.168.1.20:8765")!, fingerprint: String(repeating: "a", count: 64)),
+                         key: "k")
+        #expect(StudioStore.clear())
+        #expect(StudioStore.readKey() == nil && StudioStore.load() == nil)
+        // nothing left to delete still counts as gone, so a second Disconnect doesn't report a failure
+        #expect(StudioStore.deleteKey() && StudioStore.clear())
     }
 }
 
@@ -202,6 +300,22 @@ struct ConnectionTestFailures {
         #expect(StudioClient.Miss(URLError(.cancelled), pinRefused: true) == .wrongCertificate)
         #expect(StudioClient.Miss(URLError(.secureConnectionFailed), pinRefused: true) == .wrongCertificate)
         #expect(PinnedTrust(fingerprint: String(repeating: "a", count: 64)).refusedCertificate == false)
+    }
+
+    // A studio answering with a redirect would otherwise send the key and the scan on to whatever address it
+    // names, which may be a public one the connect code would have been refused for.
+    @Test func aRedirectIsNeverFollowed() async throws {
+        let trust = PinnedTrust(fingerprint: String(repeating: "a", count: 64))
+        let session = URLSession(configuration: .ephemeral, delegate: trust, delegateQueue: nil)
+        defer { session.invalidateAndCancel() }
+        let task = session.dataTask(with: URL(string: "https://192.168.1.20:8765/api/studio")!) // never started
+        let answer = try #require(HTTPURLResponse(url: URL(string: "https://192.168.1.20:8765/api/studio")!, statusCode: 307,
+                                                  httpVersion: nil, headerFields: ["Location": "https://203.0.113.5/api/studio"]))
+        let followed: URLRequest?? = await withCheckedContinuation { done in
+            trust.urlSession(session, task: task, willPerformHTTPRedirection: answer,
+                             newRequest: URLRequest(url: URL(string: "https://203.0.113.5/api/studio")!)) { done.resume(returning: $0) }
+        }
+        #expect(followed == .some(nil))
     }
 }
 

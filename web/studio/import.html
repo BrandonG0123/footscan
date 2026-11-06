@@ -178,7 +178,10 @@
 
   // The connect code for the iPhone app: footscan-capture://connect?url=…&key=…&fp=…[&alt=…]
   $("btn-pair").addEventListener("click", async () => {
-    if (!$("pair").hidden) { $("pair").hidden = true; $("btn-pair").textContent = "Show the connect code"; return; }
+    if (!$("pair").hidden) {
+      $("pair").hidden = true; $("pair-msg").textContent = ""; // the note goes with the code
+      $("btn-pair").textContent = "Show the connect code"; return;
+    }
     $("pair-msg").textContent = "";
     try {
       const r = await fetch("/api/studio/pairing");
@@ -193,6 +196,7 @@
       code.make();
       $("pair-qr").innerHTML = code.createSvgTag({ cellSize: 4, margin: 2, scalable: true });
       $("pair").hidden = false;
+      $("pair-msg").textContent = p.note || ""; // a public studio: which builds of the app can use it
       $("btn-pair").textContent = "Hide the code";
     } catch (err) {
       $("pair-msg").textContent = `Couldn't make the code: ${err.message}`;
