@@ -91,7 +91,10 @@ final class StudioConnection {
     }
 
     func disconnect() {
-        StudioStore.clear()
+        guard StudioStore.clear() else {
+            status = "Couldn't remove the studio's key from this phone. Try Disconnect again."
+            return
+        }
         link = nil
         key = nil
         status = "Disconnected. Scans stay on this phone."

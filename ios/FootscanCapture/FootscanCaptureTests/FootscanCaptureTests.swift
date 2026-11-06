@@ -88,9 +88,10 @@ struct ConnectCodes {
 
 // MARK: - the studio's key after the app is deleted
 
-// Uses the real settings and Keychain of the app the tests run in, and puts back whatever was there. It's the
-// only test that touches them (the others parse codes or build messages), so it needs no ordering of its own.
-@Suite("Studio key storage")
+// Uses the real settings and Keychain of the app the tests run in, and puts back whatever was there. These are
+// the only tests that touch them (the others parse codes or build messages); they run one at a time, since
+// they share the one studio key.
+@Suite("Studio key storage", .serialized)
 struct StudioKeyStorage {
     @Test func aKeyLeftFromAnEarlierInstallIsDeletedNotReused() throws {
         // what was there, as stored (load() would leave out a link it won't use, and then lose it)
@@ -124,6 +125,20 @@ struct StudioKeyStorage {
         // The key went with it: the address coming back doesn't bring the old password back.
         UserDefaults.standard.set(try JSONEncoder().encode(link), forKey: StudioStore.linkKey)
         #expect(StudioStore.load() == nil)
+    }
+
+    @Test func disconnectSaysItWorkedOnlyOnceTheKeyIsGone() {
+        let savedLink = UserDefaults.standard.data(forKey: StudioStore.linkKey), savedKey = StudioStore.readKey()
+        defer {
+            UserDefaults.standard.set(savedLink, forKey: StudioStore.linkKey)
+            if let savedKey { StudioStore.writeKey(savedKey) } else { StudioStore.deleteKey() }
+        }
+        StudioStore.save(StudioLink(url: URL(string: "https://192.168.1.20:8765")!, fingerprint: String(repeating: "a", count: 64)),
+                         key: "k")
+        #expect(StudioStore.clear())
+        #expect(StudioStore.readKey() == nil && StudioStore.load() == nil)
+        // nothing left to delete still counts as gone, so a second Disconnect doesn't report a failure
+        #expect(StudioStore.deleteKey() && StudioStore.clear())
     }
 }
 
@@ -285,6 +300,22 @@ struct ConnectionTestFailures {
         #expect(StudioClient.Miss(URLError(.cancelled), pinRefused: true) == .wrongCertificate)
         #expect(StudioClient.Miss(URLError(.secureConnectionFailed), pinRefused: true) == .wrongCertificate)
         #expect(PinnedTrust(fingerprint: String(repeating: "a", count: 64)).refusedCertificate == false)
+    }
+
+    // A studio answering with a redirect would otherwise send the key and the scan on to whatever address it
+    // names, which may be a public one the connect code would have been refused for.
+    @Test func aRedirectIsNeverFollowed() async throws {
+        let trust = PinnedTrust(fingerprint: String(repeating: "a", count: 64))
+        let session = URLSession(configuration: .ephemeral, delegate: trust, delegateQueue: nil)
+        defer { session.invalidateAndCancel() }
+        let task = session.dataTask(with: URL(string: "https://192.168.1.20:8765/api/studio")!) // never started
+        let answer = try #require(HTTPURLResponse(url: URL(string: "https://192.168.1.20:8765/api/studio")!, statusCode: 307,
+                                                  httpVersion: nil, headerFields: ["Location": "https://203.0.113.5/api/studio"]))
+        let followed: URLRequest?? = await withCheckedContinuation { done in
+            trust.urlSession(session, task: task, willPerformHTTPRedirection: answer,
+                             newRequest: URLRequest(url: URL(string: "https://203.0.113.5/api/studio")!)) { done.resume(returning: $0) }
+        }
+        #expect(followed == .some(nil))
     }
 }
 

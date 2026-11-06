@@ -188,13 +188,21 @@ enum StudioStore {
         UserDefaults.standard.set(try? JSONEncoder().encode(link), forKey: linkKey)
     }
 
-    static func clear() {
+    /// Forget the studio: its key first, then its address. false when the Keychain wouldn't delete the key:
+    /// then the address stays too, so the studio still shows with its Disconnect button to try again (with the
+    /// address gone and the key kept, nothing on screen would say a password is still on the phone).
+    @discardableResult
+    static func clear() -> Bool {
+        guard deleteKey() else { return false }
         UserDefaults.standard.removeObject(forKey: linkKey)
-        deleteKey()
+        return true
     }
 
-    static func deleteKey() {
-        SecItemDelete([kSecClass: kSecClassGenericPassword, kSecAttrService: service] as CFDictionary)
+    /// true when no studio key is left in the Keychain (deleted now, or there was none).
+    @discardableResult
+    static func deleteKey() -> Bool {
+        let status = SecItemDelete([kSecClass: kSecClassGenericPassword, kSecAttrService: service] as CFDictionary)
+        return status == errSecSuccess || status == errSecItemNotFound
     }
 
     /// Parse a connect code. Only https studios are accepted, at every address, and (``allowPublic`` false, as
@@ -258,7 +266,7 @@ enum StudioStore {
 }
 
 /// Trusts exactly the pinned certificate (when there is one); otherwise the phone's normal checks.
-final class PinnedTrust: NSObject, URLSessionDelegate, @unchecked Sendable {
+final class PinnedTrust: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
     let fingerprint: String?
     init(fingerprint: String?) { self.fingerprint = fingerprint }
 
@@ -273,6 +281,14 @@ final class PinnedTrust: NSObject, URLSessionDelegate, @unchecked Sendable {
         let (disposition, credential) = Self.decide(challenge, fingerprint: fingerprint)
         if disposition == .cancelAuthenticationChallenge { lock.withLock { refused = true } }
         completionHandler(disposition, credential)
+    }
+
+    /// Never follow a redirect. The studio never sends one, and following it would carry the key and the scan
+    /// to whatever address it names, past the own-network rule (``StudioStore/accepts(_:allowPublic:)``) that
+    /// the privacy policy promises. The 3xx answer comes back as the answer instead, and is reported as a refusal.
+    func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
+                    newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) {
+        completionHandler(nil)
     }
 
     /// The pinning rule, shared by uploads and the in-app capture page.
