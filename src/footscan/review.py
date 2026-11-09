@@ -494,6 +494,8 @@ def outline_line(i: dict) -> str:
 
 def packet_markdown(p: dict) -> str:
     """The packet as a page a person or Claude reads top to bottom."""
+    from . import insole as insole_mod
+
     s, i = p["spec"], p["insole"]
     lines = [f"# Insole review: {p['foot']} foot, capture {p['capture']}", ""]
     if p["synthetic"]:
@@ -517,7 +519,7 @@ def packet_markdown(p: dict) -> str:
               f"({i['frame']}).",
               *([f"- The foot's own highest fill is {i['foot_max_fill_mm']} mm, at x {i['foot_max_fill_at_mm']['x']}, "
                  f"y {i['foot_max_fill_at_mm']['y']} mm: past the outline's edge, so not printed."]
-                if (i.get("foot_max_fill_mm") or 0) > i["max_fill_mm"] + 0.5 else []),
+                if (i.get("foot_max_fill_mm") or 0) > i["max_fill_mm"] + insole_mod.FILL_PAST_EDGE_MM else []),
               f"- Sole seen by the scan: {i['sole']['seen']:.0%} of the footprint, "
               f"{i['sole']['seen_under_arch']:.0%} under the arch." if i.get("sole") else "- Sole coverage: not recorded."]
     if p["other_foot"]:

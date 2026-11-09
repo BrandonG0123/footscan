@@ -1214,6 +1214,11 @@ def test_a_saved_shoe_is_the_default_outline_for_every_new_insole(servers):
     assert "Test Trainer" in call(f"{op}/api/captures/{foot}/insole/summary.html")[1].decode()
     generic = body(call(f"{op}/api/captures/{foot}/insole", "POST", {"generic": True}))  # chosen over the default
     assert generic["shoe"] is None and generic["outline"] == "generic" and generic["length_mm"] == plain["length_mm"]
+    # a length alone passes the default saved shoe over for the generic outline at that length: recorded as that,
+    # not as "default", or the menu would show the saved shoe and Remake would cut to it
+    at_len = body(call(f"{op}/api/captures/{foot}/insole", "POST", {"length_mm": 275}))
+    assert at_len["shoe"] is None and at_len["outline"] == "generic"
+    assert at_len["generic"]["length_mm"] == pytest.approx(275, abs=0.5)
     assert call(f"{op}/api/captures/{foot}/insole", "POST", {"generic": True, "saved_shoe": s["id"]})[0] == 400
     assert call(f"{op}/api/captures/{foot}/insole", "POST", {"generic": True, "foot_outline": True})[0] == 400
     own = body(call(f"{op}/api/captures/{foot}/insole", "POST", {"foot_outline": True}))

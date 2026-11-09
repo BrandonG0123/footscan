@@ -474,7 +474,9 @@ def build(foot_mesh, foot: str, params: InsoleParams | None = None) -> Insole:
     # arch is on (the plausibility checks): where the outline ends doesn't move the arch
     on = in_sil & in_out
     peak = np.unravel_index(np.argmax(np.where(in_sil, fill, -1)), fill.shape)
-    top_at = np.unravel_index(np.argmax(np.where(on, fill, -1)), fill.shape) if on.any() else None
+    if not on.any():  # fit_to_foot places an outline round the foot: one that misses it is a broken fit
+        raise InsoleError("the insole's outline doesn't cover the foot; please report the scan")
+    top_at = np.unravel_index(np.argmax(np.where(on, fill, -1)), fill.shape)
     warnings = []
     if arch_seen < 0.05:
         warnings.append("the scan saw almost none of the sole under the arch, so the insole is flat there. "
@@ -490,8 +492,8 @@ def build(foot_mesh, foot: str, params: InsoleParams | None = None) -> Insole:
     if extended:
         warnings.append(f"lengthened to {p.target_length_mm:.0f} mm for the shoe: the flat front was extended by "
                         f"{extended:.0f} mm past the toes; the shape under the heel, arch and ball is unchanged")
-    if on.any() and clipped[on].any():  # on the insole: where the foot hangs over the outline nothing is printed, clipped or not
-        warnings.append(f"the fill was clipped by the safety caps over {clipped[on].mean():.1%} of the foot "
+    if clipped[on].any():  # on the insole: where the foot hangs over the outline nothing is printed, clipped or not
+        warnings.append(f"the fill was clipped by the safety caps over {clipped[on].mean():.1%} of the foot on the insole "
                         f"(arch {p.max_arch_fill_mm} mm, heel {p.heel_cup_depth_mm} mm).")
     ext = mesh.extents
     report = dict(
@@ -502,8 +504,8 @@ def build(foot_mesh, foot: str, params: InsoleParams | None = None) -> Insole:
         sole=dict(seen=round(seen, 3), resting_on_floor=round(contact, 3), holes=round(holes, 3),
                   open_above=round(inside_seen, 3),
                   seen_under_arch=round(arch_seen, 3)),
-        max_fill_mm=round(float(fill[top_at]), 2) if top_at else 0.0,
-        max_fill_at_mm=dict(x=round(float(X[top_at or peak]), 1), y=round(float(Y[top_at or peak]), 1)),
+        max_fill_mm=round(float(fill[top_at]), 2),
+        max_fill_at_mm=dict(x=round(float(X[top_at]), 1), y=round(float(Y[top_at]), 1)),
         # under the whole foot, printed or not: higher than max_fill_mm where the foot's highest point hangs over
         # the outline's edge; where it is says which side the arch is on (foot_prep.plausibility)
         foot_max_fill_mm=round(float(fill[peak]), 2),

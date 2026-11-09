@@ -877,9 +877,12 @@ def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check
                     saved = saved_shoe(shoes_dir, saved_id) if saved_id is not None else None
                     result = make_insole(d, meta, length_mm=length, shoe=shoe, saved=saved,
                                          foot_outline=bool(opts.get("foot_outline")))
-                    if result.get("outline") == "generic" and not opts.get("generic"):
-                        # no outline was asked for (at most a length), and there was no default saved shoe: not a
-                        # choice of the generic outline, so once a default is saved the menu (and Remake) follow it
+                    if (result.get("outline") == "generic" and not opts.get("generic")
+                            and (length is None or not (shoes_dir / shoes_mod.DEFAULT_FILE).is_file())):
+                        # no outline was asked for (at most a length) and there was no default saved shoe: not a
+                        # choice of the generic outline, so once a default is saved the menu (and Remake) follow it.
+                        # A length alone with a default saved shoe chosen did pass it over: that stays "generic",
+                        # so Remake makes the same insole
                         result["outline"] = "default"
                     if "error" in result:  # a failed attempt leaves nothing printable behind
                         shutil.rmtree(d / "insole", ignore_errors=True)

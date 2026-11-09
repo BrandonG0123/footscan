@@ -151,9 +151,11 @@ heel (a judgment of a normal insole's plan shape).
 `--foot-outline` (in the studio, *Outline: the foot's own*) still cuts the
 insole to the foot's own outline, and with `--length` lengthens only its
 flat front: the shape under the heel, arch and ball stays where the foot
-is. Insoles made before the generic outline was the default, cut to the
-foot's own outline without asking for it, show as stale in the studio
-("made again, it gets the generic insole outline").
+is. Insoles made before the generic outline was the default and cut to the
+foot's own outline show as stale in the studio ("made again, it gets the
+generic insole outline"), lengthened to a shoe's length or not: that was
+the only outline there was, and lengthened it made the long, thin insoles
+this fixes. Made again with *the foot's own* chosen, they keep it.
 
 `--shoe shoe-insole.obj` goes further: the insole takes the outline of the
 shoe's own insole, from a scan of it lying flat on a table (the app's

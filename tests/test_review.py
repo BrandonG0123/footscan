@@ -144,6 +144,19 @@ def test_an_insole_with_the_generic_outline_at_the_specs_length_passes_its_lengt
     assert c["ok"] and "the generic insole outline is 275.0 mm long" in c["found"]
 
 
+def test_the_packet_gives_the_foots_own_highest_fill_only_when_it_is_past_the_outlines_edge(data):
+    """The packet's highest fill is the printed one; a foot peak higher by more than FILL_PAST_EDGE_MM (hanging
+    over the outline, not printed) is named beside it, so the reviewer has what the sheet has."""
+    _only(data, "R275")
+    [p] = review.run_once(data, SPEC)
+    packet = json.loads((p / "review.json").read_text())
+    assert "past the outline's edge, so not printed" not in review.packet_markdown(packet)
+    i = packet["insole"]
+    i["foot_max_fill_mm"], i["foot_max_fill_at_mm"] = i["max_fill_mm"] + 2.0, dict(x=110.0, y=107.0)
+    assert (f"The foot's own highest fill is {i['foot_max_fill_mm']} mm, at x 110.0, y 107.0 mm: past the outline's "
+            "edge, so not printed") in review.packet_markdown(packet)
+
+
 def test_pictures_are_real_pngs_at_half_a_millimetre_per_pixel(data):
     _only(data, "R275")
     [p] = review.run_once(data, SPEC)
