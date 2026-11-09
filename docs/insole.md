@@ -133,6 +133,10 @@ and by how much. A length shorter than the foot is refused. On the SYNTHETIC
 test foot (synth.curved_foot, unusually wide at 0.40 of its length) the
 foot is over the edge by 4-6 mm, and 17-22 mm when made 25% wider
 (2026-11-09): a foot that wide needs its shoe's own outline (a saved shoe).
+The highest fill given everywhere (sheet, studio, review, command line) is
+the printed one; when the foot's own is past the outline's edge, the sheet
+and the studio give that too (SYNTHETIC, 25% wider at 275 mm: 11.86 mm
+printed, 13.99 mm under the foot).
 
 Why: the foot's own outline gave insoles the foot's proportions, and worse
 ones when lengthened. On SYNTHETIC test feet (`tests/test_insole_shape.py`,

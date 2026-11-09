@@ -160,7 +160,7 @@ def sanity(report: dict, foot: str) -> list[str]:
     arch_warned = any("under the arch" in w for w in report["warnings"])
     out.append(("CHECK: the 'arch not seen' warning fired" if arch_warned else "ok: no 'arch not seen' warning"))
     length = report["length_mm"]
-    at = report["max_fill_at_mm"]
+    at = report.get("foot_max_fill_at_mm", report["max_fill_at_mm"])  # the foot's own peak, printed or not
     frac = at["x"] / max(length, 1e-9)
     out.append(("ok: " if 0.25 <= frac <= 0.7 else "CHECK: ") +
                f"highest fill {report['max_fill_mm']} mm at {frac:.0%} of the length from the heel (expected: midfoot)")

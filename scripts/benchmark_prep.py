@@ -284,7 +284,7 @@ def measure(name, kind, builder, kw, foot, seed=0):
     shaped = np.minimum(smooth, raw + insole.SMOOTH_MAY_RAISE_MM)
     arch_read = float(np.max(shaped[seen][interior]))
     arch_true = float(np.max(true_z - floor0))
-    inner_side = (r["max_fill_at_mm"]["y"] > 0) == (foot == "right")
+    inner_side = (r["foot_max_fill_at_mm"]["y"] > 0) == (foot == "right")
     return dict(
         name=name, kind=kind, foot=foot, secs=round(secs, 1), points=int(interior.sum()),
         bias=float(np.mean(err)), rms=float(np.sqrt(np.mean(err ** 2))), p95=float(np.percentile(np.abs(err), 95)),
@@ -294,31 +294,19 @@ def measure(name, kind, builder, kw, foot, seed=0):
     )
 
 
-# The default insole (the generic insole outline, with no saved shoe) must keep a shoe insole's plan shape whatever
-# the scan: across the ball and across the heel as shares of its length, the bounds of tests/test_insole_shape.py
-# (a judgment of a normal insole's shape). A case outside them fails.
-GENERIC_BALL = (0.33, 0.42)
-GENERIC_HEEL = (0.22, 0.29)
-
-
+# The default insole (the generic insole outline, with no saved shoe) made from every case: the default build path
+# runs on every damaged scan, and its plan shape has to stay a shoe insole's (insole.INSOLE_BALL_SHARE and
+# INSOLE_HEEL_SHARE, a judgment) wherever the outline was placed. A case outside them fails.
 def generic_shape(placed, foot, params):
-    """The insole as made by default from this scan (the generic outline, sized from the foot): (ball, heel) widths
-    over its length, measured across 60-75% and 10-20% of the length from the heel. Raises past the bounds."""
+    """The insole as made by default from this scan (the generic outline, sized from the foot): its width across the
+    ball and across the heel as shares of its length. Raises past the bounds."""
     from dataclasses import replace
 
     g = insole.from_scan(placed, foot, replace(params, foot_outline=False))
-    # in the outline's own frame: placing it turned it to lie along the foot
-    a = np.radians(g.report["shoe_fit"]["turned_deg"])
-    V = np.asarray(g.mesh.vertices)[:, :2] @ np.array([[np.cos(a), -np.sin(a)], [np.sin(a), np.cos(a)]])
-    x0, x1 = V[:, 0].min(), V[:, 0].max()
-    length = x1 - x0
-
-    def share(a, b):
-        s = V[(V[:, 0] >= x0 + a * length) & (V[:, 0] <= x0 + b * length)]
-        return float((s[:, 1].max() - s[:, 1].min()) / length)
-
-    ball, heel = share(0.60, 0.75), share(0.10, 0.20)
-    if not (GENERIC_BALL[0] <= ball <= GENERIC_BALL[1] and GENERIC_HEEL[0] <= heel <= GENERIC_HEEL[1]):
+    length, heel, ball = insole.plan_widths(g.mesh.vertices, g.report["shoe_fit"]["turned_deg"])
+    ball, heel = ball / length, heel / length
+    (b0, b1), (h0, h1) = insole.INSOLE_BALL_SHARE, insole.INSOLE_HEEL_SHARE
+    if not (b0 <= ball <= b1 and h0 <= heel <= h1):
         raise ValueError(f"the default (generic outline) insole isn't an insole's shape: {ball:.3f} of its length "
                          f"across the ball, {heel:.3f} across the heel")
     return round(ball, 3), round(heel, 3)

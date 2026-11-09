@@ -1578,7 +1578,7 @@ def make_insole(folder: Path, meta: dict, length_mm: float | None = None, shoe: 
         shutil.rmtree(tmp, ignore_errors=True)
     r = ins.report
     return dict(made=now_iso(), foot=foot, length_mm=r["length_mm"], width_mm=r["width_mm"], height_mm=r["height_mm"],
-                max_fill_mm=r["max_fill_mm"], max_fill_printed_mm=r["max_fill_printed_mm"], sole=r["sole"], bed=r["bed_fit"], warnings=r["warnings"],
+                max_fill_mm=r["max_fill_mm"], foot_max_fill_mm=r["foot_max_fill_mm"], sole=r["sole"], bed=r["bed_fit"], warnings=r["warnings"],
                 files=sorted(INSOLE_FILES), source=stamp, prep=foot_prep.prep_version(meta.get("scan_kind")), shoe_length_mm=length_mm,
                 # which outline was asked for, so the studio shows the same choice after a reload: a saved shoe,
                 # a shoe's-insole scan, or the foot's own (lengthened or not)

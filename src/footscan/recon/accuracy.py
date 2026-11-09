@@ -279,7 +279,7 @@ def scale_estimate(table: list[dict]) -> dict | None:
         r = rows.get(k)
         if r is None or r.get("scan_mm") is None:
             return None
-        ref = r["caliper_mm"] if r.get("reference") == "calipers" else r["model_mm"]  # the row's own reference
+        ref = r["caliper_mm"] if r.get("caliper_mm") is not None else r["model_mm"]  # as evaluate() picks it
         pct[k] = 100.0 * (r["scan_mm"] / ref - 1.0)
     return dict(length_pct=round(pct["length"], 2), width_pct=round(pct["width"], 2),
                 mean_pct=round((pct["length"] + pct["width"]) / 2, 2),

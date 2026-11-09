@@ -12,32 +12,28 @@ its last's bottom) and across the heel 0.22-0.29.
 
 import numpy as np
 import pytest
+import shapely
 
 import synth
 from footscan import insole
 from footscan.recon import shoe as shoe_mod
 
-BALL_RATIO = (0.33, 0.42)
-HEEL_RATIO = (0.22, 0.29)
+BALL_RATIO = insole.INSOLE_BALL_SHARE
+HEEL_RATIO = insole.INSOLE_HEEL_SHARE
 
 
 def _proportions(poly_or_ins):
-    """(length, heel width over 10-20% of the length, ball width over 60-75%) of an outline or an insole's mesh,
-    measured along the outline's own length (an insole's outline is turned a few degrees to lie along the foot)."""
+    """(length, heel width, ball width) of an outline or an insole's mesh, along the outline's own length."""
     if isinstance(poly_or_ins, insole.Insole):
         fit = poly_or_ins.report["shoe_fit"]
-        a = np.radians(fit["turned_deg"]) if fit else 0.0
-        P = np.asarray(poly_or_ins.mesh.vertices)[:, :2] @ np.array([[np.cos(a), -np.sin(a)], [np.sin(a), np.cos(a)]])
-    else:
-        P = np.asarray(poly_or_ins.exterior.segmentize(1.0).coords)
-    x0, x1 = P[:, 0].min(), P[:, 0].max()
-    length = x1 - x0
+        return insole.plan_widths(poly_or_ins.mesh.vertices, fit["turned_deg"] if fit else 0.0)
+    return insole.plan_widths(poly_or_ins.exterior.segmentize(1.0).coords)
 
-    def width(a, b):
-        s = P[(P[:, 0] >= x0 + a * length) & (P[:, 0] <= x0 + b * length)]
-        return s[:, 1].max() - s[:, 1].min()
 
-    return length, width(0.10, 0.20), width(0.60, 0.75)
+def insole_outline(ins):
+    """The printed insole's outline, from a cut through its mesh just above the bed."""
+    path, _ = ins.mesh.section(plane_origin=[0, 0, 0.3], plane_normal=[0, 0, 1]).to_2D(to_2D=np.eye(4))
+    return max(path.polygons_full, key=lambda q: q.area)
 
 
 def _in_bounds(length, heel, ball):
@@ -117,9 +113,12 @@ def test_the_sheet_gives_the_highest_fill_on_the_printed_insole_when_the_foots_i
     there, so the sheet gives the highest printed fill too (SYNTHETIC: 13.99 under the foot, 11.86 on the insole)."""
     wide = insole.build(_foot(width_scale=1.25), "right", insole.InsoleParams(target_length_mm=275.0))
     r = wide.report
-    assert r["max_fill_printed_mm"] < r["max_fill_mm"] - 1.0
-    assert f"{r['max_fill_printed_mm']} mm on the insole ({r['max_fill_mm']} mm under the foot" in insole.summary_html(
+    assert r["max_fill_mm"] < r["foot_max_fill_mm"] - 1.0
+    assert f"{r['max_fill_mm']} mm on the insole ({r['foot_max_fill_mm']} mm under the foot" in insole.summary_html(
         wide, "SYNTHETIC wide foot", synthetic=True)
+    # the highest fill given is on the printed insole, and the arch is still read on the inner side
+    assert shapely.contains_xy(insole_outline(wide), r["max_fill_at_mm"]["x"], r["max_fill_at_mm"]["y"])
+    assert r["foot_max_fill_at_mm"]["y"] > 0
     normal = insole.build(_foot(), "right", insole.InsoleParams(target_length_mm=275.0)).report
     assert insole.fill_row(normal) == f"{normal['max_fill_mm']} mm"
 
