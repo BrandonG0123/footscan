@@ -45,8 +45,9 @@ The app is built for iPhone and iPad (not an iPhone app magnified on an iPad). W
 - The words on screen say "iPad" rather than "phone" (`DeviceKind` in `AppSettings.swift`).
 - An iPhone stays portrait only.
 
-Not checked on a real iPad yet: the simulator can't run Object Capture, so the camera screen's sideways layout and
-what the camera does in Split View have only been seen in the layout tests and the simulator, not in a real scan.
+Not checked on a real iPad yet. The simulator can't run Object Capture, so the camera screen's sideways layout and
+what the camera does in Split View are covered only by the layout tests, not seen in a real scan. The intro, home
+and get-ready screens were looked at on the iPad Pro 13-inch (M5) simulator, upright and sideways.
 
 ## Scan the calibration object
 

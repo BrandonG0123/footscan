@@ -326,8 +326,15 @@ struct ConnectionTestFailures {
 @Suite("iPad")
 @MainActor
 struct OnIPad {
-    /// The built app's own Info.plist (tests run inside the app, so this is the app's bundle).
-    private var info: [String: Any] { Bundle.main.infoDictionary ?? [:] }
+    /// The built app's own Info.plist (tests run inside the app, so this is the app's bundle), read from the
+    /// file as built: `Bundle.infoDictionary` resolves "~ipad" keys for the device it runs on, so on an iPad the
+    /// plain orientations key would return the iPad's list, and on an iPhone the "~ipad" key would be missing.
+    private var info: [String: Any] {
+        guard let url = Bundle.main.url(forResource: "Info", withExtension: "plist"), let data = try? Data(contentsOf: url),
+              let plist = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any]
+        else { return [:] }
+        return plist
+    }
 
     @Test func theAppIsBuiltForIPhoneAndIPad() {
         // UIDeviceFamily 1 is iPhone, 2 is iPad: without 2 an iPad runs it as a magnified iPhone app

@@ -89,7 +89,7 @@ struct OnboardingView: View {
             Text("Scan it.\nMeasure it.")
                 .font(.system(size: 40, weight: .bold, design: .rounded))
                 .foregroundStyle(Color.fsInk)
-            Text("Footscan turns a walk round your foot with your \(DeviceKind.current.model) into a 3D model in real millimetres. Try it: drag the phone round the foot above.")
+            Text("Footscan turns a walk round your foot with your \(DeviceKind.current.model) into a 3D model in real millimetres. Try it: drag the phone in the picture round the foot.")
                 .font(.body).foregroundStyle(Color.fsMuted)
             SafetyStrip()
         }

@@ -122,6 +122,7 @@ struct PrepSheet: View {
                     }
                 }
                 .padding(20)
+                .readableWidth()
             }
             .background(Color.fsBackground)
             .safeAreaInset(edge: .bottom) {
@@ -132,6 +133,7 @@ struct PrepSheet: View {
                 .buttonStyle(PrimaryButtonStyle())
                 .disabled(mustTick && ticked.count < subject.checklist.count)
                 .padding(.horizontal, 20).padding(.vertical, 10)
+                .readableWidth()
                 .background(.bar)
             }
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } } }
