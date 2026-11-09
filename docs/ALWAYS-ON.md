@@ -96,14 +96,46 @@ paths, and the numbered steps to install it. It installs nothing itself.
 Then **restart the computer** and check the studio comes back by itself. If it
 doesn't, the service isn't set up right. The log is `data/server.log`.
 
-### 5. Pair the phone with it
+### 5. Reach it away from home (Tailscale)
+
+Tailscale is a private network between your own devices: the phone reaches the
+studio from anywhere, and nothing is opened to the internet. On the computer and
+on the iPhone, install Tailscale and sign in with the same account. Then, on the
+computer:
+
+- In the Tailscale admin console, turn off **key expiry** for this computer, or
+  it drops off every few months until you sign in again.
+- Let Tailscale's addresses through the firewall (Windows, Administrator
+  PowerShell; the home Wi-Fi rule above is for Private networks only):
+
+  ```powershell
+  New-NetFirewallRule -DisplayName "footscan (Tailscale)" -Direction Inbound -Protocol TCP -LocalPort 8766 -RemoteAddress 100.64.0.0/10 -InterfaceAlias Tailscale -Action Allow
+  ```
+
+  (8766 is tank's port; use the studio's own.) `-InterfaceAlias Tailscale`
+  keeps it to the Tailscale adapter: some other networks (a phone hotspot,
+  carrier NAT, Cloudflare WARP) also hand out 100.64.0.0/10 addresses. A rule
+  made without it is narrowed with `Set-NetFirewallRule -DisplayName "footscan
+  (Tailscale)" -InterfaceAlias Tailscale`.
+- Windows: in Tailscale's settings turn on **Run unattended**, so Tailscale
+  keeps running after a restart when nobody has signed in yet.
+
+The studio then prints `over Tailscale, from anywhere (the connect code
+includes it): https://100.x.x.x:<port>/` when it starts, and the connect code
+carries that address as well as the home one. On Windows the service runs as
+Local Service, and Tailscale doesn't tell that account its address (tank, 6 Nov
+2026), so the studio reads it from the adapter called "Tailscale" instead
+(unless Tailscale says it is stopped or logged out). If the line is missing,
+check the adapter is there and up: `Get-NetAdapter Tailscale`.
+
+### 6. Pair the phone with it
 
 A different computer has a different studio key and certificate, so the
 iPhone app has to connect again: in the studio open **Import a 3D scan**, press
 **Show the connect code**, and scan it from the app. Then send one scan and check it
 arrives.
 
-### 6. Let project threads work on this computer (Remote Control)
+### 7. Let project threads work on this computer (Remote Control)
 
 So Claude in the project can run things there (builds, the accuracy run,
 reviews):
@@ -119,7 +151,7 @@ reviews):
 3. Tell the project when it's on: the computer then shows up next to the
    MacBook and threads can use it.
 
-### 7. Review insoles
+### 8. Review insoles
 
 Open Claude Code in the footscan folder. When a session starts, it lists any
 packet nobody has answered yet. Type:
