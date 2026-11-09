@@ -39,7 +39,7 @@ Save a shoe once, from a scan of its own stock insole lying flat (the app's
 ```bash
 .venv/bin/footscan shoe add stock-insole.obj --name "ASICS Gel Resolution X" --size "US men's 9.5" --default
 .venv/bin/footscan shoe list            # * marks the default
-.venv/bin/footscan shoe default none    # back to the foot's own outline
+.venv/bin/footscan shoe default none    # back to the generic insole outline
 ```
 
 In the studio: *Save as a shoe* on the shoe's-insole scan's card, then the
@@ -55,8 +55,8 @@ or `--foot-outline`; in the studio, the outline menu). The outline is placed
 round the foot exactly as a scanned shoe's insole is (below) and keeps its
 shape. On SYNTHETIC test feet (`tests/test_shoes.py`, 2026-11-04), a foot and
 the same foot scaled to 93% got insole outlines of 22,847 mm2 each in the same
-saved shoe; with their own outlines, 20,144 and 17,532 mm2 (13.0% less). Without any shoe the outline is the foot's own, and
-the summary sheet and the studio say so: trim it to the stock insole.
+saved shoe; with their own outlines, 20,144 and 17,532 mm2 (13.0% less). Without any saved shoe the outline is the generic insole
+outline (below).
 
 Saving a shoe again (a better scan of it) makes insoles made from the old
 outline stale in the studio, as a re-scanned foot does, and the studio says
@@ -119,7 +119,7 @@ a 300 mm insole is the 275 mm one made 9% bigger every way. The length is:
   insole length. Use this: the outline is then the shoe's size whatever the
   scan reads.
 - nothing: the foot's length as scanned plus 12 mm past the toes (a
-  judgment: the owner's right foot, 260 mm standing, in its 275 mm chart
+  judgment: the owner's right foot, 260 mm standing by ruler on 2026-11-05, in its 275 mm chart
   insole leaves 15). The sheet and the studio say it was sized from the
   scan and ask for the shoe's length: a scan that reads short makes it short
   too (the right-foot sole-up scan LIDAR_nwb_relaxed_R_20261027-151404-2349,

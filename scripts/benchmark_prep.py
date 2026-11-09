@@ -223,6 +223,7 @@ def measure(name, kind, builder, kw, foot, seed=0):
                                                        params=insole.InsoleParams(foot_outline=True))
     secs = time.time() - t
     r = ins.report
+    generic = generic_shape(placed, foot, ins.params)
     to_mat = np.array(r["prep"]["to_mat"])
 
     # the sole the generator reads: the same steps as insole.build
@@ -289,7 +290,38 @@ def measure(name, kind, builder, kw, foot, seed=0):
         bias=float(np.mean(err)), rms=float(np.sqrt(np.mean(err ** 2))), p95=float(np.percentile(np.abs(err), 95)),
         arch=arch_read - arch_true, tilt=tilt, pitch=wedge_pitch, roll=wedge_roll, length=_longest(sil) - _longest(synth.curved_plan()),
         surface_rms=float(np.sqrt(np.mean(surface_err ** 2))), side=inner_side, noise=r["prep"].get("surface_noise_mm"), warnings=r["warnings"],
+        generic=generic,
     )
+
+
+# The default insole (the generic insole outline, with no saved shoe) must keep a shoe insole's plan shape whatever
+# the scan: across the ball and across the heel as shares of its length, the bounds of tests/test_insole_shape.py
+# (a judgment of a normal insole's shape). A case outside them fails.
+GENERIC_BALL = (0.33, 0.42)
+GENERIC_HEEL = (0.22, 0.29)
+
+
+def generic_shape(placed, foot, params):
+    """The insole as made by default from this scan (the generic outline, sized from the foot): (ball, heel) widths
+    over its length, measured across 60-75% and 10-20% of the length from the heel. Raises past the bounds."""
+    from dataclasses import replace
+
+    g = insole.from_scan(placed, foot, replace(params, foot_outline=False))
+    # in the outline's own frame: placing it turned it to lie along the foot
+    a = np.radians(g.report["shoe_fit"]["turned_deg"])
+    V = np.asarray(g.mesh.vertices)[:, :2] @ np.array([[np.cos(a), -np.sin(a)], [np.sin(a), np.cos(a)]])
+    x0, x1 = V[:, 0].min(), V[:, 0].max()
+    length = x1 - x0
+
+    def share(a, b):
+        s = V[(V[:, 0] >= x0 + a * length) & (V[:, 0] <= x0 + b * length)]
+        return float((s[:, 1].max() - s[:, 1].min()) / length)
+
+    ball, heel = share(0.60, 0.75), share(0.10, 0.20)
+    if not (GENERIC_BALL[0] <= ball <= GENERIC_BALL[1] and GENERIC_HEEL[0] <= heel <= GENERIC_HEEL[1]):
+        raise ValueError(f"the default (generic outline) insole isn't an insole's shape: {ball:.3f} of its length "
+                         f"across the ball, {heel:.3f} across the heel")
+    return round(ball, 3), round(heel, 3)
 
 
 def _longest(poly) -> float:
@@ -305,7 +337,7 @@ def row(m):
     w = "; ".join(x.split(":")[0][:48] for x in m["warnings"]) or "-"
     return (f"| {m['kind']} | {m['name']} | {m['foot']} | {m['bias']:+.2f} | {m['rms']:.2f} | {m['p95']:.2f} | "
             f"{m['arch']:+.2f} | {m['tilt']:.2f} ({m['pitch']:.2f} / {m['roll']:.2f}) | {m['length']:+.1f} | "
-            f"{'yes' if m['side'] else 'NO'} | {m['noise']} | {w} |")
+            f"{'yes' if m['side'] else 'NO'} | {m['noise']} | {m['generic'][0]:.3f} / {m['generic'][1]:.3f} | {w} |")
 
 
 def main(argv=None) -> int:
@@ -327,7 +359,8 @@ def main(argv=None) -> int:
             else:
                 print(f"{kind:10s} {name:22s} {foot:5s} bias {m['bias']:+.2f} rms {m['rms']:.2f} p95 {m['p95']:.2f} "
                       f"arch {m['arch']:+.2f} tilt {m['tilt']:.2f} len {m['length']:+.1f} side {m['side']} "
-                      f"noise {m['noise']} warn {len(m['warnings'])} ({m['secs']}s)", flush=True)
+                      f"noise {m['noise']} warn {len(m['warnings'])} generic {m['generic'][0]:.3f}/{m['generic'][1]:.3f} "
+                      f"({m['secs']}s)", flush=True)
             results.append(m)
 
     ok = [m for m in results if "error" not in m]
@@ -338,8 +371,11 @@ def main(argv=None) -> int:
         "the processing adds, not the accuracy of a real phone scan of a real foot. Made by",
         "`scripts/benchmark_prep.py`; heights in mm, tilt in degrees.",
         "",
-        "| scan | case | foot | bias | rms | p95 | arch | floor tilt (wedge: heel-toe / side) | length | inner side | noise read | warnings |",
-        "|---|---|---|---|---|---|---|---|---|---|---|---|",
+        "The generic column is the default insole's (the generic outline, sized from the foot) width across the ball /",
+        "across the heel, as shares of its length; outside 0.33-0.42 / 0.22-0.29 the case fails.",
+        "",
+        "| scan | case | foot | bias | rms | p95 | arch | floor tilt (wedge: heel-toe / side) | length | inner side | noise read | generic | warnings |",
+        "|---|---|---|---|---|---|---|---|---|---|---|---|---|",
         *[row(m) if "error" not in m else f"| {m['kind']} | {m['name']} | {m['foot']} | FAILED: {m['error']} |" for m in results],
         "",
     ]

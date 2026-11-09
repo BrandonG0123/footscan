@@ -271,7 +271,8 @@
     const warn = (r.warnings || []).map((w) => `<li>${esc(w)}</li>`).join("");
     return `<div class="card" style="margin-top:10px;padding:12px">
       <strong>First-fit insole</strong> <span class="badge">${esc(r.foot)} foot</span> <span class="badge">no posting</span>
-      <p class="hint" style="margin:6px 0">${r.length_mm} × ${r.width_mm} mm, ${r.height_mm} mm tall · highest arch fill ${r.max_fill_mm} mm ·
+      <p class="hint" style="margin:6px 0">${r.length_mm} × ${r.width_mm} mm, ${r.height_mm} mm tall · highest arch fill ${r.max_fill_printed_mm != null && r.max_fill_printed_mm < r.max_fill_mm - 0.5
+          ? `${r.max_fill_printed_mm} mm on the insole (${r.max_fill_mm} under the foot, past its edge)` : `${r.max_fill_mm} mm`} ·
         sole seen ${Math.round(100 * r.sole.seen)}% (arch ${Math.round(100 * r.sole.seen_under_arch)}%) · bed: ${esc(r.bed.how)}</p>
       ${r.generic?.fit ? `<p class="hint" style="margin:0 0 6px">Outline: a generic insole, the same shape for every foot, ${esc(r.generic.length_mm)} mm
         ${r.shoe_length_mm ? "(the shoe's length)" : "(sized from the scanned foot: enter the shoe's insole length to make it the shoe's size)"},

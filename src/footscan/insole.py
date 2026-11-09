@@ -120,7 +120,7 @@ GENERIC_STATIONS = (
 )
 GENERIC_TOE_TIP = 0.04       # the very front sits this share of the length to the inner side (the big toe's end)
 GENERIC_ROOM_MM = 12.0       # no length given: the insole reaches this far past the scanned toes. A judgment: the
-                             # owner's right foot (260 mm, standing, ruler) in its shoe's 275 mm size-chart insole
+                             # owner's right foot (260 mm standing, by ruler, 2026-11-05) in its shoe's 275 mm size-chart insole
                              # leaves 15; a scan that reads short gets less (give the shoe's length, or save the shoe)
 
 
@@ -478,6 +478,9 @@ def build(foot_mesh, foot: str, params: InsoleParams | None = None) -> Insole:
                   seen_under_arch=round(arch_seen, 3)),
         max_fill_mm=round(float(fill[in_sil].max()), 2),
         max_fill_at_mm=dict(x=round(float(X[peak]), 1), y=round(float(Y[peak]), 1)),
+        # the highest fill on the printed insole: lower than max_fill_mm where the foot's highest point hangs over
+        # a shoe's or the generic outline (nothing is printed there)
+        max_fill_printed_mm=round(float(fill[on].max()), 2) if on.any() else 0.0,
         bed_fit=bed_fit_shape(np.asarray(mesh.vertices)[:, :2], p.bed_mm),
         shoe_fit=shoe_fit,
         # where the outline came from: a shoe's insole, the generic insole outline (both the same for every foot), or
@@ -706,6 +709,16 @@ def shoe_row(fit: dict | None, name: str | None = None, lengthened_to: float | N
             f'{fit["room_past_toes_mm"]} mm past the toes{", matched mirrored" if fit["mirrored"] else ""}); {over("the shoe's edge")}</td></tr>')
 
 
+def fill_row(r: dict) -> str:
+    """The sheet's highest fill: under the foot, and on the printed insole when the foot's highest point is past the
+    outline's edge (a shoe's or the generic outline narrower than the foot), so the sheet doesn't give a height
+    that isn't printed."""
+    printed = r.get("max_fill_printed_mm")
+    if printed is None or printed >= r["max_fill_mm"] - 0.5:
+        return f"{r['max_fill_mm']} mm"
+    return f"{printed} mm on the insole ({r['max_fill_mm']} mm under the foot, past the outline's edge)"
+
+
 def summary_html(insole: Insole, scan_label: str, synthetic: bool = False) -> str:
     """The clinician summary sheet (docs/SAFETY.md, requirement 1), for this first-fit device."""
     from html import escape
@@ -741,7 +754,7 @@ anything and is not equivalent to, or a substitute for, a prescribed orthotic. N
 <h2>Device parameters</h2>
 <table>
 <tr><th>Rearfoot posting</th><td>{p.posting_rearfoot_deg}&deg; (none)</td><th>Forefoot posting</th><td>{p.posting_forefoot_deg}&deg; (none)</td></tr>
-<tr><th>Arch fill</th><td>scanned sole &minus; {p.relief_mm} mm, capped at {p.max_arch_fill_mm} mm</td><th>Highest fill</th><td>{r['max_fill_mm']} mm</td></tr>
+<tr><th>Arch fill</th><td>scanned sole &minus; {p.relief_mm} mm, capped at {p.max_arch_fill_mm} mm</td><th>Highest fill</th><td>{fill_row(r)}</td></tr>
 <tr><th>Heel cup depth</th><td>{p.heel_cup_depth_mm} mm (wall outside the scanned heel)</td><th>Base thickness</th><td>{p.base_mm} mm, {p.toe_base_mm} mm at toes</td></tr>
 <tr><th>Stiffness</th><td colspan="3">Uniform (no lattice zones). Material and infill as printed: record below.</td></tr>
 <tr><th>Size</th><td colspan="3">{r['length_mm']} &times; {r['width_mm']} mm, {r['height_mm']} mm tall</td></tr>

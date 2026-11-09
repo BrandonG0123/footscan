@@ -23,9 +23,11 @@ HEEL_RATIO = (0.22, 0.29)
 
 def _proportions(poly_or_ins):
     """(length, heel width over 10-20% of the length, ball width over 60-75%) of an outline or an insole's mesh,
-    measured along x."""
+    measured along the outline's own length (an insole's outline is turned a few degrees to lie along the foot)."""
     if isinstance(poly_or_ins, insole.Insole):
-        P = np.asarray(poly_or_ins.mesh.vertices)[:, :2]
+        fit = poly_or_ins.report["shoe_fit"]
+        a = np.radians(fit["turned_deg"]) if fit else 0.0
+        P = np.asarray(poly_or_ins.mesh.vertices)[:, :2] @ np.array([[np.cos(a), -np.sin(a)], [np.sin(a), np.cos(a)]])
     else:
         P = np.asarray(poly_or_ins.exterior.segmentize(1.0).coords)
     x0, x1 = P[:, 0].min(), P[:, 0].max()
@@ -108,6 +110,18 @@ def test_wide_and_narrow_feet_get_the_same_outline_and_a_wide_foot_is_told_where
     assert any("wider than the generic insole outline" in w for w in wide.report["warnings"])
     assert not any("the shoe's size or width" in w for w in wide.report["warnings"])
     assert narrow.report["shoe_fit"]["overhang"]["max_mm"] == 0.0
+
+
+def test_the_sheet_gives_the_highest_fill_on_the_printed_insole_when_the_foots_is_past_the_outline():
+    """A wide foot's highest arch fill can lie where the foot hangs over the generic outline: nothing is printed
+    there, so the sheet gives the highest printed fill too (SYNTHETIC: 13.99 under the foot, 11.86 on the insole)."""
+    wide = insole.build(_foot(width_scale=1.25), "right", insole.InsoleParams(target_length_mm=275.0))
+    r = wide.report
+    assert r["max_fill_printed_mm"] < r["max_fill_mm"] - 1.0
+    assert f"{r['max_fill_printed_mm']} mm on the insole ({r['max_fill_mm']} mm under the foot" in insole.summary_html(
+        wide, "SYNTHETIC wide foot", synthetic=True)
+    normal = insole.build(_foot(), "right", insole.InsoleParams(target_length_mm=275.0)).report
+    assert insole.fill_row(normal) == f"{normal['max_fill_mm']} mm"
 
 
 def test_with_no_length_the_generic_outline_is_sized_from_the_foot_and_the_sheet_asks_for_the_shoes():
