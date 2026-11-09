@@ -45,6 +45,9 @@ PUT  /api/captures/<id>/picks/<n>                       save pick n {landmarks: 
 DELETE /api/captures/<id>/picks/<n>
 (the same three under /api/submissions/<id>/scans/<key>/)
 GET  /api/measurements.csv                              every research capture's picks, for the repeatability study
+GET  /api/shoes                                         saved shoes (one insole outline per shoe and size), the default
+POST /api/shoes                                         {capture, name, size, default}: save a shoe's-insole scan's outline
+POST /api/shoes/default                                 {id} (null: none): insoles take its outline unless told otherwise
 
 The server itself needs only the standard library; saving a pick loads
 numpy and trimesh to compute the measurements.
@@ -77,7 +80,9 @@ from pathlib import Path
 
 from . import atomic, recon_jobs
 from . import mat as mat_mod
+from . import shoes as shoes_mod
 from . import survey as survey_mod
+from .filestamp import file_stamp
 
 ROOT = Path(__file__).resolve().parents[2]
 WEB_DIR = ROOT / "web"
@@ -414,6 +419,7 @@ def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check
                 tailnet.update(at=time.monotonic(), ip=tailnet_ip())
             return tailnet["ip"]
     captures_dir = data_dir / "captures"
+    shoes_dir = shoes_dir_of(captures_dir)
     submissions_dir = data_dir / "submissions"
     limiter = RateLimiter(submissions_per_hour)
 
@@ -708,6 +714,9 @@ def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check
             if parts[:1] == ["captures"]:
                 self.require_local()
                 return self.api_captures(method, parts[1:])
+            if parts[:1] == ["shoes"]:
+                self.require_local()
+                return self.api_shoes(method, parts[1:])
             if parts == ["compare"] and method == "POST":
                 self.require_local()
                 if self.cross_site():
@@ -723,6 +732,46 @@ def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check
             if parts == ["studio", "pairing"] and method == "GET":
                 self.require_local()
                 return self.send_json(self.pairing())
+            raise FileNotFoundError
+
+        def api_shoes(self, method: str, rest: list[str]):
+            """Saved shoes (footscan/shoes.py): GET the list and the default; POST {capture, name, size, default}
+            saves a shoe's-insole capture's outline; POST default {id} (null: none) chooses the default."""
+            if method == "GET" and not rest:
+                try:
+                    default, problem = shoes_mod.default_id(shoes_dir, strict=True), None
+                except shoes_mod.ShoeLibraryError as e:  # chosen but broken: say so (Make insole refuses it too)
+                    default, problem = None, str(e)
+                return self.send_json(dict(shoes=shoes_mod.listed(shoes_dir), default=default, default_problem=problem))
+            if method == "POST" and not rest:
+                body = self.json_body()
+                folder = shoe_capture(captures_dir, body.get("capture"))
+                try:
+                    with capture_lock(folder.name):  # not while it's re-imported or rebuilt (a half-written model)
+                        outline, read = shoe_outline(folder)
+                except ValueError as e:  # a ShoeError: not an insole's scan
+                    raise BadRequest(str(e)) from None
+                except Exception as e:  # noqa: BLE001 - a broken model is reported, never a dropped connection
+                    raise BadRequest(f"couldn't read the shoe's insole from this model ({type(e).__name__}: {e})") from None
+                try:
+                    saved = shoes_mod.save(shoes_dir, outline, body.get("name"), body.get("size"), folder.name, read,
+                                           default=bool(body.get("default")))
+                except shoes_mod.ShoeLibraryError as e:  # the name or size
+                    raise BadRequest(str(e)) from None
+                except OSError as e:  # the studio's own folder (not writable, disk full): not the scan's fault
+                    return self.send_json({"error": f"couldn't save the shoe in {shoes_dir} ({e})"},
+                                          HTTPStatus.INTERNAL_SERVER_ERROR)
+                return self.send_json({k: v for k, v in saved.items() if k != "outline"}, HTTPStatus.CREATED)
+            if method == "POST" and rest == ["default"]:
+                sid = self.json_body().get("id")
+                try:
+                    shoes_mod.set_default(shoes_dir, sid or None)
+                except shoes_mod.ShoeLibraryError as e:
+                    raise BadRequest(str(e)) from None
+                except OSError as e:  # the studio's own folder (not writable, disk full), as for a save
+                    return self.send_json({"error": f"couldn't choose the default in {shoes_dir} ({e})"},
+                                          HTTPStatus.INTERNAL_SERVER_ERROR)
+                return self.send_json(dict(default=shoes_mod.default_id(shoes_dir)))
             raise FileNotFoundError
 
         def pairing(self) -> dict:
@@ -784,10 +833,10 @@ def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check
                 name = rest[0]
                 if name not in INSOLE_FILES:
                     raise FileNotFoundError
-                if not insole_downloadable(d, read_json(d / "capture.json")):
-                    return self.send_json({"error": "this insole doesn't match the scan's current 3D model "
-                                                    "(it changed, or the last attempt failed): make the insole again"},
-                                          HTTPStatus.CONFLICT)
+                dmeta = read_json(d / "capture.json")
+                if not insole_downloadable(d, dmeta):
+                    why = STALE_MESSAGES.get(insole_stale_reason(d, dmeta), STALE_MESSAGES[None])
+                    return self.send_json({"error": f"{why} Make the insole again."}, HTTPStatus.CONFLICT)
                 f = out / name
                 if not f.is_file():
                     raise FileNotFoundError
@@ -803,15 +852,38 @@ def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check
                 opts = opts if isinstance(opts, dict) else {}
                 length = parse_shoe_length(opts.get("length_mm"))
                 shoe_id = opts.get("shoe") or None
-                if shoe_id is not None and length is not None:
-                    raise BadRequest("give the shoe's insole or a length, not both")
+                saved_id = opts.get("saved_shoe") or None
+                if sum(x is not None for x in (shoe_id, saved_id, length)) > 1:
+                    raise BadRequest("give one of: a shoe's insole, a saved shoe, a length")
+                if opts.get("foot_outline") and (shoe_id is not None or saved_id is not None):
+                    raise BadRequest("the foot's own outline or a shoe's, not both")
+                if opts.get("generic") and (shoe_id is not None or saved_id is not None or opts.get("foot_outline")):
+                    raise BadRequest("the generic insole outline, or a shoe's, or the foot's own: one of them")
+                if (shoe_id is None and saved_id is None and length is None and not opts.get("foot_outline")
+                        and not opts.get("generic")):
+                    # (a length alone asks for the generic outline at that length, whatever the default)
+                    # per shoe by default: the default saved shoe's outline. A default that's chosen but broken
+                    # stops here with why, rather than quietly cutting the insole to another outline
+                    try:
+                        saved_id = shoes_mod.default_id(shoes_dir, strict=True)
+                    except shoes_mod.ShoeLibraryError as e:
+                        raise BadRequest(str(e)) from None
                 with capture_lock(d.name):
                     meta = read_json(d / "capture.json")
                     foot = meta.get("foot")
                     if foot not in FEET:
                         raise BadRequest("an insole needs a foot capture (left or right)")
                     shoe = shoe_capture(captures_dir, shoe_id) if shoe_id is not None else None
-                    result = make_insole(d, meta, length_mm=length, shoe=shoe)
+                    saved = saved_shoe(shoes_dir, saved_id) if saved_id is not None else None
+                    result = make_insole(d, meta, length_mm=length, shoe=shoe, saved=saved,
+                                         foot_outline=bool(opts.get("foot_outline")))
+                    if (result.get("outline") == "generic" and not opts.get("generic")
+                            and (length is None or not (shoes_dir / shoes_mod.DEFAULT_FILE).is_file())):
+                        # no outline was asked for (at most a length) and there was no default saved shoe: not a
+                        # choice of the generic outline, so once a default is saved the menu (and Remake) follow it.
+                        # A length alone with a default saved shoe chosen did pass it over: that stays "generic",
+                        # so Remake makes the same insole
+                        result["outline"] = "default"
                     if "error" in result:  # a failed attempt leaves nothing printable behind
                         shutil.rmtree(d / "insole", ignore_errors=True)
                     meta = read_json(d / "capture.json")  # re-read: don't undo other changes made meanwhile
@@ -1285,22 +1357,40 @@ def insole_source(folder: Path, meta: dict) -> Path | None:
 
 
 def source_stamp(path: Path | None) -> str | None:
-    """Cheap fingerprint of a model file (size and modification time): changes when it's replaced or rebuilt."""
-    if path is None or not path.is_file():
-        return None
-    st = path.stat()
-    return f"{path.name}:{st.st_size}:{st.st_mtime_ns}"
+    """Cheap fingerprint of a model file (size and modification time): changes when it's replaced or rebuilt.
+    The same fingerprint saved shoes use (filestamp.py), so both go stale by one rule."""
+    return file_stamp(path)
+
+
+def shoes_dir_of(captures_dir: Path) -> Path:
+    """The saved shoes' folder of a studio whose captures are in ``captures_dir``: both are in its data folder."""
+    return Path(captures_dir).parent / "shoes"
 
 
 def _shoe_changed(folder: Path, ins: dict) -> bool:
-    """Was the shoe's-insole capture an insole was fitted to replaced, rebuilt or deleted since?"""
+    """Was the shoe's-insole capture (or saved shoe) an insole was fitted to replaced, rebuilt or deleted since?"""
     shoe = ins.get("shoe")
     if not shoe:
         return False
+    if shoe.get("saved"):  # a saved shoe: <data>/shoes/<id>.json, beside <data>/captures (make_handler's layout)
+        try:
+            return shoes_mod.stamp(shoes_dir_of(folder.parent), shoe["saved"]) != shoe.get("source")
+        except shoes_mod.ShoeLibraryError:  # not a saved shoe's id (a hand-edited capture.json): it can't match
+            return True
     sf = folder.parent / shoe["capture"]
     if not (sf / "capture.json").is_file():
         return True
     return source_stamp(insole_source(sf, read_json(sf / "capture.json"))) != shoe.get("source")
+
+
+def _old_default_outline(ins: dict) -> bool:
+    """Was this insole cut to the foot's own outline by default (or lengthened at the front for a shoe's length),
+    before the generic insole outline (insole.generic_outline) became the default? Those can come out long and
+    thin, the scan's size and shape; one made since says which shape it got (outline_shape). An insole cut to a
+    shoe, or to the foot's own outline because that was chosen (no length), still matches."""
+    if ins.get("outline_shape") or ins.get("shoe"):
+        return False
+    return not (ins.get("outline") == "foot" and ins.get("shoe_length_mm") is None)
 
 
 def _prepared_another_way(meta: dict, ins: dict) -> bool:
@@ -1312,17 +1402,44 @@ def _prepared_another_way(meta: dict, ins: dict) -> bool:
             and ins.get("prep") != foot_prep.prep_version(meta.get("scan_kind")))
 
 
+# Why an insole no longer matches what it was made from, in the words the studio shows (and a download answers)
+# (the studio's card shows them as list_captures' stale_message, so they're written only here)
+STALE_MESSAGES = {
+    "model": "The 3D model has changed since this insole was made (it was replaced or rebuilt), so it no longer matches.",
+    "shoe": "The shoe this insole was cut to has been saved again (or its scan replaced or removed) since, so it no "
+            "longer matches.",
+    "prep": "The way this kind of scan is prepared has changed since this insole was made.",
+    "outline": "This insole was cut to the foot's own outline, from before insoles took a shoe insole's shape by "
+               "default; made again, it gets the generic insole outline (or choose the foot's own).",
+    None: "This insole can't be downloaded: the last attempt failed, or it no longer matches.",
+}
+
+
+def insole_stale_reason(folder: Path, meta: dict) -> str | None:
+    """Why this capture's insole is stale: "model" (the foot's model was replaced or rebuilt since), "shoe" (the
+    shoe it was cut to, a saved shoe or a shoe's scan, changed or is gone), "prep" (the way a sole scan is
+    prepared changed), or None (it isn't, or there's no successful insole)."""
+    ins = meta.get("insole") or {}
+    if not ins or "error" in ins:
+        return None
+    try:
+        if ins.get("source") != source_stamp(insole_source(folder, meta)):
+            return "model"
+        if _shoe_changed(folder, ins):
+            return "shoe"
+        if _prepared_another_way(meta, ins):
+            return "prep"
+        if _old_default_outline(ins):
+            return "outline"
+    except (ValueError, OSError):  # what it was made from can't be read (or is mid-rebuild): not current
+        return "model"
+    return None
+
+
 def insole_is_stale(folder: Path, meta: dict) -> bool:
     """Was this capture's model (or the shoe's it was fitted to) replaced or rebuilt after its insole was made,
     or the way a sole scan is prepared changed?"""
-    ins = meta.get("insole") or {}
-    if not ins or "error" in ins:
-        return False
-    try:
-        return (ins.get("source") != source_stamp(insole_source(folder, meta))
-                or _shoe_changed(folder, ins) or _prepared_another_way(meta, ins))
-    except (ValueError, OSError):  # what it was made from can't be read (or is mid-rebuild): not current
-        return True
+    return insole_stale_reason(folder, meta) is not None
 
 
 def insole_downloadable(folder: Path, meta: dict) -> bool:
@@ -1331,15 +1448,14 @@ def insole_downloadable(folder: Path, meta: dict) -> bool:
     if not ins or "error" in ins:
         return False
     try:
-        current = source_stamp(insole_source(folder, meta))
-        return (current is not None and ins.get("source") == current
-                and not _shoe_changed(folder, ins) and not _prepared_another_way(meta, ins))
+        return source_stamp(insole_source(folder, meta)) is not None and insole_stale_reason(folder, meta) is None
     except (ValueError, OSError):  # what it was made from can't be read (or is mid-rebuild): not current
         return False
 
 
 def parse_shoe_length(value) -> float | None:
-    """The shoe's insole length for Make insole (mm), or None for the foot's own length."""
+    """The shoe's insole length for Make insole (mm), or None: none given (the generic outline is then sized
+    from the foot, the foot's own outline isn't lengthened, and a shoe's outline keeps its own length)."""
     if value in (None, ""):
         return None
     try:
@@ -1369,18 +1485,41 @@ def shoe_capture(captures_dir: Path, cid) -> Path:
     return folder
 
 
+def saved_shoe(shoes_dir: Path, sid) -> tuple[str, dict, str | None]:
+    """A saved shoe for Make insole -> (its id, the saved shoe, its file's stamp)."""
+    try:
+        return (sid, *shoes_mod.load_stamped(shoes_dir, sid))
+    except shoes_mod.ShoeLibraryError as e:
+        raise BadRequest(f"saved_shoe: {e}") from None
+
+
+def shoe_outline(folder: Path):
+    """A shoe's-insole capture's outline -> (outline, read info), as recon/shoe.py reads it."""
+    from .recon import shoe as shoe_mod
+    from .recon.imported import load_geometry
+
+    smeta = read_json(folder / "capture.json")
+    return shoe_mod.outline_from_scan(load_geometry(insole_source(folder, smeta)),
+                                      up=(smeta.get("mesh") or {}).get("up", "y"))
+
+
 def shoe_stamp(folder: Path) -> dict:
     meta = read_json(folder / "capture.json")
     return dict(capture=folder.name, source=source_stamp(insole_source(folder, meta)))
 
 
-def make_insole(folder: Path, meta: dict, length_mm: float | None = None, shoe: Path | None = None) -> dict:
+def make_insole(folder: Path, meta: dict, length_mm: float | None = None, shoe: Path | None = None,
+                saved: tuple[str, dict, str | None] | None = None, foot_outline: bool = False) -> dict:
     """First-fit insole for a foot capture: an imported model (iPhone app) or a footscan reconstruction.
 
-    ``length_mm``: a shoe's insole length: the outline is lengthened to it at the front only (the
-    shape under the heel, arch and ball unchanged); never shorter than the foot.
+    With none of the below, the outline is the generic insole outline (insole.generic_outline), sized from the
+    foot. ``length_mm``: a shoe's insole length: the generic outline is made that long, scaled as a whole (with
+    ``foot_outline``, the foot's own outline lengthened at the front only); never shorter than the foot.
+    ``foot_outline``: the foot's own outline instead of the generic one.
     ``shoe``: a shoe's-insole capture's folder: the insole takes that insole's outline, fitted round the
     foot (recon/shoe.py). Not with ``length_mm``.
+    ``saved``: (id, saved shoe, stamp) from <data>/shoes (footscan/shoes.py): the same, from the outline kept for
+    that shoe model and size. Not with the others.
     Files go to <capture>/insole/. Returns a short report (or {"error": ...}).
     """
     import shutil
@@ -1391,18 +1530,24 @@ def make_insole(folder: Path, meta: dict, length_mm: float | None = None, shoe: 
 
     foot = meta["foot"]
     stamp = source_stamp(insole_source(folder, meta))
-    params = insole_mod.InsoleParams(target_length_mm=length_mm) if length_mm is not None else None
+    params = insole_mod.InsoleParams(target_length_mm=length_mm, foot_outline=foot_outline)
     shoe_info = None
     try:
         if shoe is not None:
             from .recon import shoe as shoe_mod
 
-            smeta = read_json(shoe / "capture.json")
             shoe_info = shoe_stamp(shoe)
-            outline, read = shoe_mod.outline_from_scan(load_geometry(insole_source(shoe, smeta)),
-                                                       up=(smeta.get("mesh") or {}).get("up", "y"))
+            outline, read = shoe_outline(shoe)
             shoe_info.update(length_mm=read["length_mm"], width_mm=read["width_mm"])
             params = insole_mod.InsoleParams(shoe_outline=shoe_mod.as_param(outline))
+        elif saved is not None:
+            sid, s, sstamp = saved
+            shoe_info = dict(saved=sid, source=sstamp,
+                             name=shoes_mod.label(s), model=s["name"], size=s["size"], length_mm=s["length_mm"],
+                             width_mm=s["width_mm"])
+            # shoe_saved: one saved outline serves both feet, so mirroring it for the other foot is expected
+            params = insole_mod.InsoleParams(shoe_outline=shoes_mod.outline_param(s), shoe_name=shoes_mod.label(s),
+                                             shoe_saved=True)
         if meta.get("method") == "imported_mesh" and (folder / "mesh.ply").is_file():
             up = (meta.get("mesh") or {}).get("up", "y")
             kind = meta.get("scan_kind") or "foot"
@@ -1436,8 +1581,16 @@ def make_insole(folder: Path, meta: dict, length_mm: float | None = None, shoe: 
         shutil.rmtree(tmp, ignore_errors=True)
     r = ins.report
     return dict(made=now_iso(), foot=foot, length_mm=r["length_mm"], width_mm=r["width_mm"], height_mm=r["height_mm"],
-                max_fill_mm=r["max_fill_mm"], sole=r["sole"], bed=r["bed_fit"], warnings=r["warnings"],
+                max_fill_mm=r["max_fill_mm"], foot_max_fill_mm=r["foot_max_fill_mm"], sole=r["sole"], bed=r["bed_fit"], warnings=r["warnings"],
                 files=sorted(INSOLE_FILES), source=stamp, prep=foot_prep.prep_version(meta.get("scan_kind")), shoe_length_mm=length_mm,
+                # which outline was asked for, so the studio shows the same choice after a reload: a saved shoe,
+                # a shoe's-insole scan, or the foot's own (lengthened or not)
+                outline="saved" if saved is not None else "scan" if shoe is not None else r["outline_from"],
+                # the outline's shape as made: "shoe", "generic" or "foot" (an insole without it was made when the
+                # default was the foot's own outline: insole_stale_reason)
+                outline_shape=r["outline_from"],
+                generic=dict(length_mm=r["shoe_fit"]["outline_length_mm"], fit=r["shoe_fit"])
+                if r["outline_from"] == "generic" else None,
                 shoe=dict(shoe_info, fit=r.get("shoe_fit")) if shoe_info else None)
 
 
@@ -1619,8 +1772,9 @@ def list_captures(captures_dir: Path) -> list[dict]:
         except (ValueError, OSError):  # garbled or not UTF-8, or removed since the glob saw it (a refused upload)
             continue
         meta.pop("frames", None)
-        if meta.get("insole") and insole_is_stale(f.parent, meta):
-            meta["insole"] = {**meta["insole"], "stale": True}
+        why = insole_stale_reason(f.parent, meta) if meta.get("insole") else None
+        if why:
+            meta["insole"] = {**meta["insole"], "stale": True, "stale_reason": why, "stale_message": STALE_MESSAGES[why]}
         out.append(meta)
     return sorted(out, key=lambda m: m.get("created", ""), reverse=True)
 

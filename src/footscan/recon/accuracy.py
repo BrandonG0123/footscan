@@ -53,6 +53,8 @@ REJECT_MM = 6.0
 ICP_MIN_REJECT_MM = 2.0
 ICP_ITERS = 60
 ICP_POINTS = 20_000  # alignment uses a random subset; the statistics use every sample
+WALL_WINDOW = 0.12   # the wall-to-wall search reaches this share of the dimension either side of each wall
+SCALE_WARN_PCT = 1.0  # length and width both off by more than this, the same way: the scan's scale is off
 
 
 # --------------------------------------------------------------------------
@@ -235,10 +237,14 @@ def measure_dimensions(scan_ref: np.ndarray, floor_plane: tuple[np.ndarray, np.n
     ):
         o_axis, o_lo, o_hi = other
         span_ok = band & (scan_ref[:, o_axis] > o_lo) & (scan_ref[:, o_axis] < o_hi)
-        # Wide windows (+-6 mm): a scan a few percent too big still has its
-        # walls inside them, and must be measured, not dropped.
-        lo = span_ok & (np.abs(scan_ref[:, axis] - lo_pos) < 6.0)
-        hi = span_ok & (np.abs(scan_ref[:, axis] - hi_pos) < 6.0)
+        # Wide windows round where each wall should be: a scan several percent too big or too small still has its
+        # walls inside them, and must be measured, not dropped. The rigid alignment can't scale the scan, so it
+        # may line one end up and leave the other wall a whole scale error away: 5% of the length is 7.5 mm (a
+        # SYNTHETIC scan 5% small lost its length at +-6 mm). In the 2-8 mm band, with the corners cut off by
+        # span_ok, the end walls are the only surface there, so a wide window can't catch anything else.
+        win = max(6.0, WALL_WINDOW * (hi_pos - lo_pos))
+        lo = span_ok & (np.abs(scan_ref[:, axis] - lo_pos) < win)
+        hi = span_ok & (np.abs(scan_ref[:, axis] - hi_pos) < win)
         if lo.sum() > 20 and hi.sum() > 20:
             out[key] = dict(value=round(float(np.median(scan_ref[hi, axis]) - np.median(scan_ref[lo, axis])), 3),
                             n=int(lo.sum() + hi.sum()))
@@ -261,6 +267,23 @@ def _stats(d: np.ndarray) -> dict:
     )
 
 
+
+
+def scale_estimate(table: list[dict]) -> dict | None:
+    """How far the scan's size is off, from its wall-to-wall length and width against the reference (calipers if
+    given, else the model): each as a percentage, and their mean. A scan that's scaled as a whole reads off by the
+    same share both ways; an edge that's missing or swollen moves one, not the other. None without both."""
+    rows = {r["key"]: r for r in table}
+    pct = {}
+    for k in ("length", "width"):
+        r = rows.get(k)
+        if r is None or r.get("scan_mm") is None:
+            return None
+        ref = r["caliper_mm"] if r.get("caliper_mm") is not None else r["model_mm"]  # as evaluate() picks it
+        pct[k] = 100.0 * (r["scan_mm"] / ref - 1.0)
+    return dict(length_pct=round(pct["length"], 2), width_pct=round(pct["width"], 2),
+                mean_pct=round((pct["length"] + pct["width"]) / 2, 2),
+                same_way=bool(np.sign(pct["length"]) == np.sign(pct["width"])))
 
 
 def evaluate(scan_mesh, floor_pts: np.ndarray | None = None, calipers: dict | None = None,
@@ -305,7 +328,17 @@ def evaluate(scan_mesh, floor_pts: np.ndarray | None = None, calipers: dict | No
                           scan_minus_reference_mm=round(dims["dome_radius"]["value"] - calib.DOME_RADIUS, 3),
                           reference="model"))
 
+    scale = scale_estimate(table)
     warnings = []
+    if scale is not None and abs(scale["mean_pct"]) > SCALE_WARN_PCT:
+        how = ("both ways, so the whole scan is scaled, not just an edge missing. Foot scans made the same way are "
+               "probably off by about as much" if scale["same_way"] and min(abs(scale["length_pct"]),
+                                                                            abs(scale["width_pct"])) > SCALE_WARN_PCT / 2
+               else "but not the same both ways: check the scan for a missing or swollen edge before reading it as "
+                    "the scan's scale")
+        warnings.append(f"the scan reads {abs(scale['mean_pct']):.1f}% too {'small' if scale['mean_pct'] < 0 else 'big'} "
+                        f"(length {scale['length_pct']:+.1f}%, width {scale['width_pct']:+.1f}%), {how}. The surface "
+                        f"statistics include this error")
     missing = [row["label"] for row in table if row["scan_mm"] is None]
     if missing:
         warnings.append(f"couldn't measure on the scan: {', '.join(missing)} (that part of the surface is missing "
@@ -330,6 +363,7 @@ def evaluate(scan_mesh, floor_pts: np.ndarray | None = None, calipers: dict | No
             within_2mm=round(float(np.mean(back <= 2.0)), 4),
         ),
         dimensions=table,
+        scale=scale,
         warnings=warnings,
         dense_floor_offset_mm=dims.get("dense_floor_offset_mm", {}).get("value"),
         transform_scan_to_model=T.tolist(),

@@ -89,6 +89,74 @@ def test_a_left_and_right_of_different_lengths_are_flagged_and_drawn_together(da
         assert (p / "pair.png").read_bytes().startswith(b"\x89PNG")
 
 
+def test_an_insole_cut_to_a_saved_shoe_is_checked_against_that_shoe_not_the_chart_length(tmp_path):
+    """The insole takes the saved shoe's outline (the design rule: the shoe sets the outline), so its length
+    check is against that outline. The spec's 275 mm chart length would FLAG it, and the skill's fix for that
+    used to rebuild from the foot's own outline. A saved shoe that isn't the spec's shoe is flagged by name."""
+    from footscan import shoes
+    from footscan.recon import shoe as shoe_mod
+
+    data = tmp_path / "data"
+    outline, read = shoe_mod.outline_from_scan(synth.shoe_insole(ball=114.0))
+    s = shoes.save(data / "shoes", outline, "ASICS Gel Resolution X", "US men's 9.5", "synthetic", read)
+    d = data / "captures" / "Rsaved"
+    d.mkdir(parents=True)
+    m = synth.block_foot(0.0, "right", origin=(0, 0))
+    m.apply_transform(np.block([[imported.UP["y"].T, np.zeros((3, 1))], [np.zeros((1, 3)), np.ones((1, 1))]]))
+    m.apply_scale(0.001)
+    m.export(d / "mesh.ply")
+    meta = dict(capture_id="Rsaved", foot="right", method="imported_mesh", condition="swb", scan_kind="foot",
+                mesh=dict(up="y"))
+    meta["insole"] = server.make_insole(d, meta, saved=server.saved_shoe(data / "shoes", s["id"]))
+    assert "error" not in meta["insole"], meta["insole"]
+    server.write_json(d / "capture.json", meta)
+    assert abs(meta["insole"]["length_mm"] - 275.0) > 1.0  # the saved shoe isn't the chart's 275 mm
+
+    [p] = review.run_once(data, SPEC)
+    c = _check(p, "length")
+    assert c["ok"] and "the saved shoe ASICS Gel Resolution X, US men's 9.5" in c["found"]
+    assert _check(p, "shoe")["ok"]
+    md = (p / "packet.md").read_text()
+    assert "Outline: the saved shoe ASICS Gel Resolution X, US men's 9.5" in md
+
+    other = dict(SPEC, shoe="Some Other Shoe", size="US men's 10")
+    shutil.rmtree(data / "reviews")
+    [p] = review.run_once(data, other)
+    c = _check(p, "shoe")
+    assert not c["ok"] and "review-spec.json names Some Other Shoe" in c["found"]
+    assert _check(p, "length")["ok"]
+
+
+def test_an_insole_with_the_generic_outline_sized_from_the_foot_is_flagged_for_its_length(data):
+    """No shoe and no length: the generic insole outline, sized from the scan, misses the spec's length and says
+    which outline it is."""
+    _only(data, "Lfoot")
+    [p] = review.run_once(data, SPEC)
+    c = _check(p, "length")
+    assert not c["ok"] and "the generic insole outline is" in c["found"]
+    assert "Outline: the generic insole outline (the same shape for every foot)" in (p / "packet.md").read_text()
+
+
+def test_an_insole_with_the_generic_outline_at_the_specs_length_passes_its_length_check(data):
+    _only(data, "R275")
+    [p] = review.run_once(data, SPEC)
+    c = _check(p, "length")
+    assert c["ok"] and "the generic insole outline is 275.0 mm long" in c["found"]
+
+
+def test_the_packet_gives_the_foots_own_highest_fill_only_when_it_is_past_the_outlines_edge(data):
+    """The packet's highest fill is the printed one; a foot peak higher by more than FILL_PAST_EDGE_MM (hanging
+    over the outline, not printed) is named beside it, so the reviewer has what the sheet has."""
+    _only(data, "R275")
+    [p] = review.run_once(data, SPEC)
+    packet = json.loads((p / "review.json").read_text())
+    assert "past the outline's edge, so not printed" not in review.packet_markdown(packet)
+    i = packet["insole"]
+    i["foot_max_fill_mm"], i["foot_max_fill_at_mm"] = i["max_fill_mm"] + 2.0, dict(x=110.0, y=107.0)
+    assert (f"The foot's own highest fill is {i['foot_max_fill_mm']} mm, at x 110.0, y 107.0 mm: past the outline's "
+            "edge, so not printed") in review.packet_markdown(packet)
+
+
 def test_pictures_are_real_pngs_at_half_a_millimetre_per_pixel(data):
     _only(data, "R275")
     [p] = review.run_once(data, SPEC)
@@ -429,6 +497,94 @@ def test_footscan_service_prints_only_the_file_on_stdout(capsys, tmp_path):
     assert cli.main(["service", "--system", "linux", "--data", str(tmp_path)]) == 0
     out = capsys.readouterr()
     assert out.out.startswith("[Unit]") and "systemctl --user" in out.err
+
+
+def test_a_saved_shoe_far_from_the_charts_length_is_flagged_though_the_insole_matches_it(tmp_path):
+    """An insole cut to a saved shoe always matches that shoe's outline, so the length check alone can't catch
+    a stock insole scanned at the wrong scale (the same few percent the foot scans read short). The outline is
+    checked against the spec's chart length too, within shoe_length_tolerance_mm."""
+    from footscan import shoes
+    from footscan.recon import shoe as shoe_mod
+
+    data = tmp_path / "data"
+    scan = synth.shoe_insole(ball=114.0)
+    scan.apply_scale(0.92)  # SYNTHETIC: a stock insole read 8% short
+    outline, read = shoe_mod.outline_from_scan(scan)
+    s = shoes.save(data / "shoes", outline, "ASICS Gel Resolution X", "US men's 9.5", "synthetic", read)
+    assert s["length_mm"] < 275.0 - 15
+    d = data / "captures" / "Rshort"
+    d.mkdir(parents=True)
+    m = synth.block_foot(0.0, "right", origin=(0, 0))
+    m.apply_transform(np.block([[imported.UP["y"].T, np.zeros((3, 1))], [np.zeros((1, 3)), np.ones((1, 1))]]))
+    m.apply_scale(0.001)
+    m.export(d / "mesh.ply")
+    meta = dict(capture_id="Rshort", foot="right", method="imported_mesh", condition="swb", scan_kind="foot",
+                mesh=dict(up="y"))
+    meta["insole"] = server.make_insole(d, meta, saved=server.saved_shoe(data / "shoes", s["id"]))
+    assert "error" not in meta["insole"], meta["insole"]
+    server.write_json(d / "capture.json", meta)
+
+    [p] = review.run_once(data, SPEC)
+    assert _check(p, "length")["ok"] and _check(p, "shoe")["ok"]  # it is the spec's shoe, and matches its outline
+    c = _check(p, "shoe_length")
+    assert not c["ok"] and "chart length" in c["found"]
+    assert "shoe_length" in json.loads((p / "review.json").read_text())["flags"]
+
+
+def _saved_shoe_capture(data, cid, foot, sid, turn_deg=0.0, scale=1.0):
+    """A SYNTHETIC block foot, turned ``turn_deg`` about the vertical and scaled, cut to saved shoe ``sid``."""
+    import trimesh
+
+    d = data / "captures" / cid
+    d.mkdir(parents=True)
+    m = synth.block_foot(0.0, foot, origin=(0, 0))
+    m.apply_transform(trimesh.transformations.rotation_matrix(np.radians(turn_deg), [0, 0, 1]))
+    m.apply_scale(scale)
+    m.apply_transform(np.block([[imported.UP["y"].T, np.zeros((3, 1))], [np.zeros((1, 3)), np.ones((1, 1))]]))
+    m.apply_scale(0.001)
+    m.export(d / "mesh.ply")
+    meta = dict(capture_id=cid, foot=foot, method="imported_mesh", condition="swb", scan_kind="foot",
+                mesh=dict(up="y"))
+    meta["insole"] = server.make_insole(d, meta, saved=server.saved_shoe(data / "shoes", sid))
+    assert "error" not in meta["insole"], meta["insole"]
+    server.write_json(d / "capture.json", meta)
+    return meta
+
+
+def test_a_pair_cut_to_one_saved_shoe_is_compared_by_the_outline_not_its_length_along_each_foot(tmp_path):
+    """Each foot turns the one saved outline to itself (up to 10 degrees), which shortens it along that foot by a
+    mm or two: the pair check compares the outline's own length, so a right pair isn't flagged. The shoe_length
+    check and the packet's Outline line use the outline's own length too."""
+    from footscan import shoes
+    from footscan.recon import shoe as shoe_mod
+
+    data = tmp_path / "data"
+    outline, read = shoe_mod.outline_from_scan(synth.shoe_insole(ball=114.0))
+    s = shoes.save(data / "shoes", outline, "ASICS Gel Resolution X", "US men's 9.5", "synthetic", read)
+    left = _saved_shoe_capture(data, "Lsaved", "left", s["id"])
+    right = _saved_shoe_capture(data, "Rsaved", "right", s["id"], turn_deg=8.0)
+    for meta in (left, right):
+        fit = meta["insole"]["shoe"]["fit"]
+        assert fit["outline_length_mm"] == pytest.approx(s["length_mm"], abs=0.2)
+    shutil.rmtree(data / "reviews", ignore_errors=True)
+    packets = review.run_once(data, SPEC)
+    for p in packets:
+        c = _check(p, "pair_length")
+        assert c["ok"] and "cut to an outline" in c["found"], c
+        assert f"is {s['length_mm']:.1f} mm long" in _check(p, "shoe_length")["found"]
+
+
+def test_a_saved_shoe_that_only_shares_an_id_with_the_specs_shoe_is_flagged(tmp_path):
+    """"Nike Pegasus", "40 US 9" and the spec's "Nike Pegasus 40", "US 9" have one id but are different shoes."""
+    from footscan import shoes
+    from footscan.recon import shoe as shoe_mod
+
+    data = tmp_path / "data"
+    outline, read = shoe_mod.outline_from_scan(synth.shoe_insole(ball=114.0))
+    s = shoes.save(data / "shoes", outline, "Nike Pegasus", "40 US 9", "synthetic", read)
+    _saved_shoe_capture(data, "Rpeg", "right", s["id"])
+    [p] = review.run_once(data, dict(SPEC, shoe="Nike Pegasus 40", size="US 9"))
+    assert not _check(p, "shoe")["ok"]
 
 
 def test_a_review_spec_saved_with_a_byte_order_mark_still_loads(tmp_path):

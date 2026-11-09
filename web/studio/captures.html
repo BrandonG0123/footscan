@@ -58,8 +58,14 @@
 
   async function load() {
     try {
-      const r = await fetch("/api/captures");
+      // the captures and the saved shoes (one insole outline per shoe model and size; none is fine), together
+      const [r, shoes] = await Promise.all([
+        fetch("/api/captures"),
+        // not listed (an error): the menu then asks for the default, so the studio applies it or says why
+        fetch("/api/shoes").then((r) => r.ok ? r.json() : UNLISTED).catch(() => UNLISTED),
+      ]);
       all = await r.json();
+      saved = shoes;
     } catch {
       $("list").innerHTML = `<div class="callout stop"><p>Can't reach the footscan server. Start it with <span class="mono">footscan serve</span>.</p></div>`;
       return;
@@ -67,6 +73,9 @@
     render();
     if (location.hash) document.getElementById(location.hash.slice(1))?.scrollIntoView({ block: "center" });
   }
+
+  let saved = { shoes: [], default: null };
+  const UNLISTED = { shoes: [], default: null, unlisted: true };
 
   function render() {
     const cond = $("f-cond").value, foot = $("f-foot").value;
@@ -110,7 +119,7 @@
           <div><dt>Texture</dt><dd>${esc(c.method)}</dd></div>
           <div><dt>Created</dt><dd>${esc(c.created?.replace("T", " "))}</dd></div>
           ${c.accuracy && !c.accuracy.error
-            ? `<div><dt>Accuracy</dt><dd>${esc(c.accuracy.median_mm)} mm typical · length ${c.accuracy.length_mm == null ? "—" : (c.accuracy.length_mm > 0 ? "+" : "") + Number(c.accuracy.length_mm).toFixed(2) + " mm"}</dd></div>` : ""}
+            ? `<div><dt>Accuracy</dt><dd>${esc(c.accuracy.median_mm)} mm typical · length ${c.accuracy.length_mm == null ? "—" : (c.accuracy.length_mm > 0 ? "+" : "") + Number(c.accuracy.length_mm).toFixed(2) + " mm"}${c.accuracy.scale_pct == null ? "" : ` · size ${c.accuracy.scale_pct > 0 ? "+" : ""}${Number(c.accuracy.scale_pct).toFixed(1)}%`}</dd></div>` : ""}
         </dl>
         ${c.accuracy?.error ? `<p class="hint" style="margin:8px 0 0;color:var(--warn)">${esc(c.accuracy.error)}</p>` : ""}
         ${c.accuracy && !c.accuracy.error ? `<p class="hint" style="margin:6px 0 0"><a href="/api/captures/${encodeURIComponent(c.capture_id)}/accuracy">Full accuracy report</a></p>` : ""}
@@ -120,10 +129,12 @@
             ? `<a class="btn secondary" href="/studio/model.html?capture=${encodeURIComponent(c.capture_id)}">3D model</a>` : ""}
           ${c.foot && (c.frame_files?.length || c.mesh)
             ? `<a class="btn secondary" href="/studio/landmarks.html?capture=${encodeURIComponent(c.capture_id)}">Landmarks</a>` : ""}
+          ${c.condition === "shoe_insole" && c.mesh
+            ? `<button class="btn secondary" type="button" data-save-shoe="${esc(c.capture_id)}">Save as a shoe</button>` : ""}
           ${c.foot && (c.frame_files?.length || c.mesh)
             ? `${shoePicker(c)}<span class="shoe-len"><input type="number" inputmode="decimal" min="150" max="360" step="1"
                  placeholder="shoe insole, mm" aria-label="Shoe insole length in mm (optional)" data-length-for="${esc(c.capture_id)}"
-                 value="${c.insole?.shoe_length_mm ?? ""}" style="width:9.5em" ${c.insole?.shoe ? "disabled" : ""}></span>
+                 value="${c.insole && !c.insole.error ? (c.insole.shoe_length_mm ?? "") : outlineChoice(c) === "generic" ? lastShoeLength() : ""}" style="width:9.5em" ${takesLength(outlineChoice(c)) ? "" : "disabled"}></span>
                <button class="btn secondary" type="button" data-insole="${esc(c.capture_id)}">${c.insole && !c.insole.error ? "Remake insole" : "Make insole"}</button>` : ""}</p>
         <div class="insole-out" id="insole-${esc(c.capture_id)}">${c.insole ? insoleHtml(c.capture_id, c.insole) : ""}</div>
         ${compareHtml(c)}
@@ -131,22 +142,91 @@
     }).join("");
   }
 
-  // Fit to a shoe: the outline of a scanned shoe's insole (recon/shoe.py). Either a shoe or a length, not both.
+  // The insole's outline: a saved shoe's (one outline per shoe model and size, footscan/shoes.py), a scanned
+  // shoe's insole (recon/shoe.py), the generic insole outline (one shoe insole shape, scaled as a whole to the
+  // length given, or to the foot's), or the foot's own (optionally lengthened). A length goes with the last two.
+  // What the menu shows: what was picked on this card since the page loaded, else what the last insole was made
+  // with (the server records it), else the default saved shoe, else the generic outline. An insole made with
+  // nothing chosen follows the default (so once a shoe is saved as the default, the menu picks it).
+  const picked = {};
+  function outlineChoice(c) {
+    if (picked[c.capture_id]) return picked[c.capture_id];
+    const ins = c.insole && !c.insole.error ? c.insole : undefined;
+    const shoe = ins?.shoe;
+    if (shoe?.saved && saved.shoes.some((s) => s.id === shoe.saved)) return `saved:${shoe.saved}`;
+    if (shoe?.capture && all.some((s) => s.capture_id === shoe.capture)) return `scan:${shoe.capture}`;
+    // the foot's own, chosen: made since outlines were recorded (outline_shape), or without a length. An older
+    // insole lengthened for a shoe was the foot's outline only because that was the only way: it's stale, and
+    // made again it gets the generic outline at that length
+    if (ins && !shoe && ins.outline === "foot" && (ins.outline_shape === "foot" || ins.shoe_length_mm == null)) return "foot";
+    if (ins && !shoe && ins.outline === "generic") return "generic";
+    // a default that was chosen but can't be read: ask for it anyway, so Make insole says what's wrong with it
+    // instead of quietly cutting the insole to another outline
+    return saved.default ? `saved:${saved.default}` : saved.default_problem || saved.unlisted ? "" : "generic";
+  }
+
+  const takesLength = (choice) => choice === "generic" || choice === "foot";
+
+  // The shoe's insole length last used for an insole made in this browser: offered on cards with no insole yet, so
+  // it's typed once (the generic outline is then the shoe's size, whatever the scan reads). A card that has an
+  // insole shows the length that insole was made with (none: sized from the foot), so Remake makes the same one.
+  // Only a convenience: without it (private window, cleared storage), the box starts empty.
+  const LENGTH_KEY = "footscan.shoeLengthMm";
+  const plausibleLength = (v) => { const n = Number(v); return Number.isFinite(n) && n >= 150 && n <= 360; };
+  function lastShoeLength() {
+    try { const v = localStorage.getItem(LENGTH_KEY); return plausibleLength(v) ? v : ""; } catch { return ""; }
+  }
+  function rememberShoeLength(len) {
+    try { if (plausibleLength(len)) localStorage.setItem(LENGTH_KEY, String(len)); } catch { /* nothing kept */ }
+  }
+
   function shoePicker(c) {
-    const shoes = all.filter((s) => s.condition === "shoe_insole" && s.mesh);
-    if (!shoes.length) return "";
-    const chosen = c.insole?.shoe?.capture;
-    return `<select data-shoe-for="${esc(c.capture_id)}" aria-label="Fit the insole to a shoe's insole (optional)">
-      <option value="">Outline: the foot's own</option>
-      ${shoes.map((s) => `<option value="${esc(s.capture_id)}" ${s.capture_id === chosen ? "selected" : ""}>Fit to the shoe's insole
-        scanned ${esc(s.created?.slice(0, 16).replace("T", " "))}</option>`).join("")}</select>`;
+    const scans = all.filter((s) => s.condition === "shoe_insole" && s.mesh);
+    const chosen = outlineChoice(c);
+    const opt = (value, label) => `<option value="${esc(value)}" ${value === chosen ? "selected" : ""}>${label}</option>`;
+    return `<select data-shoe-for="${esc(c.capture_id)}" aria-label="The insole's outline: a shoe's, the generic insole's, or the foot's own">
+      ${saved.default_problem ? opt("", "Outline: the default saved shoe (can't be read)") : ""}
+      ${saved.unlisted ? opt("", "Outline: the default saved shoe, if any (the saved shoes couldn't be listed)") : ""}
+      ${saved.shoes.map((s) => opt(`saved:${s.id}`, `Outline: ${esc(s.name)}, ${esc(s.size)}${s.id === saved.default ? " (default)" : ""}`)).join("")}
+      ${scans.map((s) => opt(`scan:${s.capture_id}`, `Outline: the shoe's insole scanned ${esc(s.created?.slice(0, 16).replace("T", " "))}`)).join("")}
+      ${opt("generic", "Outline: a generic insole, the shoe's length")}
+      ${opt("foot", "Outline: the foot's own")}</select>`;
   }
 
   document.addEventListener("change", (e) => {
     const sel = e.target.closest("[data-shoe-for]");
     if (!sel) return;
+    picked[sel.dataset.shoeFor] = sel.value;
     const len = document.querySelector(`[data-length-for="${CSS.escape(sel.dataset.shoeFor)}"]`);
-    if (len) { len.disabled = !!sel.value; if (sel.value) len.value = ""; }
+    if (len) {
+      len.disabled = !takesLength(sel.value);
+      if (!takesLength(sel.value)) len.value = "";
+      else if (!len.value && sel.value === "generic") len.value = lastShoeLength();
+    }
+  });
+
+  // Save a shoe's-insole scan as a saved shoe: its outline, kept for that shoe model and size
+  document.addEventListener("click", async (e) => {
+    const btn = e.target.closest("[data-save-shoe]");
+    if (!btn) return;
+    const name = prompt("Which shoe is this insole from? (e.g. ASICS Gel Resolution X)");
+    if (!name) return;
+    const size = prompt("Which size? (e.g. US men's 9.5)");
+    if (!size) return;
+    const makeDefault = confirm("Make it the default? New insoles then take this shoe's outline unless you choose another.");
+    btn.disabled = true;
+    try {
+      const r = await fetch("/api/shoes", { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ capture: btn.dataset.saveShoe, name, size, default: makeDefault }) });
+      const out = await r.json();
+      if (!r.ok) throw new Error(out.error || r.status);
+      await load(); // the captures too: insoles cut to an earlier save of this shoe are stale now
+      alert(`Saved: ${out.name}, ${out.size} (${out.length_mm} × ${out.width_mm} mm).`);
+    } catch (err) {
+      alert(`Couldn't save the shoe: ${err.message}`);
+    } finally {
+      btn.disabled = false;
+    }
   });
 
   // Repeatability: compare this scan with another of the same foot (recon/compare.py)
@@ -185,15 +265,21 @@
   // First-fit insole: not a medical device; no posting; walking-only until a clinician signs the sheet.
   function insoleHtml(id, r) {
     if (r.error) return `<p class="hint" style="color:var(--warn);margin:8px 0 0">${esc(r.error)}</p>`;
-    if (r.stale) return `<p class="hint" style="color:var(--warn);margin:8px 0 0">The 3D model has changed since this insole was
-      made, so it no longer matches. Press Make insole to make it again.</p>`;
+    if (r.stale) return `<p class="hint" style="color:var(--warn);margin:8px 0 0">${esc(r.stale_message || "This insole no longer matches what it was made from.")}
+      Press Make insole to make it again.</p>`;
     const base = `/api/captures/${encodeURIComponent(id)}/insole/`;
     const warn = (r.warnings || []).map((w) => `<li>${esc(w)}</li>`).join("");
     return `<div class="card" style="margin-top:10px;padding:12px">
       <strong>First-fit insole</strong> <span class="badge">${esc(r.foot)} foot</span> <span class="badge">no posting</span>
-      <p class="hint" style="margin:6px 0">${r.length_mm} × ${r.width_mm} mm, ${r.height_mm} mm tall · highest arch fill ${r.max_fill_mm} mm ·
+      <p class="hint" style="margin:6px 0">${r.length_mm} × ${r.width_mm} mm, ${r.height_mm} mm tall · highest arch fill ${r.max_fill_mm} mm${r.foot_max_fill_mm > r.max_fill_mm + 0.5
+          ? ` (${r.foot_max_fill_mm} mm under the foot, past the outline's edge)` : ""} ·
         sole seen ${Math.round(100 * r.sole.seen)}% (arch ${Math.round(100 * r.sole.seen_under_arch)}%) · bed: ${esc(r.bed.how)}</p>
-      ${r.shoe?.fit ? `<p class="hint" style="margin:0 0 6px">Outline: the shoe's own insole (${esc(r.shoe.fit.shoe_length_mm)} mm),
+      ${r.generic?.fit ? `<p class="hint" style="margin:0 0 6px">Outline: a generic insole, the same shape for every foot, ${esc(r.generic.length_mm)} mm
+        ${r.shoe_length_mm ? "(the shoe's length)" : "(sized from the scanned foot: enter the shoe's insole length to make it the shoe's size)"},
+        ${esc(r.generic.fit.room_past_toes_mm)} mm past the toes${r.generic.fit.overhang.max_mm > 1
+          ? `; the foot is over its edge by up to ${esc(r.generic.fit.overhang.max_mm)} mm at the ${esc(r.generic.fit.overhang.where)}` : "; the foot is inside it all round"}.</p>`
+      : !r.shoe ? `<p class="hint" style="margin:0 0 6px">Outline: the foot's own${r.shoe_length_mm ? `, lengthened to the shoe's ${esc(r.shoe_length_mm)} mm` : " (no shoe chosen)"}: trim it to the shoe's stock insole.</p>` : ""}
+      ${r.shoe?.fit ? `<p class="hint" style="margin:0 0 6px">Outline: ${r.shoe.name ? esc(r.shoe.name) : "the shoe's own insole"} (${esc(r.shoe.fit.shoe_length_mm)} mm),
         ${esc(r.shoe.fit.room_past_toes_mm)} mm past the toes${r.shoe.fit.overhang.max_mm > 1
           ? `; the foot is over its edge by up to ${esc(r.shoe.fit.overhang.max_mm)} mm at the ${esc(r.shoe.fit.overhang.where)}` : "; the foot is inside it all round"}.</p>` : ""}
       ${warn ? `<ul class="checklist" style="margin:6px 0;color:var(--warn)">${warn}</ul>` : ""}
@@ -216,17 +302,27 @@
     btn.textContent = "Making the insole…";
     let result;
     try {
-      // optional: the shoe's insole length; the front is lengthened to it, the foot-shaped part unchanged
+      // the outline: a shoe's (saved, or a scanned insole), fitted round the foot; or the generic insole outline
+      // or the foot's own, each with the shoe's insole length if given (the generic one is scaled to it as a
+      // whole; the foot's own is lengthened at the front, the foot-shaped part unchanged)
       const len = document.querySelector(`[data-length-for="${CSS.escape(id)}"]`)?.value.trim();
-      // or a scanned shoe's insole: its outline, fitted round the foot
-      const shoe = document.querySelector(`[data-shoe-for="${CSS.escape(id)}"]`)?.value;
+      const pick = document.querySelector(`[data-shoe-for="${CSS.escape(id)}"]`)?.value;
+      const length = len ? { length_mm: Number(len) } : {};
+      const body = pick?.startsWith("saved:") ? { saved_shoe: pick.slice(6) }
+        : pick?.startsWith("scan:") ? { shoe: pick.slice(5) }
+        : pick === "foot" ? { foot_outline: true, ...length }
+        // the generic outline only because nothing else was chosen (no default saved shoe): don't say generic, so
+        // the insole follows a default shoe saved later; chosen on purpose (now or for the last insole): say so
+        : pick === "generic" ? { ...length, ...(picked[id] === "generic" || capture?.insole?.outline === "generic"
+          ? { generic: true } : {}) } : {};
       const r = await fetch(`/api/captures/${encodeURIComponent(id)}/insole`, {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(shoe ? { shoe } : len ? { length_mm: Number(len) } : {}),
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
       });
       const out = await r.json();
       if (!r.ok) throw new Error(out.error || r.status);
       result = out;
+      // remembered only once an insole was made with it (a refused length isn't offered again)
+      if (len && takesLength(pick ?? "generic")) rememberShoeLength(len);
     } catch (err) {
       result = { error: `Couldn't make it: ${err.message}` };
     }

@@ -1369,8 +1369,10 @@ def plausibility(info: dict, report: dict, foot: str | None = None) -> list[str]
     if kind in ("sole_up", "sole_hanging") and info.get("tipped_to_rest_deg", 0) > SOLE_UP_MAX_TIP_DEG:
         out.append(f"the scan had to be tipped {info['tipped_to_rest_deg']:.0f} degrees to rest the sole flat: "
                    "was the sole really facing the ceiling? Check the insole's shape before printing.")
-    if kind != "foot" and foot and report["max_fill_mm"] >= 3:
-        y = report["max_fill_at_mm"]["y"]
+    # the foot's own highest fill, printed or not: where the outline ends doesn't move the arch
+    peak = report.get("foot_max_fill_mm", report["max_fill_mm"])
+    if kind != "foot" and foot and peak >= 3:
+        y = report.get("foot_max_fill_at_mm", report["max_fill_at_mm"])["y"]
         inner = y > 0 if foot == "right" else y < 0
         if not inner:
             out.append(f"THE ARCH IS ON THE OUTSIDE: the highest fill is on the outer side of the {foot} foot. "

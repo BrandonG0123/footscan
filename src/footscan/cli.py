@@ -21,6 +21,7 @@ from pathlib import Path
 
 from .measures import MEASURES, measure_scan
 from .report import SAFETY_BANNER, build_report
+from .shoes import DEFAULT_DIR as SHOES_DIR
 from .repeatability import read_rows
 
 FIELDS = ["foot", "condition", "source", "session", "capture_id", "pick", "load_kg", "measure", "value", "scan_id"]
@@ -178,24 +179,75 @@ def cmd_compare(args) -> int:
     return 0
 
 
+def shoes_folder(parser) -> None:
+    parser.add_argument("--shoes", default=str(SHOES_DIR),
+                        help=f"saved shoes folder (default {SHOES_DIR}; the studio's is <its --data>/shoes)")
+
+
+def insole_outline(args):
+    """What the insole's outline is, from the command line -> (InsoleParams or None, one line saying which).
+
+    ``--shoe``: a saved shoe's id (``footscan shoe list``) or a scan of a shoe's own insole lying flat.
+    ``--length``: the generic insole outline at that length (insole.generic_outline). Neither: the default saved
+    shoe, if there is one (``footscan shoe default``); else the generic insole outline sized from the foot.
+    ``--foot-outline``: the foot's own outline instead (with ``--length``, its front lengthened)."""
+    from . import shoes
+    from .insole import InsoleParams
+    from .recon import shoe
+    from .recon.imported import load_geometry
+
+    folder = Path(args.shoes)
+    sid = None
+    # One way to set the outline, as the studio's Make insole takes one: a shoe's outline sets the length itself
+    if args.shoe and args.length:
+        raise ValueError("give --shoe or --length, not both (a shoe's outline is its own length)")
+    if args.shoe and args.foot_outline:
+        raise ValueError("give --shoe or --foot-outline, not both")
+    if args.shoe and not Path(args.shoe).exists():
+        if looks_like_a_path(args.shoe):  # e.g. a mistyped scan's name: say the file isn't there
+            raise ValueError(f"--shoe {args.shoe}: no such file (a saved shoe's id has no dots or slashes: "
+                             f"footscan shoe list)")
+        sid = args.shoe  # not a file: a saved shoe's id
+    elif args.shoe:
+        outline, info = shoe.outline_from_scan(load_geometry(args.shoe), up=args.shoe_up)
+        return (InsoleParams(shoe_outline=shoe.as_param(outline)),
+                f"outline: the shoe's insole scanned in {args.shoe}, {info['length_mm']} x {info['width_mm']} mm"
+                f"{' (on a table)' if info['table_found'] else ''}")
+    elif args.foot_outline:
+        return (InsoleParams(foot_outline=True, target_length_mm=args.length),
+                "outline: the foot's own" + (f", lengthened to {args.length:g} mm" if args.length else ""))
+    elif args.length:
+        return (InsoleParams(target_length_mm=args.length),
+                f"outline: the generic insole outline, {args.length:g} mm long (no shoe's outline)")
+    else:
+        sid = shoes.default_id(folder, strict=True)  # chosen but broken: stop and say so, not another outline
+    if sid is None:
+        return None, ("outline: the generic insole outline, sized from the foot (no default saved shoe: footscan "
+                      "shoe add; or give the shoe's insole length with --length)")
+    s = shoes.load(folder, sid)
+    # shoe_saved: one outline for both feet (mirrored for the other one), so its sheet doesn't warn about mirroring
+    return (InsoleParams(shoe_outline=shoes.outline_param(s), shoe_name=shoes.label(s), shoe_saved=True),
+            f"outline: saved shoe {shoes.label(s)}, {s['length_mm']} x {s['width_mm']} mm"
+            f"{'' if args.shoe else ' (the default)'}")
+
+
+def looks_like_a_path(value: str) -> bool:
+    """A file name (has an extension or a folder in it) rather than a saved shoe's id, which never does."""
+    return bool(Path(value).suffix) or "/" in value or "\\" in value
+
+
 def cmd_insole(args) -> int:
     from .insole import InsoleError, from_scan, write_outputs
     from .recon.imported import load_geometry, to_millimetres
 
+    try:  # the outline first: a problem with the shoe is the shoe's, not the foot scan's
+        params, which = insole_outline(args)
+    except (FileNotFoundError, ValueError) as err:
+        print(f"footscan insole: {err}", file=sys.stderr)
+        return 1
     try:
         mesh, units, _ = to_millimetres(load_geometry(args.mesh))
-        from .insole import InsoleParams
-
-        params = None
-        if args.shoe:
-            from .recon import shoe
-
-            outline, shoe_info = shoe.outline_from_scan(load_geometry(args.shoe), up=args.shoe_up)
-            print(f"shoe's insole: {shoe_info['length_mm']} x {shoe_info['width_mm']} mm"
-                  f"{' (on a table)' if shoe_info['table_found'] else ''}")
-            params = InsoleParams(shoe_outline=shoe.as_param(outline), target_length_mm=args.length)
-        elif args.length:
-            params = InsoleParams(target_length_mm=args.length)
+        print(which)
         ins = from_scan(mesh, args.foot, params)
     except (InsoleError, ValueError) as err:
         print(f"{args.mesh}: {err}", file=sys.stderr)
@@ -211,6 +263,39 @@ def cmd_insole(args) -> int:
     for k, v in files.items():
         print(f"  {k}: {v}")
     print("NOT A MEDICAL DEVICE. No posting. Walking-only break-in; no sport until the summary sheet is signed.")
+    return 0
+
+
+def cmd_shoe(args) -> int:
+    from . import shoes
+    from .recon import shoe
+    from .recon.imported import load_geometry
+
+    folder = Path(args.shoes)
+    try:
+        if args.action == "add":
+            outline, info = shoe.outline_from_scan(load_geometry(args.scan), up=args.up)
+            s = shoes.save(folder, outline, args.name, args.size, Path(args.scan).name, info, default=args.default)
+            print(f"saved {s['id']}: {shoes.label(s)}, {s['length_mm']} x {s['width_mm']} mm"
+                  f" ({s['shoe'] or 'which'} shoe{'' if s['shoe'] else ' unknown'})"
+                  f"{', the default' if args.default else ''}")
+        elif args.action == "default":
+            shoes.set_default(folder, None if args.id == "none" else args.id)
+            print(f"default saved shoe: {shoes.default_id(folder) or 'none (insoles take the generic insole outline)'}")
+        else:
+            try:
+                default = shoes.default_id(folder, strict=True)
+            except shoes.ShoeLibraryError as e:  # still list the shoes, and say what's wrong with the default
+                default = None
+                print(f"footscan shoe: {e}", file=sys.stderr)
+            listed = shoes.listed(folder)
+            for s in listed:
+                print(f"{'*' if s['id'] == default else ' '} {s['id']}: {shoes.label(s)}, {s['length_mm']} x {s['width_mm']} mm")
+            if not listed:
+                print(f"no saved shoes in {folder}")
+    except (ValueError, OSError) as err:  # a ShoeError or ShoeLibraryError; a missing scan, a folder it can't write
+        print(f"footscan shoe: {err}", file=sys.stderr)
+        return 1
     return 0
 
 
@@ -366,12 +451,32 @@ def main(argv=None) -> int:
     ins.add_argument("mesh", help="foot scan in the mat frame (z up, floor at z = 0): mm, cm or m")
     ins.add_argument("--foot", choices=["left", "right"], required=True)
     ins.add_argument("-o", "--output", required=True, help="folder for the files")
-    ins.add_argument("--length", type=float, help="the shoe's insole length, mm: the front is lengthened to it "
-                                                   "(the shape under the heel, arch and ball unchanged)")
-    ins.add_argument("--shoe", help="a scan of the shoe's own insole lying flat (as the iPhone app hands it over): "
-                                    "the insole takes its outline, fitted round the foot")
+    ins.add_argument("--length", type=float, help="the shoe's insole length, mm: the generic insole outline is made "
+                                                   "that long (scaled as a whole; with --foot-outline, the foot's "
+                                                   "outline lengthened at the front)")
+    ins.add_argument("--shoe", help="a saved shoe's id (footscan shoe list), or a scan of the shoe's own insole lying "
+                                    "flat (as the iPhone app hands it over): the insole takes its outline, fitted "
+                                    "round the foot. Without it (or --length), the default saved shoe's")
     ins.add_argument("--shoe-up", default="y", choices=["y", "z"], help="the shoe scan's up axis (default y)")
+    ins.add_argument("--foot-outline", action="store_true",
+                     help="the foot's own outline instead of a shoe's or the generic insole outline")
+    shoes_folder(ins)
     ins.set_defaults(func=cmd_insole)
+
+    sh = sub.add_parser("shoe", help="saved shoes: one fixed insole outline per shoe model and size")
+    shs = sh.add_subparsers(dest="action", required=True)
+    sa = shs.add_parser("add", help="save a shoe from a scan of its own stock insole lying flat")
+    sa.add_argument("scan", help="the insole's scan (as the iPhone app hands it over: OBJ/PLY, metres, Y up)")
+    sa.add_argument("--name", required=True, help='e.g. "ASICS Gel Resolution X"')
+    sa.add_argument("--size", required=True, help='e.g. "US men\'s 9.5"')
+    sa.add_argument("--up", default="y", choices=["y", "z"], help="the scan's up axis (default y)")
+    sa.add_argument("--default", action="store_true", help="make it the default: insoles take its outline")
+    sd = shs.add_parser("default", help="choose the default saved shoe (none: insoles take the generic outline)")
+    sd.add_argument("id", help="a saved shoe's id, or none")
+    sl = shs.add_parser("list", help="the saved shoes (* the default)")
+    for p in (sa, sd, sl):
+        shoes_folder(p)
+    sh.set_defaults(func=cmd_shoe)
 
     cp = sub.add_parser("compare", help="how much two scans of the same foot agree (repeatability)")
     cp.add_argument("a", help="first scan (as the iPhone app hands it over: OBJ/PLY, metres, Y up)")
