@@ -48,6 +48,23 @@ def test_a_perfect_model_from_an_app_comes_back_perfect(table):
     dims = {r["key"]: r for r in a["dimensions"]}
     for k in ("length", "width", "terrace_high", "terrace_low", "dome_apex"):
         assert abs(dims[k]["scan_minus_reference_mm"]) < 0.06, k
+    assert abs(a["scale"]["mean_pct"]) < 0.05 and not any("too small" in w or "too big" in w for w in a["warnings"])
+
+
+@pytest.mark.parametrize("scale", [0.95, 1.05])
+def test_a_model_five_percent_off_still_has_its_length_measured_and_its_scale_reported(scale):
+    """SYNTHETIC: the right-foot scan read ~5% short of a ruler (2026-11-05), so the calibration object may too.
+    The rigid alignment lined one end up and left the other wall 7.5 mm out, past the old +-6 mm window: the length,
+    the number that says whether the scan is scaled, came back unmeasured for a model 5% small."""
+    a = imported.evaluate_imported(_as_exported(scale=scale), up="y")
+    dims = {r["key"]: r for r in a["dimensions"]}
+    assert dims["length"]["scan_minus_reference_mm"] == pytest.approx(150.0 * (scale - 1), abs=0.15)
+    assert a["scale"]["length_pct"] == pytest.approx(100 * (scale - 1), abs=0.1)
+    assert a["scale"]["width_pct"] == pytest.approx(100 * (scale - 1), abs=0.15)
+    assert a["scale"]["same_way"]
+    assert any(f"the scan reads 5.0% too {'small' if scale < 1 else 'big'}" in w and "whole scan is scaled" in w
+               for w in a["warnings"])
+    assert imported.summarize(a)["scale_pct"] == a["scale"]["mean_pct"]
 
 
 def test_a_model_one_percent_too_big_reports_one_percent_too_big():

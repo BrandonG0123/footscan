@@ -227,6 +227,7 @@ def summarize(report: dict) -> dict:
         median_mm=dev["median_mm"], p95_mm=dev["p95_mm"], signed_mean_mm=dev["signed_mean_mm"],
         within_1mm=report["completeness"]["within_1mm"], scan_within_2mm=report["registration"]["scan_within_2mm"],
         length_mm=dims.get("length"), width_mm=dims.get("width"), dome_apex_mm=dims.get("dome_apex"),
+        scale_pct=(report.get("scale") or {}).get("mean_pct"),
         reference="calipers" if any(r.get("caliper_mm") is not None for r in report["dimensions"]) else "model",
         floor=report["imported"]["floor"], warnings=report["warnings"],
     )
