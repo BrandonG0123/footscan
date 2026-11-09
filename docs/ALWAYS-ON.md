@@ -70,7 +70,21 @@ prints the start-up file for this computer, filled in with this checkout's
 paths, and the numbered steps to install it. It installs nothing itself.
 
 - **Windows** (tank): a service through NSSM, plus a firewall rule for Private
-  networks only. Keep the data folder's path free of spaces. **First check `nssm status Footscan`**: if a service by that name
+  networks only. The commands copy `nssm.exe` to `C:\Program Files\nssm` first:
+  it is the service's own program, and every `nssm` you type later runs it as
+  administrator, so it must not sit in your own folder, where winget puts it. (A service installed from winget's copy: copy `nssm.exe` there, then point the
+  service at it with
+  `Set-ItemProperty HKLM:\SYSTEM\CurrentControlSet\Services\Footscan ImagePath '"C:\Program Files\nssm\nssm.exe"'`
+  and `nssm restart Footscan`; its settings stay. The quotes inside the value
+  matter: unquoted, Windows may try to run `C:\Program.exe` instead. Check it
+  with `sc.exe qc Footscan`.) The commands also put `C:\Program Files\nssm`
+  first on the computer's own PATH, so a later `nssm` in an Administrator
+  PowerShell runs that copy and never winget's. The studio itself runs as
+  Windows' **Local Service** account, not LocalSystem: the checkout and its
+  `.venv` are yours to change (git pull, pip install), so whatever is in them
+  must not run with full control of the computer. Local Service gets read
+  access to the checkout and to the Python the `.venv` runs on, and write
+  access to the data folder only. Keep the data folder's path free of spaces. **First check `nssm status Footscan`**: if a service by that name
   already exists, it's the public deploy from DEPLOY-TANK.md on the same port.
   Stop and decide which one tank should run; two can't share port 8765.
 - **macOS**: a LaunchAgent. It runs while your account is logged in, so turn on
@@ -170,6 +184,36 @@ cd ~/footscan && git pull
 Then restart the service: `nssm restart Footscan` (Windows),
 `launchctl kickstart -k gui/$(id -u)/dev.footscan.server` (macOS),
 `systemctl --user restart footscan` (Linux).
+
+**A Windows service installed before it ran as Local Service** (tank's, until
+this is done): in an Administrator PowerShell, paste the PATH lines and the
+three `icacls` lines from `footscan service --system windows`, then
+`nssm set Footscan ObjectName "NT AUTHORITY\LocalService"` and
+`nssm restart Footscan`. `sc.exe qc Footscan` should then show
+`SERVICE_START_NAME : NT AUTHORITY\LocalService`. Open the studio and make an
+insole to check it still works; if `server.log` says *Access is denied*, a
+folder it needs wasn't granted (not yet tried on tank).
+
+Local Service can only read the checkout, so the studio can't make a new
+`.studio_key` or certificate there. To change the key (or the certificate),
+`nssm stop Footscan`, delete `.studio_key` (or `.certs`), start `footscan serve
+--host 0.0.0.0 --https` once as yourself to make new ones, stop it, then `nssm
+start Footscan` and pair the phone again. If the service can't write the key,
+`server.log` says so.
+
+**On Windows, use these steps instead: they stop the service first.** The running
+service holds `.venv\Scripts\footscan.exe` open, so `pip install -e .` can't
+replace it, and pip's rollback leaves footscan half uninstalled: the next start
+can't find it. In an Administrator PowerShell:
+
+```powershell
+cd C:\srv\footscan; git pull
+nssm stop Footscan
+.venv\Scripts\python -m pip install -e ".[recon]"    # only if dependencies changed
+nssm start Footscan
+```
+
+Installing other packages (pytest, for example) is fine while it runs.
 
 ## Good to know
 

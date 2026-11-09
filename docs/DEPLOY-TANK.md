@@ -96,15 +96,34 @@ public.
 ## Step 3 — Run it as a service
 
 tank reboots weekly; a window someone has to reopen isn't good enough. With
-NSSM (already used for Caddy in the site brief):
+NSSM (already used for Caddy in the site brief), in an Administrator
+PowerShell. As in [ALWAYS-ON.md](ALWAYS-ON.md): nssm runs from
+`C:\Program Files\nssm` (only an administrator can change it, and it's first
+on the computer's PATH), the studio runs as Local Service (not LocalSystem, so
+code in the checkout can't take over the computer), and in Python's UTF-8 mode
+(Windows' own cp1252 can't write characters like √ and crashes on them):
 
 ```powershell
+New-Item -ItemType Directory -Force "C:\Program Files\nssm" | Out-Null
+if (-not (Test-Path "C:\Program Files\nssm\nssm.exe")) { Copy-Item (Get-Command nssm).Source "C:\Program Files\nssm\nssm.exe" -ErrorAction Stop }
+$machine = [Environment]::GetEnvironmentVariable("Path", "Machine")
+if (($machine -split ";") -notcontains "C:\Program Files\nssm") { [Environment]::SetEnvironmentVariable("Path", "C:\Program Files\nssm;" + $machine, "Machine") }
+$env:Path = "C:\Program Files\nssm;" + $env:Path
+$py = & "C:\srv\brandongreene-site\apps\footscan\.venv\Scripts\python.exe" -c "import sys; print(sys.base_prefix)"
+icacls "C:\srv\brandongreene-site\apps\footscan" /grant "*S-1-5-19:(OI)(CI)RX"
+icacls $py /grant "*S-1-5-19:(OI)(CI)RX"
+icacls "C:\srv\footscan-data" /grant "*S-1-5-19:(OI)(CI)M"
 nssm install Footscan "C:\srv\brandongreene-site\apps\footscan\.venv\Scripts\footscan.exe" "serve --public --port 8765 --data C:/srv/footscan-data"
+nssm set Footscan ObjectName "NT AUTHORITY\LocalService"
 nssm set Footscan AppDirectory "C:\srv\brandongreene-site\apps\footscan"
+nssm set Footscan AppEnvironmentExtra PYTHONUTF8=1
 nssm set Footscan AppStdout "C:\srv\footscan-data\server.log"
 nssm set Footscan AppStderr "C:\srv\footscan-data\server.log"
 nssm start Footscan
 ```
+
+(`sc.exe qc Footscan` should show the Program Files nssm, in quotes, and
+`NT AUTHORITY\LocalService`.)
 
 ## Step 4 — Add it to the tunnel
 
@@ -162,11 +181,17 @@ service isn't set up right.
 
 ## Updating
 
+Stop the service **before** reinstalling: the running service holds
+`.venv\Scripts\footscan.exe` open, so `pip install -e` can't replace it, and
+pip's rollback leaves footscan half uninstalled (the next start can't find
+it; this happened on tank once). In an Administrator PowerShell:
+
 ```powershell
 cd C:\srv\brandongreene-site
 git pull
+nssm stop Footscan
 apps\footscan\.venv\Scripts\python -m pip install -e "apps\footscan[recon]"   # only if dependencies changed
-nssm restart Footscan
+nssm start Footscan
 ```
 
 ## Good to know
