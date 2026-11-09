@@ -463,7 +463,8 @@ def _write_packet(data_dir, folder, meta, made, spec, work, out, read_json) -> N
         synthetic=bool(report.get("synthetic")), spec=spec,
         insole=dict(length_mm=report["length_mm"], width_mm=report["width_mm"], height_mm=report["height_mm"],
                     volume_cm3=report.get("volume_cm3"), max_fill_mm=report["max_fill_mm"],
-                    max_fill_at_mm=report.get("max_fill_at_mm"), sole=report.get("sole"),
+                    max_fill_at_mm=report.get("max_fill_at_mm"), foot_max_fill_mm=report.get("foot_max_fill_mm"),
+                    foot_max_fill_at_mm=report.get("foot_max_fill_at_mm"), sole=report.get("sole"),
                     shoe_fit=report.get("shoe_fit"), shoe_name=report.get("shoe_name"),
                     outline_from=report.get("outline_from"), warnings=report.get("warnings", []),
                     frame=report.get("frame")),
@@ -514,6 +515,9 @@ def packet_markdown(p: dict) -> str:
               f"- {i['length_mm']} x {i['width_mm']} x {i['height_mm']} mm, {i['volume_cm3']} cm3.",
               f"- Highest fill {i['max_fill_mm']} mm at x {i['max_fill_at_mm']['x']}, y {i['max_fill_at_mm']['y']} mm "
               f"({i['frame']}).",
+              *([f"- The foot's own highest fill is {i['foot_max_fill_mm']} mm, at x {i['foot_max_fill_at_mm']['x']}, "
+                 f"y {i['foot_max_fill_at_mm']['y']} mm: past the outline's edge, so not printed."]
+                if (i.get("foot_max_fill_mm") or 0) > i["max_fill_mm"] + 0.5 else []),
               f"- Sole seen by the scan: {i['sole']['seen']:.0%} of the footprint, "
               f"{i['sole']['seen_under_arch']:.0%} under the arch." if i.get("sole") else "- Sole coverage: not recorded."]
     if p["other_foot"]:

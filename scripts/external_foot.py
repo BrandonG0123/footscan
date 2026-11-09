@@ -163,12 +163,13 @@ def sanity(report: dict, foot: str) -> list[str]:
     at = report.get("foot_max_fill_at_mm", report["max_fill_at_mm"])  # the foot's own peak, printed or not
     frac = at["x"] / max(length, 1e-9)
     out.append(("ok: " if 0.25 <= frac <= 0.7 else "CHECK: ") +
-               f"highest fill {report['max_fill_mm']} mm at {frac:.0%} of the length from the heel (expected: midfoot)")
+               f"highest fill {report.get('foot_max_fill_mm', report['max_fill_mm'])} mm at {frac:.0%} of the length from "
+               f"the heel (expected: midfoot)")
     # insole frame: y toward the foot's left, so the inner (arch) side is +y for a right foot, -y for a left
     inner = at["y"] > 0 if foot == "right" else at["y"] < 0
     out.append(("ok: " if inner else "CHECK: ") +
                f"highest fill on the {'inner' if inner else 'outer'} side (y = {at['y']} mm)" +
-               ("" if inner or report["max_fill_mm"] < 1 else f": is this really a {foot} foot? check --foot"))
+               ("" if inner or report.get("foot_max_fill_mm", report["max_fill_mm"]) < 1 else f": is this really a {foot} foot? check --foot"))
     if any("clipped" in w for w in report["warnings"]):
         out.append("CHECK: the safety caps clipped the fill (an unloaded foot's arch is higher than a standing one's)")
     return out

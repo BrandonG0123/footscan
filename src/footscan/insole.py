@@ -398,7 +398,7 @@ def build(foot_mesh, foot: str, params: InsoleParams | None = None) -> Insole:
     X, Y = np.meshgrid(xs, ys, indexing="xy")
     in_sil = shapely.contains_xy(sil, X, Y)
     in_cup = shapely.contains_xy(cup_sil, X, Y)
-    in_out = shapely.contains_xy(outline.buffer(1.0), X, Y)
+    in_out = shapely.contains_xy(outline, X, Y)  # printed: the outline itself
 
     # 1. the sole, under the foot only
     H, S, Zhit = sole_heights(m, xs, ys, in_sil, with_hit_z=True)
@@ -431,7 +431,7 @@ def build(foot_mesh, foot: str, params: InsoleParams | None = None) -> Insole:
     # a shoe's footbed curves up into its sides, and a square-edged insole would dig into the curve
     t = np.clip((X - (x0 + p.taper_from * length)) / ((1 - p.taper_from) * length), 0, 1)
     base = p.base_mm + (p.toe_base_mm - p.base_mm) * t
-    d_in = ndimage.distance_transform_edt(shapely.contains_xy(outline, X, Y)) * GRID_MM
+    d_in = ndimage.distance_transform_edt(in_out) * GRID_MM
     b = np.clip(d_in / p.edge_bevel_mm, 0, 1)
     bevel = p.edge_mm + (base - p.edge_mm) * b * b * (3 - 2 * b)
     base = np.where(w_heel > 0, base, np.minimum(base, bevel))  # the heel keeps its full base under the cup wall
@@ -468,16 +468,13 @@ def build(foot_mesh, foot: str, params: InsoleParams | None = None) -> Insole:
     inside_seen = float(np.mean((st == 0) & (Zhit[in_sil] > HOLE_ABOVE_FLOOR_MM)))
     arch_band = in_sil & (X > x0 + 0.3 * length) & (X < x0 + 0.65 * length)
     arch_seen = float(np.mean(S[arch_band] == 1)) if arch_band.any() else 0.0
-    # the highest fill under the foot, where the scan puts it (the plausibility checks read which side it's on, so
-    # it's the foot's, wherever the outline ends); the clipped-fill note counts only what's printed: under the foot
-    # and inside the outline, to within a grid step or two
+    # what's printed: under the foot and inside the outline (where the foot hangs over a shoe's or the generic
+    # outline nothing is). Its highest fill is the one the sheet, the studio, the review and the command line give,
+    # and the clipped-fill note counts only there. The foot's own peak, printed or not, is kept for which side the
+    # arch is on (the plausibility checks): where the outline ends doesn't move the arch
     on = in_sil & in_out
     peak = np.unravel_index(np.argmax(np.where(in_sil, fill, -1)), fill.shape)
-    # the highest fill the insole has: under the foot and inside the outline itself (where the foot hangs over a
-    # shoe's or the generic outline nothing is printed). The sheet, the studio, the review and the command line give
-    # this one; the foot's own peak above is kept for which side the arch is on
-    printed = in_sil & shapely.contains_xy(outline, X, Y)
-    top_at = np.unravel_index(np.argmax(np.where(printed, fill, -1)), fill.shape) if printed.any() else peak
+    top_at = np.unravel_index(np.argmax(np.where(on, fill, -1)), fill.shape) if on.any() else None
     warnings = []
     if arch_seen < 0.05:
         warnings.append("the scan saw almost none of the sole under the arch, so the insole is flat there. "
@@ -505,11 +502,11 @@ def build(foot_mesh, foot: str, params: InsoleParams | None = None) -> Insole:
         sole=dict(seen=round(seen, 3), resting_on_floor=round(contact, 3), holes=round(holes, 3),
                   open_above=round(inside_seen, 3),
                   seen_under_arch=round(arch_seen, 3)),
-        max_fill_mm=round(float(fill[top_at]), 2),
-        max_fill_at_mm=dict(x=round(float(X[top_at]), 1), y=round(float(Y[top_at]), 1)),
+        max_fill_mm=round(float(fill[top_at]), 2) if top_at else 0.0,
+        max_fill_at_mm=dict(x=round(float(X[top_at or peak]), 1), y=round(float(Y[top_at or peak]), 1)),
         # under the whole foot, printed or not: higher than max_fill_mm where the foot's highest point hangs over
         # the outline's edge; where it is says which side the arch is on (foot_prep.plausibility)
-        foot_max_fill_mm=round(float(fill[in_sil].max()), 2),
+        foot_max_fill_mm=round(float(fill[peak]), 2),
         foot_max_fill_at_mm=dict(x=round(float(X[peak]), 1), y=round(float(Y[peak]), 1)),
         bed_fit=bed_fit_shape(np.asarray(mesh.vertices)[:, :2], p.bed_mm),
         shoe_fit=shoe_fit,

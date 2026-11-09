@@ -110,7 +110,7 @@ def test_wide_and_narrow_feet_get_the_same_outline_and_a_wide_foot_is_told_where
 
 def test_the_sheet_gives_the_highest_fill_on_the_printed_insole_when_the_foots_is_past_the_outline():
     """A wide foot's highest arch fill can lie where the foot hangs over the generic outline: nothing is printed
-    there, so the sheet gives the highest printed fill too (SYNTHETIC: 13.99 under the foot, 11.86 on the insole)."""
+    there, so the sheet gives the highest printed fill too (SYNTHETIC: 13.99 under the foot, 11.71 on the insole)."""
     wide = insole.build(_foot(width_scale=1.25), "right", insole.InsoleParams(target_length_mm=275.0))
     r = wide.report
     assert r["max_fill_mm"] < r["foot_max_fill_mm"] - 1.0
