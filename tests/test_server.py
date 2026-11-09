@@ -845,6 +845,8 @@ def test_the_windows_service_finds_its_tailscale_address_on_tailscales_adapter(m
         if cmd[0] == win:  # what the service got: no address
             return subprocess.CompletedProcess(cmd, 1, "", "")
         assert cmd[-1] == srv.WINDOWS_TAILSCALE_ADAPTER
+        # only Tailscale's own adapter, and only while it is up (a 100.x address elsewhere isn't Tailscale's)
+        assert "-Name Tailscale " in cmd[-1] and "$a.Status -eq 'Up'" in cmd[-1]
         return subprocess.CompletedProcess(cmd, 0, "100.113.53.83\r\n", "")
 
     monkeypatch.setattr(srv.subprocess, "run", run)
@@ -909,10 +911,10 @@ def test_powershell_is_never_run_from_a_relative_path(monkeypatch):
     ran = []
     monkeypatch.setattr(srv.subprocess, "run", lambda cmd, **k: ran.append(cmd[0]) or subprocess.CompletedProcess(
         cmd, 0, "100.88.1.2", ""))
-    for root in ("", "Windows", r"D:\Win"):
+    for root in ("", "Windows", r"\Users\Public", "C:", r"D:\Win"):
         monkeypatch.setenv("SystemRoot", root)
         assert srv.windows_tailscale_adapter_ip() == "100.88.1.2"
-    assert ran == [r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe"] * 2 + [
+    assert ran == [r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe"] * 4 + [
         r"D:\Win\System32\WindowsPowerShell\v1.0\powershell.exe"]
 
 

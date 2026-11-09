@@ -1771,7 +1771,9 @@ WINDOWS_TAILSCALE_ADAPTER = ("$a = Get-NetAdapter -Name Tailscale -ErrorAction S
 def windows_tailscale_adapter_ip() -> str | None:
     """The 100.64.0.0/10 address on Windows' "Tailscale" network adapter, while that adapter is up, or None."""
     root = os.environ.get("SystemRoot", "")
-    if not ntpath.isabs(root):  # never a relative path: it would run from the service's (user-writable) folder
+    # Only a full path with a drive (C:\...) or a network share: a relative one, or "\Users\Public" (which
+    # Python before 3.13 counts as absolute), would run powershell.exe from a folder users can write to.
+    if not (ntpath.splitdrive(root)[0] and ntpath.isabs(root)):
         root = r"C:\Windows"
     powershell = ntpath.join(root, r"System32\WindowsPowerShell\v1.0\powershell.exe")
     try:
