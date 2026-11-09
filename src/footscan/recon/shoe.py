@@ -308,17 +308,26 @@ def fit_to_foot(shoe, sil, foot: str, heel_gap_mm: float):
     return placed, report
 
 
-def fit_warnings(fit: dict, saved: bool = False) -> list[str]:
+def fit_warnings(fit: dict, saved: bool = False, generic: bool = False) -> list[str]:
     """What the clinician's sheet should say about the fit. ``saved``: the outline is a saved shoe's
     (footscan/shoes.py), kept once from one of the pair's insoles and used for both feet, so mirroring it for the
-    other foot is how it's meant to work and says nothing about the scan."""
+    other foot is how it's meant to work and says nothing about the scan. ``generic``: the outline is the generic
+    insole outline (insole.generic_outline), not any shoe's: one shape for both feet too (so ``saved`` as well), and
+    where the foot is wider than it says nothing about the shoe."""
     w = []
     o = fit["overhang"]
-    if o["max_mm"] > OVERHANG_WARN_MM:
+    if o["max_mm"] > OVERHANG_WARN_MM and generic:
+        w.append(f"the foot is wider than the generic insole outline at the {o['where']}, by up to {o['max_mm']} mm: "
+                 f"the insole stops at its edge there, and nothing under that part of the foot is printed. Past a few "
+                 f"mm, use the shoe's own outline: save the shoe from a scan of its stock insole")
+    elif o["max_mm"] > OVERHANG_WARN_MM:
         w.append(f"the foot is wider than the shoe's insole at the {o['where']}, by up to {o['max_mm']} mm: the "
                  f"insole stops at the shoe's edge there. If the shoe feels tight there too, it's the shoe's size "
                  f"or width, not the insole")
-    if fit["room_past_toes_mm"] < 0:
+    if fit["room_past_toes_mm"] < 0 and generic:
+        w.append(f"the generic insole outline, turned to lie along the foot, ends {-fit['room_past_toes_mm']} mm "
+                 f"short of the toes: give the shoe's insole length again (a longer one), or check the scan's length")
+    elif fit["room_past_toes_mm"] < 0:
         w.append(f"the shoe's insole is {-fit['room_past_toes_mm']} mm shorter than the foot: is this the right "
                  f"shoe, and the whole insole in the scan?")
     elif fit["room_past_toes_mm"] > ROOM_WARN_MM:

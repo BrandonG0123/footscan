@@ -191,7 +191,8 @@ def main(argv=None) -> int:
     ply = out / "foot-on-mat.ply"
     placed.export(ply)
 
-    ins = insole.from_scan(placed, args.foot)
+    # the foot's own outline: the checks below are about how the scan was read, not about an outline round it
+    ins = insole.from_scan(placed, args.foot, insole.InsoleParams(foot_outline=True))
     label = args.label or f"{Path(args.mesh).name} (external scan, not the wearer's foot)"
     files = insole.write_outputs(ins, out, f"{args.foot}-insole", label, synthetic=True)
     checks = sanity(ins.report, args.foot)

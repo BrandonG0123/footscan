@@ -94,10 +94,62 @@ differently, still replaces it.
 
 No saved shoe exists yet: the stock ASICS insole hasn't been scanned.
 
-`--length 270` lengthens the insole to a shoe's insole length (mm): only the
-flat front reaches further, the shape under the heel, arch and ball stays
-where the foot is, and it's never made shorter than the foot. In the studio
-it's the *Shoe insole length* box on the scan's card.
+## Without a saved shoe: the generic insole outline
+
+With no saved shoe (and no shoe's-insole scan), the outline is the
+**generic insole outline** (`insole.generic_outline`), not the foot's. It's
+one fixed shoe-insole shape, the same for every foot: a rounded heel, the
+widest part across the ball, the big-toe end furthest forward, and an inner
+side that runs nearly straight from the heel to the ball (a flat foot's arch
+reaches the floor there, and the arch support has to sit on the insole, not
+past its edge). Its proportions are a judgment, not measured from a shoe:
+drawn to a men's running-shoe sock liner, 275 mm long, 78 mm across the heel
+(the first real foot scan's heel was 71 mm across near the floor, 74 mm at
+the cup's height: below) and about 103 mm across the ball (0.38 of the
+length). For comparison, Menz
+et al. 2014 (J Foot Ankle Res 7:3) measured shoe lasts 278.7 mm long and
+95.6 mm across the ball (0.343); an insole is a little wider than its last's
+bottom. A saved shoe (a scan of the real stock insole) replaces it for that
+shoe.
+
+It's sized, never stretched: the whole shape is scaled to the length, so
+a 300 mm insole is the 275 mm one made 9% bigger every way. The length is:
+
+- `--length 275` (in the studio, the *shoe insole, mm* box): the shoe's
+  insole length. Use this: the outline is then the shoe's size whatever the
+  scan reads.
+- nothing: the foot's length as scanned plus 12 mm past the toes (a
+  judgment: the owner's right foot, 260 mm standing, in its 275 mm chart
+  insole leaves 15). The sheet and the studio say it was sized from the
+  scan and ask for the shoe's length: a scan that reads short makes it short
+  too (the right-foot sole-up scan LIDAR_nwb_relaxed_R_20261027-151404-2349,
+  243.7 mm, read about 12 mm, 5%, short of the owner's careful ruler
+  measurement of 2026-11-05, 256 mm seated in the same sock; the rough
+  reading of 2026-11-01, 10.5 in, made it 8.4%).
+
+It's placed round the foot as a saved shoe's outline is (below); where the
+foot is wider than it, the insole stops at its edge and the sheet says where
+and by how much. A length shorter than the foot is refused. On the SYNTHETIC
+test foot (synth.curved_foot, unusually wide at 0.40 of its length) the
+foot is over the edge by 4-6 mm, and 17-22 mm when made 25% wider
+(2026-11-09): a foot that wide needs its shoe's own outline (a saved shoe).
+
+Why: the foot's own outline gave insoles the foot's proportions, and worse
+ones when lengthened. On SYNTHETIC test feet (`tests/test_insole_shape.py`,
+synth.curved_foot, 2026-11-09): a foot 25% longer at the same width got an
+insole 0.33 of its length across the ball; the same foot at 80% size,
+lengthened to 275 mm at the front, 0.28 (76 mm across the ball: the "french
+fry"). With the generic outline every one of them is 0.375-0.381 (and 0.284-0.287
+across the heel), left or right, sized from the foot or at 275 mm; the tests
+hold every outline to 0.33-0.42 across the ball and 0.22-0.29 across the
+heel (a judgment of a normal insole's plan shape).
+
+`--foot-outline` (in the studio, *Outline: the foot's own*) still cuts the
+insole to the foot's own outline, and with `--length` lengthens only its
+flat front: the shape under the heel, arch and ball stays where the foot
+is. Insoles made before the generic outline was the default, cut to the
+foot's own outline without asking for it, show as stale in the studio
+("made again, it gets the generic insole outline").
 
 `--shoe shoe-insole.obj` goes further: the insole takes the outline of the
 shoe's own insole, from a scan of it lying flat on a table (the app's

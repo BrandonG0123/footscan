@@ -163,8 +163,8 @@ def default_id(folder: Path, strict: bool = False) -> str | None:
 
     A default that was chosen but can't be used (its file is gone or can't be read, or default.txt itself is
     garbled) is None too, unless ``strict``: then it raises ShoeLibraryError saying so. Making an insole asks
-    strictly, so a broken default stops it with that message rather than quietly cutting the insole to the
-    foot's own outline (the scan's size, not the shoe's)."""
+    strictly, so a broken default stops it with that message rather than quietly cutting the insole to another
+    outline (the generic insole outline, not this shoe's)."""
     f = Path(folder) / DEFAULT_FILE
     if not f.is_file():
         return None
@@ -177,12 +177,12 @@ def default_id(folder: Path, strict: bool = False) -> str | None:
         if not strict:
             return None
         raise ShoeLibraryError(f"the default saved shoe can't be used ({e}). Save it again, or choose another "
-                               f"(footscan shoe default <id>, or none for the foot's own outline)") from None
+                               f"(footscan shoe default <id>, or none for the generic insole outline)") from None
     return sid
 
 
 def set_default(folder: Path, sid: str | None) -> None:
-    """Make a saved shoe the default (None: no default; insoles then follow the foot's outline)."""
+    """Make a saved shoe the default (None: no default; insoles then take the generic insole outline)."""
     f = Path(folder) / DEFAULT_FILE
     if sid is None:
         f.unlink(missing_ok=True)

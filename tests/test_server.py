@@ -952,7 +952,8 @@ def test_studio_makes_a_first_fit_insole_from_an_imported_foot(servers):
     assert call(f"{op}/api/captures/{cid}/mesh?ext=obj&up=y", "PUT", _object_capture_foot("left"),
                 {"Content-Type": "application/octet-stream"})[0] == 200
     assert call(f"{phone}/api/captures/{cid}/insole", "POST", {})[0] == 403  # studio only
-    st, raw, _ = call(f"{op}/api/captures/{cid}/insole", "POST", {})
+    # the block foot is a rectangle, square toes and all: the foot's own outline, so the whole sole is on it
+    st, raw, _ = call(f"{op}/api/captures/{cid}/insole", "POST", {"foot_outline": True})
     assert st == 200, raw
     r = json.loads(raw)
     assert r["foot"] == "left" and r["max_fill_mm"] == pytest.approx(11.0, abs=0.6) and r["warnings"] == []
@@ -984,7 +985,8 @@ def test_studio_makes_an_insole_from_a_foam_print_without_a_scale_reading(server
     st, raw, _ = call(f"{op}/api/captures/{cid}/insole", "POST", {})
     assert st == 200, raw
     r = json.loads(raw)
-    assert r["max_fill_mm"] == pytest.approx(11.0, abs=0.1) and r["warnings"] == []
+    assert r["max_fill_mm"] == pytest.approx(11.0, abs=0.1) and r["outline_shape"] == "generic"
+    assert [w for w in r["warnings"] if "wider than the generic insole outline" not in w] == []
     assert b"foam print" in call(f"{op}/api/captures/{cid}/insole/summary.html")[1]
     for name in ("insole-preview.bin", "insole-preview-sole.bin"):  # the studio's 3-D preview
         st, data, _ = call(f"{op}/api/captures/{cid}/insole/{name}")
@@ -1090,7 +1092,8 @@ def test_a_failed_save_counts_as_a_failed_build(servers, monkeypatch):
 
 
 def test_make_insole_can_lengthen_to_a_shoe(servers):
-    """POST {length_mm}: the insole reaches the shoe's length; nonsense lengths are refused."""
+    """POST {length_mm}: the generic insole outline at the shoe's length (scaled as a whole); with
+    {foot_outline: true} too, the foot's own outline lengthened at the front; nonsense lengths are refused."""
     op, _, _ = servers
     cid = body(call(f"{op}/api/captures", "POST", {"condition": "swb", "foot": "right", "session": "LIDAR",
                                                     "load_kg": 30, "method": "imported_mesh"}))["id"]
@@ -1099,8 +1102,17 @@ def test_make_insole_can_lengthen_to_a_shoe(servers):
     st, raw, _ = call(f"{op}/api/captures/{cid}/insole", "POST", {"length_mm": 275})
     assert st == 200, raw
     r = json.loads(raw)
-    assert r["length_mm"] == pytest.approx(275, abs=0.6) and r["shoe_length_mm"] == 275
-    assert any("lengthened to 275 mm" in w for w in r["warnings"])
+    # a length alone: the generic outline at that length, recorded as no outline chosen (a default saved later
+    # takes over); asked for by name, recorded as chosen
+    assert r["shoe_length_mm"] == 275 and r["outline"] == "default" and r["outline_shape"] == "generic"
+    assert r["generic"]["length_mm"] == pytest.approx(275, abs=0.1) and r["shoe"] is None
+    assert r["length_mm"] == pytest.approx(275, abs=6)  # along the foot: the outline may be turned a few degrees
+    assert not any("lengthened to" in w for w in r["warnings"])
+    named = body(call(f"{op}/api/captures/{cid}/insole", "POST", {"length_mm": 275, "generic": True}))
+    assert named["outline"] == "generic" and named["generic"]["length_mm"] == r["generic"]["length_mm"]
+    own = body(call(f"{op}/api/captures/{cid}/insole", "POST", {"length_mm": 275, "foot_outline": True}))
+    assert own["length_mm"] == pytest.approx(275, abs=0.6) and own["outline"] == "foot" and own["generic"] is None
+    assert any("lengthened to 275 mm" in w for w in own["warnings"])
     assert call(f"{op}/api/captures/{cid}/insole", "POST", {"length_mm": 9})[0] == 400
     assert call(f"{op}/api/captures/{cid}/insole", "POST", {"length_mm": "nine"})[0] == 400
 
@@ -1178,10 +1190,11 @@ def test_a_saved_shoe_is_the_default_outline_for_every_new_insole(servers):
                 synth.shoe_insole().export(file_type="obj").encode(), {"Content-Type": "application/octet-stream"})[0] == 200
 
     assert body(call(f"{op}/api/shoes")) == {"shoes": [], "default": None, "default_problem": None}
-    plain = body(call(f"{op}/api/captures/{foot}/insole", "POST", {}))  # no saved shoe yet: the foot's outline
+    plain = body(call(f"{op}/api/captures/{foot}/insole", "POST", {}))  # no saved shoe yet: the generic outline
     # recorded as "the default" (there was none), not as a choice of the foot's outline: once a default is
     # saved, this card's menu and Remake follow it instead of cutting the foot's outline again
     assert plain["shoe"] is None and plain["length_mm"] < 265 and plain["outline"] == "default"
+    assert plain["outline_shape"] == "generic" and plain["generic"]["length_mm"] < 265  # sized from the foot
 
     new = {"capture": shoe, "name": "Test Trainer", "size": "US men's 9.5", "default": True}
     st, raw, _ = call(f"{op}/api/shoes", "POST", new)
@@ -1199,8 +1212,12 @@ def test_a_saved_shoe_is_the_default_outline_for_every_new_insole(servers):
     assert r["outline"] == "saved"
     assert r["length_mm"] == pytest.approx(271, abs=2)
     assert "Test Trainer" in call(f"{op}/api/captures/{foot}/insole/summary.html")[1].decode()
+    generic = body(call(f"{op}/api/captures/{foot}/insole", "POST", {"generic": True}))  # chosen over the default
+    assert generic["shoe"] is None and generic["outline"] == "generic" and generic["length_mm"] == plain["length_mm"]
+    assert call(f"{op}/api/captures/{foot}/insole", "POST", {"generic": True, "saved_shoe": s["id"]})[0] == 400
+    assert call(f"{op}/api/captures/{foot}/insole", "POST", {"generic": True, "foot_outline": True})[0] == 400
     own = body(call(f"{op}/api/captures/{foot}/insole", "POST", {"foot_outline": True}))
-    assert own["shoe"] is None and own["length_mm"] == plain["length_mm"] and own["outline"] == "foot"
+    assert own["shoe"] is None and own["generic"] is None and own["outline"] == "foot" and own["outline_shape"] == "foot"
     # recorded, so the studio's menu shows "the foot's own" for this card after a reload, not the default shoe
     mine = [c for c in body(call(f"{op}/api/captures")) if c["capture_id"] == foot][0]
     assert mine["insole"]["outline"] == "foot"
@@ -1772,7 +1789,8 @@ def test_an_insole_whose_source_cant_be_read_is_not_downloadable_and_the_review_
         d = tmp_path / "captures" / cid
         (d / "insole").mkdir(parents=True)
         (d / "insole" / "insole.json").write_text("{}", encoding="utf-8")
-        server.write_json(d / "capture.json", {"capture_id": cid, "insole": {"made": "x", "source": "m"}})
+        server.write_json(d / "capture.json", {"capture_id": cid, "insole": {"made": "x", "source": "m",
+                                                                             "outline_shape": "generic"}})
 
     def source(folder, meta):
         if folder.name == "A":
@@ -2007,3 +2025,17 @@ def test_a_studio_that_cant_write_its_key_says_how_to_make_it(monkeypatch):
     monkeypatch.setattr(server, "load_studio_key", read_only)
     with pytest.raises(SystemExit, match="Start footscan serve once as yourself"):
         server.serve()
+
+
+def test_an_insole_cut_to_the_foots_outline_by_default_is_stale_now_that_the_default_is_the_generic_outline():
+    """Made before the generic insole outline was the default: cut to the foot's own outline without asking (or
+    lengthened at the front for a shoe's length), it can be the long thin shape the generic outline replaces."""
+    from footscan.server import STALE_MESSAGES, _old_default_outline
+
+    assert _old_default_outline({"made": "x"})                                  # before outlines were recorded
+    assert _old_default_outline({"outline": "default"})                         # nothing asked, no saved shoe
+    assert _old_default_outline({"outline": "foot", "shoe_length_mm": 275.0})   # the foot's, lengthened
+    assert not _old_default_outline({"outline": "foot", "shoe_length_mm": None})  # the foot's own, chosen
+    assert not _old_default_outline({"outline": "saved", "shoe": {"saved": "x"}})
+    assert not _old_default_outline({"outline": "default", "outline_shape": "generic"})
+    assert "generic insole outline" in STALE_MESSAGES["outline"]

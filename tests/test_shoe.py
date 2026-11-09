@@ -63,7 +63,7 @@ def test_the_insole_takes_the_shoes_outline_and_keeps_the_foots_shape_inside_it(
     from footscan import insole
 
     foot = synth.curved_foot("right", leg=False)
-    plain = insole.from_scan(foot, "right")
+    plain = insole.from_scan(foot, "right", insole.InsoleParams(foot_outline=True))
     # a roomy shoe: this test foot's toes end in a broad 56 mm half circle, wider than most toe boxes
     fitted = insole.from_scan(foot, "right", insole.InsoleParams(shoe_outline=_outline_param(ball=114.0)))
     fit = fitted.report["shoe_fit"]

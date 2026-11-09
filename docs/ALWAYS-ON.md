@@ -155,7 +155,7 @@ you have one.
 
 | Check | PASS when | Why |
 |---|---|---|
-| `length` | within ±1 mm of the shoe's length (for an insole cut to a shoe's outline, that outline's length) | an insole built without the shoe length comes out at the foot's own length |
+| `length` | within ±1 mm of the shoe's length (for an insole cut to a shoe's outline, that outline's length; for the generic insole outline, its own length against the spec's) | an insole built without the shoe length comes out at the scanned foot's length |
 | `shoe` | a saved shoe's name and size are the spec's | an insole cut to another shoe |
 | `shoe_length` | the shoe's outline within ±5 mm of the spec's chart length (a judgment, not measured) | a stock insole scanned at the wrong scale, or another size, makes insoles that match it but not the shoe |
 | `pair_length` | left and right within ±1 mm of each other (cut to a shoe's outline: the outlines' own lengths, as each is turned a little to its foot) | both feet are built to the same shoe |

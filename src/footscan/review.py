@@ -128,7 +128,20 @@ def checks(ins_dir: Path, meta: dict, report: dict, mesh, spec: dict, other: dic
     tol = float(spec["length_tolerance_mm"])
     length = float(report["length_mm"])
     fit, shoe_name = report.get("shoe_fit"), report.get("shoe_name")
-    if fit:
+    if fit and report.get("outline_from") == "generic":
+        # The generic insole outline (the same shape for every foot, scaled to a length): made at the shoe's length
+        # it matches the spec's chart length. Its own length, not along the foot (it's turned to the foot by up to
+        # 10 degrees, which shortens it along the foot by a few mm). Sized from the foot instead, it misses: rebuild
+        # it with the shoe's length
+        # The file against the outline it was cut to, as placed along the foot, too: a file scaled or built another
+        # way misses that, whatever the outline's own length says
+        target = float(spec["target_length_mm"])
+        own, placed = outline_length(fit), float(fit["shoe_length_mm"])
+        add("length", abs(own - target) <= tol and abs(length - placed) <= tol,
+            f"the generic insole outline is {own:.1f} mm long; {spec['shoe']}, {spec['size']}: {target:.1f} mm "
+            f"({spec['target_length_source']}); the file is {length:.1f} mm along the foot, the outline as placed "
+            f"{placed:.1f} mm; allowed ±{tol:g} mm")
+    elif fit:
         # Cut to a shoe's outline (a saved shoe, or a shoe's-insole scan): the insole is checked against that
         # outline, the one it was made to match, not the spec's size-chart length. A miss means the file was
         # scaled or built another way.
@@ -471,6 +484,9 @@ def outline_line(i: dict) -> str:
     fit = i.get("shoe_fit")
     if not fit:
         return "the foot's own (no shoe's outline): trim it to the shoe's stock insole, or rebuild it with a saved shoe."
+    if i.get("outline_from") == "generic":
+        return (f"the generic insole outline (the same shape for every foot), {outline_length(fit):g} mm long: check it "
+                f"against the shoe's stock insole, or rebuild it with a saved shoe.")
     which = f"the saved shoe {i['shoe_name']}" if i.get("shoe_name") else "a scan of the shoe's own insole"
     return f"{which}, {outline_length(fit):g} mm long{' (mirrored for this foot)' if fit.get('mirrored') else ''}."
 
@@ -490,7 +506,7 @@ def packet_markdown(p: dict) -> str:
               f"- review-spec.json: {s['shoe']}, {s['size']}, insole length {s['target_length_mm']:g} mm "
               f"({s['target_length_source']})"
               + (f". An insole cut to a shoe's outline is checked against that outline's length, and the outline against "
-                 f"this length within ±{s['shoe_length_tolerance_mm']:g} mm" if i.get("shoe_fit")
+                 f"this length within ±{s['shoe_length_tolerance_mm']:g} mm" if i.get("shoe_fit") and i.get("outline_from") != "generic"
                  else "."),
               f"- Slice in {s['slicer']} at **{s['slicer_scale_percent']}% scale**. Never rescale the model in the "
               "slicer: if the size is wrong, rebuild the insole with the right length instead.", "",

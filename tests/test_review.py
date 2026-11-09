@@ -127,11 +127,21 @@ def test_an_insole_cut_to_a_saved_shoe_is_checked_against_that_shoe_not_the_char
     assert _check(p, "length")["ok"]
 
 
-def test_an_insole_with_the_foots_own_outline_says_so_in_its_packet(data):
+def test_an_insole_with_the_generic_outline_sized_from_the_foot_is_flagged_for_its_length(data):
+    """No shoe and no length: the generic insole outline, sized from the scan, misses the spec's length and says
+    which outline it is."""
     _only(data, "Lfoot")
     [p] = review.run_once(data, SPEC)
-    assert "the outline is the foot's own" in _check(p, "length")["found"]
-    assert "Outline: the foot's own" in (p / "packet.md").read_text()
+    c = _check(p, "length")
+    assert not c["ok"] and "the generic insole outline is" in c["found"]
+    assert "Outline: the generic insole outline (the same shape for every foot)" in (p / "packet.md").read_text()
+
+
+def test_an_insole_with_the_generic_outline_at_the_specs_length_passes_its_length_check(data):
+    _only(data, "R275")
+    [p] = review.run_once(data, SPEC)
+    c = _check(p, "length")
+    assert c["ok"] and "the generic insole outline is 275.0 mm long" in c["found"]
 
 
 def test_pictures_are_real_pngs_at_half_a_millimetre_per_pixel(data):

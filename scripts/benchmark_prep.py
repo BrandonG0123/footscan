@@ -217,7 +217,10 @@ def measure(name, kind, builder, kw, foot, seed=0):
     rng = np.random.default_rng(seed)
     scan, to_synth, truth, floor0 = builder(foot, rng, **kw)
     t = time.time()
-    ins, placed = foot_prep.insole_from_object_capture(scan, foot, kind=kind)
+    # the foot's own outline: this measures how the scan is read, and a shoe's or the generic outline would add its
+    # own warnings (where a synthetic foot hangs over it) and move the highest fill to inside it
+    ins, placed = foot_prep.insole_from_object_capture(scan, foot, kind=kind,
+                                                       params=insole.InsoleParams(foot_outline=True))
     secs = time.time() - t
     r = ins.report
     to_mat = np.array(r["prep"]["to_mat"])
