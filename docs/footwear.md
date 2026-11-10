@@ -778,7 +778,7 @@ One real foot. Whether a wall let out this way sits well against that foot,
 and whether the footbed's shelf along the inner side is comfortable to
 stand on, are for the first print to answer.
 
-### The first real left scan
+### The real left scans
 
 Left sole scan 2190 (`LIDAR_nwb_relaxed_L_20261027-151815-2190`: a
 legs-flat iPhone model with both feet in it, the left one cut out by the
@@ -797,8 +797,23 @@ makes no shoe (`2dfc561`):
 - Sized by the right foot's ruler numbers (260 x 97 mm) it was refused: 220
   mm against 260 is not the same foot in millimetres.
 
-That shoe is why the rule was added. The rule has not been run on that scan
-yet.
+That shoe is why the rule was added.
+
+With the rule (`8ffb900`), the same day on the Mac, each of the three real
+left sole scans was put through the command, sized by the scan alone, Stone.
+None makes a shoe, and nothing was written for any of them:
+
+- `LIDAR_nwb_relaxed_L_20261027-151404-89df` (sole up): refused, one side of
+  the ball of the foot 8 mm higher than the other.
+- `LIDAR_nwb_relaxed_L_20261027-151408-537f` (sole up): refused, the same
+  8 mm.
+- `LIDAR_nwb_relaxed_L_20261027-151815-2190` (legs flat): refused, both feet
+  in the scan and touching (225 mm of open edges near the floor once they
+  were cut apart), and one side of the ball of the foot 23 mm higher than
+  the other.
+
+Right sole scan 2349, run beside them with the ruler's 260 x 97 mm, still
+makes the same Stone shoe: 278.3 x 112.9 x 84.3 mm, 548.2 cm³.
 
 ## Not done yet
 
@@ -811,9 +826,10 @@ yet.
 - The shoe in the iPhone app (the studio page only, for now).
 - A left shoe from a real left sole scan. The generator and the studio make
   one from a left foot's own scan by the same steps as a right (tested on
-  SYNTHETIC left feet). The one real left scan put through them is torn,
-  rolled and has both feet in it (above): a pair needs a new left sole
-  scan, with only that foot in view.
+  SYNTHETIC left feet). None of the three real left scans makes a shoe
+  (above: the forefoot rolled in each, and both feet in one): a pair needs
+  a new left sole scan, the ball of the foot level and only that foot in
+  view.
 - Changing the generator's own allowances (the fits' millimetres, the roof,
   the rim) from what printed pieces show. The records are kept for that;
   nothing reads them into the tables, and none exists yet.
