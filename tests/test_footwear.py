@@ -670,6 +670,356 @@ def test_a_flat_shoes_sheet_says_there_is_no_footbed_from_a_scan(plain):
     assert "The footbed is flat" in sheet and "no arch fill and no shaped heel cup" in sheet
 
 
+@pytest.fixture(scope="module")
+def vent():
+    """A shoe with windows, from ruler numbers alone."""
+    return fw.build("right", fw.ShoeParams(style="vent", **RULER))
+
+
+def _ring(mesh, x):
+    """Is the solid closed over at x: does its slice across there go all the way round, with the foot's space
+    inside it? (An open-topped slice, a U, has no hole in it.)"""
+    planar, _ = mesh.section(plane_origin=[x, 0.0, 0.0], plane_normal=[1.0, 0.0, 0.0]).to_2D()
+    return any(len(poly.interiors) for poly in planar.polygons_full)
+
+
+def _holes(mesh):
+    """How many holes go right through a closed surface (a ring has 1; each window through a wall adds 1)."""
+    return (2 - mesh.euler_number) // 2
+
+
+def test_trial_pieces_are_the_shoe_itself_between_flat_cuts_each_one_closed_solid(plain, vent):
+    """Print-trial pieces are parts of the finished shoe, nothing changed but the cuts: each closed, in one
+    piece and standing on z = 0, and what is in the toe cap is exactly what the shoe has forward of the cut
+    (its volume by trimesh's own capped cut; its surface on the shoe's surface)."""
+    import trimesh
+
+    L = vent.mesh.bounds[1, 0]
+    pieces, left_out = fw.trial_pieces(vent)
+    assert list(pieces) == ["sole-block", "swatch", "toe-cap", "back-half"] and not left_out   # in the order to print them
+    assert list(fw.trial_pieces(plain)[0]) == ["sole-block", "toe-cap", "back-half"]   # a closed upper has no pattern to try
+    for p in pieces.values():
+        m = p.mesh
+        assert m.is_watertight and m.is_winding_consistent and m.body_count == 1
+        assert m.bounds[0, 2] == pytest.approx(0.0, abs=1e-4)
+        assert p.report["volume_cm3"] == pytest.approx(m.volume / 1000, abs=0.06)
+        assert p.report["length_mm"] == pytest.approx(np.ptp(m.bounds[:, 0]), abs=0.06)
+        assert [p.report["from_mm"], p.report["to_mm"]] == pytest.approx(m.bounds[:, 0], abs=0.06)   # where in the shoe it is from
+    toe = pieces["toe-cap"].mesh
+    cut = fw.TRIAL_TOE_FROM * L
+    assert fw.TRIAL_TOE_FROM == 0.70 and toe.bounds[:, 0] == pytest.approx([cut, L], abs=0.01)
+    assert toe.volume == pytest.approx(vent.mesh.slice_plane([cut, 0.0, 0.0], [1.0, 0.0, 0.0], cap=True).volume, rel=1e-4)
+    off_the_cut = toe.vertices[toe.vertices[:, 0] > cut + 0.5]
+    some = off_the_cut[np.random.default_rng(0).choice(len(off_the_cut), 300, replace=False)]
+    assert trimesh.proximity.closest_point(vent.mesh, some)[1].max() < 1e-3
+    # a left shoe's pieces are the right's, mirrored
+    left, _ = fw.trial_pieces(fw.mirrored(vent))
+    for name, p in pieces.items():
+        assert left[name].mesh.volume == pytest.approx(p.mesh.volume, rel=1e-6)
+        assert np.allclose(left[name].mesh.bounds[:, 1], -p.mesh.bounds[::-1, 1], atol=1e-3)
+
+
+def test_the_sole_block_is_the_sole_under_the_heel_with_the_footbed_on_top_and_no_wall(plain, shod):
+    L, heel = plain.mesh.bounds[1, 0], plain.report["sole"]["under_heel_mm"]
+    m = fw.trial_pieces(plain)[0]["sole-block"].mesh
+    assert m.bounds[:, 0] == pytest.approx([0.08 * L, 0.22 * L], abs=0.01)
+    assert m.bounds[:, 1] == pytest.approx([-0.07 * L, 0.07 * L], abs=0.01)       # either side of the heel's middle line
+    assert m.bounds[1, 2] == pytest.approx(heel, abs=0.02)                         # nothing stands on a flat floor
+    box = 0.14 * L * 0.14 * L * heel
+    assert 0.93 * box < m.volume < box                                             # a solid block, less the tread's grooves
+    # with a footbed, its top is that footbed (SYNTHETIC curved foot: the heel's cup)
+    L, heel = shod.mesh.bounds[1, 0], shod.report["sole"]["under_heel_mm"]
+    m = fw.trial_pieces(shod)[0]["sole-block"].mesh
+    for x, y in ((0.10 * L, 0.0), (0.15 * L, 10.0), (0.20 * L, -12.0)):
+        assert _floor(m, x, y) == pytest.approx(_floor(shod.mesh, x, y), abs=1e-3)
+    assert heel - 0.05 < m.bounds[1, 2] < heel + shod.report["footbed"]["heel_cap_mm"] + 0.05
+
+
+def test_the_pattern_swatch_is_a_ring_of_the_upper_with_its_windows_on_a_thin_floor(vent):
+    r = vent.report
+    L, ball = vent.mesh.bounds[1, 0], r["sole"]["under_ball_mm"]
+    sw = fw.trial_pieces(vent)[0]["swatch"].mesh
+    x0 = fw.TRIAL_SWATCH_FROM * L
+    assert sw.bounds[:, 0] == pytest.approx([x0, x0 + 40.0], abs=0.01)
+    assert _holes(sw) - 1 >= 20                                    # the foot's own tunnel, and whole windows through the walls
+    # its floor is the top 2 mm of the sole, set down on the bed
+    assert 2.0 - 0.01 < _floor(sw, x0 + 20.0, 0.0, 30.0) < 2.5
+    # the walls and the roof are the shoe's, lower by what was cut off under them
+    there = vent.mesh.vertices[(vent.mesh.vertices[:, 0] >= x0) & (vent.mesh.vertices[:, 0] <= x0 + 40.0)]
+    assert sw.bounds[1, 2] + (ball - 2.0) == pytest.approx(there[:, 2].max(), abs=0.3)
+    assert sw.bounds[:, 1] == pytest.approx([there[:, 1].min(), there[:, 1].max()], abs=1.5)
+    # long windows get a longer swatch: two and a half of them
+    stream = fw.build("right", fw.ShoeParams(style="stream", **RULER))
+    long = fw.trial_pieces(stream)[0]["swatch"].mesh
+    assert np.ptp(long.bounds[:, 0]) == pytest.approx(2.5 * fw.STYLES["stream"]["pitch_mm"][0], abs=0.01)
+    assert _holes(long) - 1 >= 6
+
+
+def test_the_back_half_keeps_the_heel_cup_the_let_out_wall_and_the_rim_and_has_no_roof():
+    """SYNTHETIC block foot with a 10 mm block standing out of its inner side: the back half is the shoe up to
+    46% of its length, its walls cut off level 40 mm above the heel's floor. Probed like the shoe, it answers
+    like the shoe: the same footbed, the same let-out inner wall, the lip behind the heel; and it is open above.
+    This foot's let-out runs on past the piece's cut, and the sheet says the piece shows it only that far."""
+    bulged = insole.from_scan(synth.block_foot(37.0, "right", inner_bulge=10.0), "right")
+    shoe = fw.build("right", fw.ShoeParams(style="stone"), footbed=bulged)
+    r = shoe.report
+    L, heel = shoe.mesh.bounds[1, 0], r["sole"]["under_heel_mm"]
+    assert r["footbed"]["let_out"]["inner"]["max_mm"] > 5.0
+    pieces, _ = fw.trial_pieces(shoe)
+    b = pieces["back-half"].mesh
+    assert b.bounds[:, 0] == pytest.approx([0.0, fw.TRIAL_BACK_UNTIL * L], abs=0.01)
+    assert b.bounds[1, 2] == pytest.approx(heel + fw.TRIAL_BACK_WALL_MM, abs=0.01)
+    for x in (30.0, 60.0, 90.0, 110.0):
+        for y in (-15.0, 0.0, 20.0):
+            assert _floor(b, x, y, 300.0) == pytest.approx(_floor(shoe.mesh, x, y, heel + 30.0), abs=1e-3), (x, y)   # no roof over it
+        assert _wall(b, x, heel + 20.0, 1.0) == pytest.approx(_wall(shoe.mesh, x, heel + 20.0, 1.0), abs=1e-3)       # inner wall
+        assert _wall(b, x, heel + 20.0, -1.0) == pytest.approx(_wall(shoe.mesh, x, heel + 20.0, -1.0), abs=1e-3)
+    assert _hit(b, [-50.0, 0.0, heel + r["heel_rim_mm"] - 4.0], [1.0, 0, 0])[0] < 1.0                               # the lip
+    assert not any(_ring(b, x) for x in np.arange(10.0, b.bounds[1, 0], 6.0))                                       # no roof
+    (run,) = r["footbed"]["let_out"]["inner"]["stretches"]           # one stretch, heel to past the ball
+    assert run["from_mm"] < run["at_mm"] < b.bounds[1, 0] < run["to_mm"]
+    notes = fw.trial_notes(shoe, pieces)
+    assert (f"This shoe's inner wall is let out by up to {run['max_mm']} mm for this foot, between {run['from_mm']:.0f} "
+            f"and {run['to_mm']:.0f} mm from the back. This piece ends at {b.bounds[1, 0]:.0f} mm: it shows that stretch "
+            "as far as there (the most of it included), and the whole shoe the rest.") in notes
+    assert "all of that is in this piece" not in notes
+
+
+def test_the_trial_files_say_they_are_not_shoes_and_what_each_piece_is_for(vent, tmp_path):
+    files, left_out = fw.write_trials(vent, tmp_path, "right-clog", "SYNTHETIC ruler numbers", synthetic=True)
+    assert left_out == [] and all(isinstance(f, str) for f in files.values())
+    notes = open(files["notes"], encoding="utf-8").read()
+    for must in ("NOT A MEDICAL DEVICE", fw.TRIAL_WARNING, "Do not stand or walk in one", fw.UNTESTED, "scale 100%",
+                 "SYNTHETIC TEST GEOMETRY", "15, 20 and 25%", "Sole block", "Pattern swatch", "Toe cap", "Back half",
+                 "while seated", "in this order", "Press in the middle of its top", "walls the shoe doesn't have there",
+                 "2 mm under the inside's floor at the ball of the foot"):
+        assert must in notes, must
+    assert "let out" not in notes                                   # nothing was, from ruler numbers
+    # nothing the pieces are not: not ordered by size, not cut under the footbed, not the shoe at their cut faces
+    for never in ("smallest first", "under the footbed", "exactly"):
+        assert never not in notes, never
+    assert notes.count("the cushioning's infill") == 3              # the swatch too: every piece but the block
+    pieces, _ = fw.trial_pieces(vent)
+    for name, p in pieces.items():
+        back = insole.read_3mf(files[f"{name}_threemf"])
+        said = back["metadata"]["Description"]
+        assert "NOT A MEDICAL DEVICE" in said and "Do not stand or walk in one" in said and "SYNTHETIC" in said
+        assert back["unit"] == "millimeter" and len(back["faces"]) == len(p.mesh.faces)
+        t = np.array(back["transform"]).reshape(4, 3)
+        on_bed = back["vertices"] @ t[:3] + t[3]
+        assert on_bed[:, :2].min() > 0 and on_bed[:, :2].max() < vent.params.bed_mm and on_bed[:, 2].min() == pytest.approx(0, abs=1e-3)
+        assert open(files[f"{name}_stl"], "rb").read(5) != b"" and f"{p.report['length_mm']} x {p.report['width_mm']}" in notes
+    saved = json.loads(open(files["json"], encoding="utf-8").read())
+    assert saved["synthetic"] is True and [q["piece"] for q in saved["pieces"]] == list(pieces) and saved["left_out"] == []
+    assert saved["warning"] == f"NOT A MEDICAL DEVICE. {fw.TRIAL_WARNING}"
+    # an STL has nowhere to carry a note and the picture is a picture: the three above are where it is said
+    assert set(files) == {f"{n}_{kind}" for n in pieces for kind in ("threemf", "stl")} | {"notes", "json", "picture"}
+    assert open(files["picture"], "rb").read(8) == b"\x89PNG\r\n\x1a\n"
+    assert "SYNTHETIC" not in fw.trial_notes(vent, pieces)          # only what is labelled synthetic says so
+
+
+def test_the_trial_cuts_follow_the_shoes_own_opening():
+    """An opening that ends further back or further forward than the styles' own. The back half is cut where the
+    shoe is still open above; the toe cap and the swatch start where its roof is whole. SYNTHETIC sizes; the
+    first is one where a back half cut at 46% of the length whatever the opening would keep a strip of roof (a
+    small shoe, a high heel and rim, the opening ending early)."""
+    small = fw.build("right", fw.ShoeParams(style="stone", foot_length_mm=185.0, foot_width_mm=69.0, throat=0.35,
+                                            drop_mm=12.0, heel_rim_mm=36.0))
+    o = small.report["opening_ends_mm"]
+    assert _ring(small.mesh, o) and not _ring(small.mesh, o - 8.0)        # the roof is whole from there on, open just behind
+    back = fw.trial_pieces(small)[0]["back-half"]
+    assert back.report["to_mm"] == pytest.approx(o - fw.TRIAL_OPEN_MM, abs=0.06) and fw.TRIAL_OPEN_MM == 6.0
+    assert back.report["to_mm"] < fw.TRIAL_BACK_UNTIL * small.mesh.bounds[1, 0] - 20.0
+    assert not any(_ring(back.mesh, x) for x in np.arange(10.0, back.report["to_mm"], 2.0))
+
+    # the opening ending late, in a plain shoe and a patterned one of the same size
+    stone, stream = (fw.build("right", fw.ShoeParams(style=style, throat=0.65, **RULER)) for style in ("stone", "stream"))
+    for shoe in (stone, stream):
+        L, o = shoe.mesh.bounds[1, 0], shoe.report["opening_ends_mm"]
+        pieces, left_out = fw.trial_pieces(shoe)
+        assert not left_out and o > fw.TRIAL_SWATCH_FROM * L
+        assert pieces["back-half"].report["to_mm"] == pytest.approx(fw.TRIAL_BACK_UNTIL * L, abs=0.06)   # as for any opening
+        assert pieces["toe-cap"].report["from_mm"] == pytest.approx(fw.TRIAL_TOE_FROM * L, abs=0.06) and o < fw.TRIAL_TOE_FROM * L
+    assert _ring(fw.trial_pieces(stone)[0]["toe-cap"].mesh, pieces["toe-cap"].report["from_mm"] + 0.3)
+    # the swatch: forward of the opening, and slid back to end a bar's width past the last window instead of running on
+    # into the toe cap
+    sw = pieces["swatch"]
+    assert sw.report["from_mm"] == pytest.approx(o + fw.TRIAL_ROOFED_MM, abs=0.06) and fw.TRIAL_ROOFED_MM == 10.0
+    assert sw.report["to_mm"] == pytest.approx(stream.report["pattern"]["ends_mm"] + fw.MIN_STRUT_MM, abs=0.06)   # not on its tip
+    assert sw.report["to_mm"] - sw.report["from_mm"] < 2.5 * fw.STYLES["stream"]["pitch_mm"][0] - 5.0
+    assert _holes(sw.mesh) - 1 >= 4
+    # (a slice through windows is no ring, so the plain shoe is asked: the same inside, the same opening)
+    assert stone.report["opening_ends_mm"] == o and _ring(stone.mesh, sw.report["from_mm"])
+
+    # the toe cap needs no such rule: even the smallest adult shoe with the latest opening is roofed where it is cut
+    least = fw.build("right", fw.ShoeParams(style="stone", foot_length_mm=180.0, foot_width_mm=67.0, throat=0.65))
+    cap = fw.trial_pieces(least)[0]["toe-cap"]
+    assert least.report["opening_ends_mm"] + 2.0 < cap.report["from_mm"] and _ring(cap.mesh, cap.report["from_mm"] + 0.3)
+
+    # too little patterned roof forward of the opening for a swatch: there is none, and that is said
+    short = fw.build("right", fw.ShoeParams(style="stream", foot_length_mm=185.0, foot_width_mm=69.0, throat=0.65))
+    pieces, left_out = fw.trial_pieces(short)
+    assert list(pieces) == ["sole-block", "toe-cap", "back-half"] and len(left_out) == 1
+    assert left_out[0].startswith("Pattern swatch: left out.") and "less than a window and a half's spacing" in left_out[0]
+    assert left_out[0] in fw.trial_notes(short, pieces, left_out)
+
+
+def test_a_sliver_freed_where_two_cuts_meet_a_window_is_dropped_not_the_piece(monkeypatch):
+    """SYNTHETIC size found by a sweep: a 245 mm foot's ``stream`` shoe with its opening ending at 0.42. The
+    back half's two cuts meet the edge of a window and free a sliver of the upper far smaller than a nozzle's
+    line. The sliver is dropped and the piece kept, one body; with no allowance for crumbs the piece is left
+    out, as anything bigger coming loose still is."""
+    shoe = fw.build("right", fw.ShoeParams(style="stream", throat=0.42, foot_length_mm=245.0, foot_width_mm=91.4))
+    pieces, left_out = fw.trial_pieces(shoe)
+    assert not left_out and list(pieces) == ["sole-block", "swatch", "toe-cap", "back-half"]
+    back = pieces["back-half"]
+    assert back.mesh.body_count == 1 and back.mesh.is_watertight
+    # all of the shoe behind the cut and under the level cut, less under a thousandth of a cubic centimetre
+    h0, top = back.report["to_mm"], back.mesh.bounds[1, 2]
+    cut = shoe.mesh.slice_plane([h0, 0.0, 0.0], [-1.0, 0.0, 0.0], cap=True).slice_plane([0.0, 0.0, top], [0.0, 0.0, -1.0], cap=True)
+    assert -1e-3 < cut.volume - back.mesh.volume < fw.TRIAL_CRUMB_MM3 and fw.TRIAL_CRUMB_MM3 == 1.0
+    monkeypatch.setattr(fw, "TRIAL_CRUMB_MM3", 0.0)
+    pieces, left_out = fw.trial_pieces(shoe)
+    assert "back-half" not in pieces and left_out == ["Back half: left out (it didn't come out as one piece; please report the sizes used)."]
+
+
+def test_the_back_half_keeps_a_high_rim_whole():
+    """A rim behind the heel higher than the back half's usual level cut (40 mm above the heel's floor): the cut
+    goes 8 mm above the rim instead, so the piece still has the rim it is printed to try."""
+    shoe = fw.build("right", fw.ShoeParams(style="stone", heel_rim_mm=44.0, **RULER))
+    heel = shoe.report["sole"]["under_heel_mm"]
+    b = fw.trial_pieces(shoe)[0]["back-half"]
+    assert b.mesh.bounds[1, 2] == pytest.approx(heel + 44.0 + 8.0, abs=0.01) and "level 52 mm above" in b.report["cut"]
+    for z in (heel + 30.0, heel + 42.0):                               # the back of the heel, up to just under its rim
+        assert _hit(b.mesh, [-50.0, 0.0, z], [1.0, 0, 0])[0] == pytest.approx(_hit(shoe.mesh, [-50.0, 0.0, z], [1.0, 0, 0])[0], abs=1e-3)
+    assert _hit(b.mesh, [-50.0, 0.0, heel + 46.0], [1.0, 0, 0]) is None                 # and nothing above the rim, as on the shoe
+    assert _hit(shoe.mesh, [-50.0, 0.0, heel + 46.0], [1.0, 0, 0])[0] > 20.0
+
+
+def test_the_trial_sheet_speaks_of_a_let_out_wall_only_where_the_piece_has_it():
+    """Made-up numbers: an inner wall let out in two places (40 to 110 mm from the back, most at 80; and 150 to
+    190 mm, most at 170) with the standard shape between, an outer one by too little to speak of. Each stretch
+    gets its own line and its own figures. A piece that holds all of a stretch says so; one cut part way along
+    it says how far it shows and whether the most of it is in the piece; a stretch the piece has none of is
+    not mentioned."""
+    let = dict(inner=dict(max_mm=6.0, at=0.3, at_mm=80.0, stretches=[dict(from_mm=40.0, to_mm=110.0, max_mm=6.0, at_mm=80.0),
+                                                                     dict(from_mm=150.0, to_mm=190.0, max_mm=3.0, at_mm=170.0)]),
+               outer=dict(max_mm=0.6, at=0.3, at_mm=80.0, stretches=[]))
+    first, = fw._let_out_lines(let, dict(from_mm=0.0, to_mm=128.0))      # the back half: the first stretch, not the second
+    assert "inner wall is let out by up to 6.0 mm" in first and "between 40 and 110 mm from the back" in first
+    assert "all of that is in this piece" in first
+    both = fw._let_out_lines(let, dict(from_mm=0.0, to_mm=160.0))
+    assert len(both) == 2 and "all of that" in both[0]
+    assert "by up to 3.0 mm" in both[1] and "between 150 and 190 mm" in both[1] and "This piece ends at 160 mm" in both[1]
+    assert "as far as there (not the most of it, which is at 170 mm)" in both[1]
+    part, = fw._let_out_lines(let, dict(from_mm=0.0, to_mm=90.0))
+    assert "This piece ends at 90 mm" in part and "(the most of it included)" in part and "all of that" not in part
+    assert fw._let_out_lines(let, dict(from_mm=0.0, to_mm=35.0)) == []
+    assert fw._let_out_lines(let, dict(from_mm=195.0, to_mm=278.0)) == []   # (a piece forward of both)
+
+
+def test_a_wall_let_out_in_two_places_is_two_stretches_not_one_span():
+    """A made-up outline from above: the standard shape's own inside with two bumps standing 6 mm out of its
+    inner side, 40 to 70 and 150 to 180 mm along, and the standard shape between them. The let-out is two
+    stretches, each about its bump (eased a few millimetres either way) and 6 mm at most, not one span from
+    40 to 180."""
+    import shapely
+
+    p = fw.ShoeParams(style="stone", **RULER)
+    st = fw.STYLES["stone"]
+    loft = fw._loft_for(fw.size_inside(260.0, 97.0, p), p, st["sole_mm"], st["flare_mm"], st["grooves"])
+    bumps = ((40.0, 70.0), (150.0, 180.0))
+
+    def bump(x0, x1):
+        xs = np.arange(x0, x1 + 0.5)
+        _, wall = fw._across(loft.inside_widest, xs)
+        return shapely.Polygon([*zip(xs, wall + 6.0), *zip(xs[::-1], wall[::-1] - 10.0)])
+
+    fns, report, where = fw._let_out(loft, shapely.union_all([loft.inside_widest, *(bump(*b) for b in bumps)]), 0.0)
+    runs = where["inner"]["stretches"]
+    assert len(runs) == 2 and where["outer"]["stretches"] == [] and report["inner"]["max_mm"] == pytest.approx(6.0, abs=0.3)
+    for (start, end, most, at), (x0, x1) in zip(runs, bumps):
+        assert x0 - 12.0 < start <= x0 and x1 <= end < x1 + 12.0 and start < at < end
+        assert most == pytest.approx(6.0, abs=0.3)
+    assert runs[1][0] - runs[0][1] > 55.0                                # the standard shape between them
+    assert float(fns[0](110.0)) == 0.0 and float(fns[0](55.0)) > 5.0
+
+
+def test_where_a_wall_is_let_out_is_reported_from_the_back_of_the_shoe(block):
+    """SYNTHETIC block foot (wider than the standard shape along most of its inner side). The report's stretch
+    and its greatest point are millimetres from the back of the finished shoe, where a ruler on the print
+    would find them: probed against the same shoe from ruler numbers alone (the standard shape, nothing let
+    out), the inner wall stands out by the reported most at ``at_mm``, and by 1 mm where the stretch ends."""
+    p = fw.ShoeParams(style="stone", foot_length_mm=240.0, foot_width_mm=90.0)
+    shoe, standard = fw.build("right", p, footbed=block), fw.build("right", p)
+    inner = shoe.report["footbed"]["let_out"]["inner"]
+    (run,) = inner["stretches"]
+
+    def out(x):
+        return _wall(shoe.mesh, x, 38.0, 1.0) - _wall(standard.mesh, x, 38.0, 1.0)
+
+    assert run["from_mm"] < run["at_mm"] < run["to_mm"] and run["max_mm"] > 5.0
+    assert (run["max_mm"], run["at_mm"]) == (inner["max_mm"], inner["at_mm"])     # one stretch: its most is the wall's
+    assert out(run["at_mm"]) == pytest.approx(run["max_mm"], abs=0.3)
+    assert out(run["to_mm"] - 1.5) > 1.0 > out(run["to_mm"] + 1.5)
+    # nothing left in the loft's own coordinates, in the let-out or the pattern
+    assert set(inner) == {"max_mm", "at", "at_mm", "stretches"} and set(run) == {"from_mm", "to_mm", "max_mm", "at_mm"}
+    assert set(shoe.report["pattern"]) == {"count", "openness"}
+    assert set(fw.build("right", fw.ShoeParams(style="vent", **RULER)).report["pattern"]) == {"count", "openness", "window_mm", "rows", "ends_mm"}
+
+
+def test_a_trial_piece_that_fails_is_left_out_and_said_and_the_rest_are_still_made(vent, tmp_path, monkeypatch):
+    """One piece coming out broken must not cost the others. Faked here: the second piece's closed-surface step
+    is made to fail. Only when no piece can be made is the whole thing an error."""
+    real, calls = fw._closed_mesh, []
+
+    def second_fails(solid, what, back_at_zero=False):
+        calls.append(what)
+        if len(calls) == 2:
+            raise fw.FootwearError(f"{what} came out broken (not closed); please report the sizes used")
+        return real(solid, what, back_at_zero)
+
+    monkeypatch.setattr(fw, "_closed_mesh", second_fails)
+    files, left_out = fw.write_trials(vent, tmp_path, "right-clog", "SYNTHETIC ruler numbers", synthetic=True)
+    assert len(left_out) == 1 and left_out[0].startswith("Pattern swatch: left out (it came out broken")
+    assert "swatch_threemf" not in files and not list(tmp_path.glob("*swatch*"))
+    for name in ("sole-block", "toe-cap", "back-half"):
+        assert (tmp_path / f"right-clog-trial-{name}.3mf").stat().st_size > 500
+    notes = open(files["notes"], encoding="utf-8").read()
+    assert left_out[0] in notes and "1. Sole block" in notes and "2. Toe cap" in notes and "3. Back half" in notes
+    assert json.loads(open(files["json"], encoding="utf-8").read())["left_out"] == left_out
+
+    def all_fail(solid, what, back_at_zero=False):
+        raise fw.FootwearError(f"{what} came out broken (not closed); please report the sizes used")
+
+    monkeypatch.setattr(fw, "_closed_mesh", all_fail)
+    with pytest.raises(fw.FootwearError, match="no trial piece could be cut from this shoe"):
+        fw.write_trials(vent, tmp_path / "none", "right-clog", "SYNTHETIC ruler numbers", synthetic=True)
+    assert not (tmp_path / "none").exists()                          # nothing written, nothing removed
+    assert (tmp_path / "right-clog-trial-toe-cap.3mf").exists()
+
+
+def test_trial_files_of_an_earlier_shoe_are_not_left_beside_a_new_one(plain, vent, tmp_path, capsys):
+    """A piece cut from an earlier shoe, left in the folder, would be printed as the new shoe's. Writing the
+    trials again removes the old set first (a closed upper writes no swatch over the patterned one's). Writing
+    the shoe's files leaves them alone (so trials written first are not lost), and the command removes them
+    once it has written a shoe without new trials. Nothing else in the folder is touched."""
+    fw.write_trials(vent, tmp_path, "right-clog", "SYNTHETIC ruler numbers", synthetic=True)
+    assert (tmp_path / "right-clog-trial-swatch.3mf").exists() and (tmp_path / "right-clog-trial-swatch.stl").exists()
+    mine = tmp_path / "right-clog-trial-notes-of-my-own.txt"
+    mine.write_text("what I saw")
+    fw.write_trials(plain, tmp_path, "right-clog", "SYNTHETIC ruler numbers", synthetic=True)
+    assert not list(tmp_path.glob("right-clog-trial-swatch*")) and (tmp_path / "right-clog-trial-toe-cap.3mf").exists()
+    fw.write_outputs(plain, tmp_path, "right-clog", "SYNTHETIC ruler numbers", synthetic=True)
+    assert (tmp_path / "right-clog-trial-toe-cap.3mf").exists() and (tmp_path / "right-clog-trials.txt").exists()
+    # the command, writing the right shoe again without --trials (here as the left's mirror image)
+    assert cli.main(["footwear", "--foot", "left", "--length", "260", "--width", "97", "--style", "stone", "--pair",
+                     "-o", str(tmp_path)]) == 0
+    capsys.readouterr()
+    assert [f.name for f in tmp_path.glob("right-clog-trial*")] == [mine.name] and mine.read_text() == "what I saw"
+    assert (tmp_path / "right-clog.3mf").exists() and (tmp_path / "left-clog.3mf").exists()
+
+
 def test_pictures_show_the_shoe_from_every_side(shod):
     pics = fw.pictures(shod)
     assert set(pics) == set(fw.VIEWS) | {"views"}
@@ -697,11 +1047,12 @@ def test_a_sole_up_phone_scan_makes_the_shoe_the_way_the_studio_makes_the_insole
     assert "Sole up" in fw.summary_html(shoe, "x")                                       # how the foot was captured
 
 
-def test_the_command_writes_a_pair_from_one_scan_and_refuses_nonsense(tmp_path, capsys):
+def test_the_command_writes_a_pair_from_one_scan_and_refuses_nonsense(tmp_path, capsys, monkeypatch):
     scan = tmp_path / "foot.ply"
     synth.curved_foot("right", leg=False).export(scan)
     out = tmp_path / "out"
-    assert cli.main(["footwear", "--foot", "right", "--scan", str(scan), "--style", "stream", "--pair", "-o", str(out)]) == 0
+    assert cli.main(["footwear", "--foot", "right", "--scan", str(scan), "--style", "stream", "--pair", "--trials",
+                     "-o", str(out)]) == 0
     said = capsys.readouterr()
     assert "right clog (stream)" in said.out and "left clog (stream)" in said.out and "NOT A MEDICAL DEVICE" in said.out
     assert "mirror image" in said.err
@@ -709,6 +1060,42 @@ def test_the_command_writes_a_pair_from_one_scan_and_refuses_nonsense(tmp_path, 
         for end in (".3mf", ".stl", "-summary.html", "-print-notes.txt", ".json", "-views.png"):
             assert (out / f"{foot}-clog{end}").stat().st_size > 500
     assert json.loads((out / "left-clog.json").read_text())["mirrored_from"] == "right"
+    # the trial pieces are the scanned foot's shoe's, not its mirror image's
+    assert "right clog's trial pieces" in said.out and "Do not stand or walk in one" in said.out
+    for end in ("-trials.txt", "-trials.png", "-trials.json", "-trial-sole-block.3mf", "-trial-swatch.stl",
+                "-trial-toe-cap.3mf", "-trial-back-half.3mf"):
+        assert (out / f"right-clog{end}").stat().st_size > 500
+    assert not list(out.glob("left-clog-trial*"))
+
+    # pieces that can't be cut are an error line, not a traceback, and the shoe's own files stand
+    def refuse(shoe):
+        raise fw.FootwearError("no trial piece could be cut from this shoe: made up for the test")
+
+    monkeypatch.setattr(fw, "trial_pieces", refuse)
+    assert cli.main(["footwear", "--foot", "right", "--length", "260", "--width", "97", "--style", "stone", "--trials",
+                     "-o", str(tmp_path / "refused")]) == 1
+    said = capsys.readouterr()
+    assert "right clog's trial pieces: no trial piece could be cut" in said.err and "Traceback" not in said.err
+    assert "The shoe's own files above are written" in said.err
+    assert (tmp_path / "refused" / "right-clog.3mf").exists() and not list((tmp_path / "refused").glob("*trial*"))
+    assert said.out.rstrip().endswith("break-in as on the summary sheet.") and "NOT A MEDICAL DEVICE" in said.out   # still the last word
+    monkeypatch.undo()
+    # one piece left out (faked: the second piece's closed-surface step fails) is a warning, and the rest are written
+    real, cut = fw._closed_mesh, []
+
+    def second_piece_fails(solid, what, back_at_zero=False):
+        cut.append(what)
+        if cut.count("it") == 2 and what == "it":
+            raise fw.FootwearError("it came out broken (not closed); please report the sizes used")
+        return real(solid, what, back_at_zero)
+
+    monkeypatch.setattr(fw, "_closed_mesh", second_piece_fails)
+    assert cli.main(["footwear", "--foot", "right", "--length", "260", "--width", "97", "--style", "stone", "--trials",
+                     "-o", str(tmp_path / "one-short")]) == 0
+    said = capsys.readouterr()
+    assert "warning: Toe cap: left out (it came out broken" in said.err and "left_out" not in said.out
+    assert (tmp_path / "one-short" / "right-clog-trial-back-half.3mf").exists()
+    assert not list((tmp_path / "one-short").glob("*toe-cap*"))
 
     assert cli.main(["footwear", "--foot", "right", "--length", "26", "--width", "9.7", "-o", str(tmp_path / "bad")]) == 1
     assert "check the length, in millimetres" in capsys.readouterr().err

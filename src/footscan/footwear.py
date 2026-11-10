@@ -97,6 +97,11 @@ the end for a left one.
 Coordinates of the output: millimetres, x forward from the back of the shoe,
 y toward the foot's left, z up, the bottom on z = 0.
 
+Before a whole shoe is printed, ``trial_pieces`` cuts small pieces out of
+the finished solid (a block of the sole, a swatch of the pattern, the toe
+cap, the back half) to print first. They are not shoes, and their sheet
+says so.
+
 Nothing here has been printed or worn yet. Every thickness, height and
 allowance below is a starting judgment, marked as one where it is set.
 """
@@ -812,13 +817,19 @@ def _across(outline, x: np.ndarray):
 
 def _let_out(loft: _Loft, foot, ease: float):
     """How far each side of the inside has to be let out for this foot. -> (the two functions ``_Loft`` takes,
-    or None when neither side needs any; what was let out, for the report).
+    or None when neither side needs any; what was let out, for the report; where, along the loft).
 
     ``foot`` is everything the scan shows of the foot, from above, where it stands in the shoe. Every
     millimetre along, each side's need is how far the foot's edge, plus ``ease``, stands outside the standard
     shape's widest point there. It is never negative (the shoe is never made narrower than the standard shape),
     never more than ``LET_OUT_MAX_MM``, faded to nothing through the toe box (``LET_OUT_UNTIL``), and smoothed
-    along the shoe (the most within 4 mm either way, then blurred), so the wall stays a fair curve."""
+    along the shoe (the most within 4 mm either way, then blurred), so the wall stays a fair curve.
+
+    The report says, for each side, the most the wall is moved and where (``at``: the share of the floor's
+    length). "Where" says the same in the loft's own x: ``at``, and ``stretches``, each run along which the
+    wall is moved by a millimetre or more as (from x, to x, the most in it, where that is). A wall can be let
+    out in two places with the standard shape between them, so the runs are kept apart. ``build`` turns these
+    into millimetres from the back of the finished shoe, for the report."""
     from scipy import ndimage
 
     L = loft.L
@@ -827,7 +838,7 @@ def _let_out(loft: _Loft, foot, ease: float):
     ends = np.maximum(loft.ends(x), 0.3)     # the lean is rounded off toward the two ends: ask for more there
     fade = 1.0 - _smoothstep((x / L - LET_OUT_UNTIL[0]) / (LET_OUT_UNTIL[1] - LET_OUT_UNTIL[0]))
     wider = (hi - (loft.floor.y_inner(x) + loft.lean(x)), (loft.floor.y_outer(x) - loft.lean(x)) - lo)
-    fns, report = [], {}
+    fns, report, where = [], {}, {}
     for side, w in zip(("inner", "outer"), wider):
         w = np.where(np.isnan(w), -np.inf, w)       # (no foot at this x: nothing to hold)
         n = np.clip((w + ease) / ends, 0.0, LET_OUT_MAX_MM) * fade
@@ -837,9 +848,13 @@ def _let_out(loft: _Loft, foot, ease: float):
         out = n * loft.ends(x)
         i = int(np.argmax(out))
         report[side] = dict(max_mm=round(float(out[i]), 1), at=round(float(x[i] / L), 2))
+        moved = np.flatnonzero(out >= 1.0)
+        runs = np.split(moved, np.flatnonzero(np.diff(moved) > 1) + 1) if len(moved) else []
+        where[side] = dict(at=float(x[i]), stretches=[(float(x[run[0]]), float(x[run[-1]]), float(out[run].max()),
+                                                       float(x[run[np.argmax(out[run])]])) for run in runs])
     if max(r["max_mm"] for r in report.values()) < 0.5:
-        return None, None
-    return tuple(fns), report
+        return None, None, None
+    return tuple(fns), report, where
 
 
 def _hangs_over(loft: _Loft, foot) -> dict:
@@ -887,7 +902,8 @@ def _under_the_foot(loft: _Loft, bed: Footbed | None):
 # ---------------------------------------------------------------------------
 def _opening(loft: _Loft, p: ShoeParams, bed: Footbed | None = None):
     """The opening's edge as a height at each x (``edge(x)``), the solid above it that is cut away, where the
-    edge ends, and the least it stands above the footbed (mm).
+    edge ends, the least it stands above the footbed (mm), and where the opening ends (x: the edge is over
+    the roof there, so the roof is whole from there on).
 
     The edge starts ``heel_rim_mm`` above the inside's floor behind the heel and climbs, slowly then faster, to
     just over the roof where the opening ends (``throat``); past that it is above the shoe, so the front stays
@@ -934,11 +950,12 @@ def _opening(loft: _Loft, p: ShoeParams, bed: Footbed | None = None):
     wide = 2 * loft.floor.width + 80.0
     cut = m3.Manifold.extrude(m3.CrossSection([ring], m3.FillRule.Positive), wide)   # drawn in x and height...
     cut = cut.rotate((90.0, 0.0, 0.0)).translate((0.0, wide / 2, 0.0))              # ...then stood up across the shoe
-    return edge, cut, float(x[-1]), round(float(lip[i]), 1)
+    return edge, cut, float(x[-1]), round(float(lip[i]), 1), float(xt)
 
 
 def _windows(loft: _Loft, p: ShoeParams, edge, edge_ends: float, bed: Footbed | None):
-    """The pattern: diamond windows through the upper. -> (the solids to cut away, what was made).
+    """The pattern: diamond windows through the upper. -> (the solids to cut away, what was made, the x of the
+    front-most window's front end or None).
 
     Rows run the length of the shoe on both sides, each a fixed share of the way over the top, so they follow
     the roof's own curve; every other row is shifted half a step, like brickwork. Each window is a diamond-sided
@@ -953,7 +970,7 @@ def _windows(loft: _Loft, p: ShoeParams, edge, edge_ends: float, bed: Footbed | 
     if not 0 <= openness <= 0.5:
         raise FootwearError("openness is the share of the patterned area cut away: between 0 and 0.5")
     if st["pattern"] is None or openness == 0:
-        return [], dict(count=0, openness=0.0)
+        return [], dict(count=0, openness=0.0), None
     (rw, rh), (px, pg) = st["pattern"], st["pitch_mm"]
     h = np.sqrt(2 * openness * px * pg * rh / rw)          # a diamond w x h has area w * h / 2
     w = h * rw / rh
@@ -974,7 +991,7 @@ def _windows(loft: _Loft, p: ShoeParams, edge, edge_ends: float, bed: Footbed | 
             sides.append(np.full(len(row), side))
             ph.append(np.full(len(row), phi))
     if not xs or not sum(len(r) for r in xs):
-        return [], dict(count=0, openness=0.0)
+        return [], dict(count=0, openness=0.0), None
     xs, sides, ph = np.concatenate(xs), np.concatenate(sides), np.concatenate(ph)
     c, along, up, out = loft.outside_point(xs, sides, ph)
     top = c[:, 2] + 0.5 * h * np.abs(up[:, 2])
@@ -990,8 +1007,9 @@ def _windows(loft: _Loft, p: ShoeParams, edge, edge_ends: float, bed: Footbed | 
     for q, a, u, o in zip(c[keep], along[keep], up[keep], out[keep]):
         centre = q - o * (loft.upper / 2)
         pegs.append(peg.transform(np.c_[a * w, u * h, o * depth, centre].astype(np.float32)))
-    return pegs, dict(count=len(pegs), openness=round(float(w * h / 2 / (px * pg)), 3),
-                      window_mm=(round(float(w), 1), round(float(h), 1)), rows=int(rows))
+    return (pegs, dict(count=len(pegs), openness=round(float(w * h / 2 / (px * pg)), 3),
+                       window_mm=(round(float(w), 1), round(float(h), 1)), rows=int(rows)),
+            float(c[keep][:, 0].max() + 0.5 * w) if len(pegs) else None)
 
 
 def _tread(plan):
@@ -1046,6 +1064,23 @@ def _weld(V: np.ndarray, F: np.ndarray, tol: float = WELD_MM):
     return V, F
 
 
+def _closed_mesh(solid, what: str, back_at_zero: bool = False):
+    """A manifold3d solid as the closed surface that is written to a file (its points welded: ``_weld``).
+    -> (the trimesh, how far forward it was slid to put its back end at x = 0: nothing unless asked).
+    Refused if what comes out isn't closed, with every face the same way round."""
+    import trimesh
+
+    mm = solid.to_mesh()
+    V, F = _weld(np.asarray(mm.vert_properties)[:, :3].astype(float), np.asarray(mm.tri_verts))
+    slid = -float(V[:, 0].min()) if back_at_zero else 0.0
+    V[:, 0] += slid
+    mesh = trimesh.Trimesh(V, F, process=False)
+    mesh.remove_unreferenced_vertices()
+    if not mesh.is_watertight or not mesh.is_winding_consistent or mesh.volume <= 0:
+        raise FootwearError(f"{what} came out broken (not closed); please report the sizes used")
+    return mesh, slid
+
+
 # ---------------------------------------------------------------------------
 # the shoe
 # ---------------------------------------------------------------------------
@@ -1054,7 +1089,6 @@ def build(foot: str, params: ShoeParams | None = None, footbed=None) -> Shoe:
     its surface becomes the shoe's floor, and its outline gives the foot's length and width where the params
     don't. Without one the floor is flat, and the params must give both measurements."""
     import manifold3d as m3
-    import trimesh
 
     p = params or ShoeParams()
     if foot not in ("left", "right"):
@@ -1089,11 +1123,11 @@ def build(foot: str, params: ShoeParams | None = None, footbed=None) -> Shoe:
     warnings += size["notes"] + scan_notes
 
     loft = _loft_for(size, p, sole, st["flare_mm"], st["grooves"])
-    fit = let = over = room = None
+    fit = let = let_where = over = room = None
     if bed is not None:
         fit = bed.place(loft.floor.polygon, loft.inside_ends()[0])   # the heel as far back as it can reach
         whole = bed.in_shoe("outline")
-        let_out, let = _let_out(loft, whole, FIT[p.fit]["width_mm"] / 2 + p.sock_mm)
+        let_out, let, let_where = _let_out(loft, whole, FIT[p.fit]["width_mm"] / 2 + p.sock_mm)
         if let_out is not None:
             loft = loft.let_out_by(let_out)
             for side in ("inner", "outer"):
@@ -1114,9 +1148,9 @@ def build(foot: str, params: ShoeParams | None = None, footbed=None) -> Shoe:
     # hollow the outside by the inside, down to the footbed's surface (the inside's slices start under the
     # floor, so that surface always cuts cleanly through their sides)
     shoe = loft.outside() - (loft.inside(below=1.5) - _under_the_foot(loft, bed))
-    edge, cut, edge_ends, rim_over_footbed = _opening(loft, p, bed)
+    edge, cut, edge_ends, rim_over_footbed, opening_ends = _opening(loft, p, bed)
     shoe -= cut
-    pegs, pattern = _windows(loft, p, edge, edge_ends, bed)
+    pegs, pattern, pattern_ends = _windows(loft, p, edge, edge_ends, bed)
     if pegs:
         shoe -= m3.Manifold.batch_boolean(pegs, m3.OpType.Add)
     if p.openness and st["pattern"] is None:
@@ -1130,13 +1164,14 @@ def build(foot: str, params: ShoeParams | None = None, footbed=None) -> Shoe:
     if len(pieces) != 1:
         raise FootwearError(f"the shoe came out in {len(pieces)} pieces: the pattern cut something free. "
                             "Lower the openness, and please report the sizes used.")
-    mm = shoe.to_mesh()
-    V, F = _weld(np.asarray(mm.vert_properties)[:, :3].astype(float), np.asarray(mm.tri_verts))
-    V[:, 0] -= V[:, 0].min()                                     # the back of the shoe at x = 0
-    mesh = trimesh.Trimesh(V, F, process=False)
-    mesh.remove_unreferenced_vertices()
-    if not mesh.is_watertight or not mesh.is_winding_consistent or mesh.volume <= 0:
-        raise FootwearError("the shoe's solid came out broken (not closed); please report the sizes used")
+    mesh, slid = _closed_mesh(shoe, "the shoe's solid", back_at_zero=True)   # the back of the shoe at x = 0
+    # where things are, in millimetres from the back of the shoe as it is written (a ruler on the print)
+    for side, w in (let_where or {}).items():
+        let[side].update(at_mm=round(w["at"] + slid, 1), stretches=[
+            dict(from_mm=round(a + slid, 1), to_mm=round(b + slid, 1), max_mm=round(most, 1), at_mm=round(at + slid, 1))
+            for a, b, most, at in w["stretches"]])
+    if pattern_ends is not None:
+        pattern["ends_mm"] = round(pattern_ends + slid, 1)                   # the front-most window's front end
 
     in_length, in_width = loft.inside_size()
     ext = mesh.extents
@@ -1158,6 +1193,7 @@ def build(foot: str, params: ShoeParams | None = None, footbed=None) -> Shoe:
         upper_mm=p.upper_mm,
         heel_rim_mm=p.heel_rim_mm,
         rim_over_footbed_mm=rim_over_footbed,
+        opening_ends_mm=round(opening_ends + slid, 1),           # from the back of the shoe: the roof is whole from here on
         pattern=pattern,
         footbed=None if bed is None else dict(
             max_fill_mm=round(bed.highest(loft.inside_widest), 2), scan_length_mm=round(bed.scan_length, 1),
@@ -1258,21 +1294,27 @@ def picture(mesh, view: str, foot: str = "right", points=None) -> np.ndarray:
     return (np.clip(img, 0, 1) * 255).astype(np.uint8)
 
 
+def _side_by_side(images, cell: int | None = None, standing: bool = False) -> np.ndarray:
+    """Pictures in one row on white. ``cell``: each in the middle of a cell this wide (else at its own width).
+    ``standing``: each on the row's bottom edge (else in the middle, up and down)."""
+    hh = max(im.shape[0] for im in images)
+    widths = [cell or im.shape[1] for im in images]
+    row = np.full((hh, sum(widths), 3), 255, np.uint8)
+    c = 0
+    for im, w in zip(images, widths):
+        r0, c0 = hh - im.shape[0] if standing else (hh - im.shape[0]) // 2, c + (w - im.shape[1]) // 2
+        row[r0:r0 + im.shape[0], c0:c0 + im.shape[1]] = im
+        c += w
+    return row
+
+
 def pictures(shoe: Shoe) -> dict:
     """Every view in ``VIEWS``, and one sheet with all of them."""
     points = _surface_points(shoe.mesh)
     out = {v: picture(shoe.mesh, v, shoe.foot, points) for v in VIEWS}
     w = max(im.shape[1] for im in out.values())
-    rows = []
-    for a, b in (("side", "quarter"), ("top", "bottom"), ("back", "front")):
-        hh = max(out[a].shape[0], out[b].shape[0])
-        row = np.full((hh, 2 * w, 3), 255, np.uint8)
-        for k, name in enumerate((a, b)):
-            im = out[name]
-            r0, c0 = (hh - im.shape[0]) // 2, k * w + (w - im.shape[1]) // 2
-            row[r0:r0 + im.shape[0], c0:c0 + im.shape[1]] = im
-        rows.append(row)
-    out["views"] = np.vstack(rows)
+    out["views"] = np.vstack([_side_by_side([out[a], out[b]], cell=w)
+                              for a, b in (("side", "quarter"), ("top", "bottom"), ("back", "front"))])
     return out
 
 
@@ -1325,6 +1367,9 @@ def from_scan(mesh, foot: str, params: ShoeParams | None = None, kind: str = "ma
 # ---------------------------------------------------------------------------
 # files
 # ---------------------------------------------------------------------------
+# What every file made from generated test shapes starts with (CLAUDE.md: synthetic results are labelled).
+SYNTHETIC_TAG = "SYNTHETIC TEST GEOMETRY, not a foot. "
+
 # Until a shoe from this generator has been printed and worn, every sheet and every set of print notes says so.
 # Change this (and docs/footwear.md) when the print trials have results; don't delete it before then.
 UNTESTED = ("No shoe from this design has been printed or worn yet. Its thicknesses, heights and allowances are "
@@ -1464,20 +1509,30 @@ Walking under the break-in below does not wait for a signature. <b>This shoe is 
 </body></html>"""
 
 
+def _write_solid(mesh, out: Path, stem: str, title: str, notes: str, bed_mm: float) -> tuple:
+    """One solid's two files in ``out``: <stem>.3mf (its title and notes inside, placed on the bed) and
+    <stem>.stl (the shape alone: an STL has nowhere to carry a note). -> (the 3MF's path, the STL's)."""
+    threemf, stl = out / f"{stem}.3mf", out / f"{stem}.stl"
+    insole_mod.write_3mf(mesh, threemf, title=title, notes=notes, bed_mm=bed_mm)
+    mesh.export(stl)
+    return threemf, stl
+
+
 def write_outputs(shoe: Shoe, out_dir: Path, name: str, label: str, synthetic: bool = False) -> dict:
     """<name>.3mf, <name>.stl, <name>-summary.html, <name>-print-notes.txt, <name>.json and the pictures
-    (<name>-views.png with every view, and one file per view) in out_dir."""
+    (<name>-views.png with every view, and one file per view) in out_dir. Trial pieces written there earlier
+    under this name were cut from the shoe these files replace: ``clear_trials`` removes them (the command
+    does, once the new shoe is written)."""
     from .review import write_png
 
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
-    tag = "SYNTHETIC TEST GEOMETRY, not a foot. " if synthetic else ""
+    tag = SYNTHETIC_TAG if synthetic else ""
     notes = (f"{tag}Footscan clog ({shoe.foot} foot). NOT A MEDICAL DEVICE. Walking and casual wear only, not sport. "
              "Break-in as on the summary sheet.")
-    files = dict(threemf=out / f"{name}.3mf", stl=out / f"{name}.stl", summary=out / f"{name}-summary.html",
+    threemf, stl = _write_solid(shoe.mesh, out, name, f"{tag}{name}", notes, shoe.params.bed_mm)
+    files = dict(threemf=threemf, stl=stl, summary=out / f"{name}-summary.html",
                  notes=out / f"{name}-print-notes.txt", json=out / f"{name}.json")
-    insole_mod.write_3mf(shoe.mesh, files["threemf"], title=f"{tag}{name}", notes=notes, bed_mm=shoe.params.bed_mm)
-    shoe.mesh.export(files["stl"])
     files["summary"].write_text(summary_html(shoe, label, synthetic), encoding="utf-8")
     files["notes"].write_text(print_notes(shoe), encoding="utf-8")
     files["json"].write_text(json.dumps(dict(synthetic=synthetic, made_from=label, params=asdict(shoe.params), **shoe.report),
@@ -1486,3 +1541,251 @@ def write_outputs(shoe: Shoe, out_dir: Path, name: str, label: str, synthetic: b
         files[f"picture_{view}"] = out / f"{name}-{view}.png"
         write_png(files[f"picture_{view}"], img)
     return {k: str(v) for k, v in files.items()}
+
+
+# ---------------------------------------------------------------------------
+# print trials: small pieces of the shoe, to print before a whole one
+# ---------------------------------------------------------------------------
+# Where each piece is cut from the finished shoe, as shares of its length from the back. Judgments: each is meant
+# to be a small piece that still shows the thing it is printed to find out.
+TRIAL_BLOCK = (0.08, 0.22, 0.07)    # the sole block: from, to, and half its width about the heel's middle line
+TRIAL_BACK_UNTIL = 0.46             # the back half ends here...
+TRIAL_OPEN_MM = 6.0                 # ...or this far short of where the opening ends, if that is sooner: it is cut
+                                    # where the shoe is still open above, so it has no roof
+TRIAL_BACK_WALL_MM = 40.0           # its walls are cut off level this far above the heel's floor: all of the foot
+                                    # the walls were shaped to (the scan's first 30 mm), without the tall free
+                                    # ends the opening's climbing edge would leave standing at the cut...
+TRIAL_BACK_OVER_RIM_MM = 8.0        # ...or this far above the rim behind the heel, where that is higher
+TRIAL_TOE_FROM = 0.70               # the toe cap starts here: the roof over the toes, the sole under it. (Always
+                                    # roofed: the opening ends by 0.65 of the floor's length, ``_opening``.)
+TRIAL_SWATCH_FROM = 0.58            # the pattern swatch: a ring across the shoe from here...
+TRIAL_ROOFED_MM = 10.0              # ...or from this far forward of where the opening ends, if that is further on
+                                    # (the roof is whole from there)...
+TRIAL_SWATCH_MM = 40.0              # ...this long, or two and a half windows' spacing where that is longer, and
+                                    # never more than a bar's width (MIN_STRUT_MM) past the last window...
+TRIAL_SWATCH_FLOOR_MM = 2.0         # ...cut off flat this far under the inside's floor at the ball of the foot
+TRIAL_CRUMB_MM3 = 1.0               # where two cuts meet the edge of a window they can free a sliver of the upper
+                                    # (thousandths of a cubic millimetre, in the sweeps); loose bits smaller than
+                                    # this altogether are dropped, anything more and the piece is left out
+
+
+@dataclass
+class TrialPiece:
+    name: str                       # sole-block | swatch | toe-cap | back-half
+    mesh: object                    # trimesh.Trimesh, mm, standing on z = 0 the way it prints
+    report: dict = field(default_factory=dict)
+
+
+def trial_pieces(shoe: Shoe):
+    """Small pieces of this shoe to print before the whole of it. -> ({name: TrialPiece}, in the order to print
+    them; a line for each piece that had to be left out, and why).
+
+    Each is cut out of the finished solid with flat cuts, nothing else changed, so a piece is that part of the
+    shoe: what goes wrong on it would have gone wrong on the shoe, found on a small print instead of at the
+    end of a whole one. One difference is the cut faces themselves: a slicer closes them with walls the shoe
+    doesn't have there, so a piece is held together at its cuts in a way the shoe is not.
+
+    - ``sole-block``: a block of the sole from under the heel (between two cuts across the shoe and two along
+      it, either side of the heel's middle line), the tread under it and the footbed on top. For printing at
+      each cushioning's infill and squeezing.
+    - ``swatch`` (styles with a pattern only): a ring across the shoe forward of the opening (over the ball of
+      the foot, for the opening the styles come with), its walls and roof with their windows, cut off flat
+      ``TRIAL_SWATCH_FLOOR_MM`` under the inside's floor at the ball and set down on that cut. For seeing
+      whether the windows and the roof print cleanly. It ends no further forward than a bar's width past the
+      last window; where that leaves less than a window and a half's spacing, there is no swatch.
+    - ``toe-cap``: everything forward of ``TRIAL_TOE_FROM``. The roof over the toes, which hangs over empty
+      space and needs supports inside; and room for the toes.
+    - ``back-half``: everything behind ``TRIAL_BACK_UNTIL``, its walls cut off level ``TRIAL_BACK_WALL_MM``
+      above the heel's floor. The heel cup, the footbed under the arch, the walls where they were let out for
+      this foot, and the rim, with no roof to support.
+
+    The back half and the swatch follow the shoe's own opening (``opening_ends_mm`` in its report) and rim, so
+    a shoe with its opening further back or forward, or a higher rim, still gets a back half that is open above
+    with its rim whole and a swatch that is roofed over (the toe cap is forward of any opening the generator
+    makes). Where two cuts meet the edge of a window, a sliver of the upper can come loose: loose bits of less
+    than ``TRIAL_CRUMB_MM3`` altogether are dropped (the one thing a piece has less of than the shoe). A piece
+    that otherwise doesn't come out as one closed solid is left out and said; only when none does is that an
+    error.
+    """
+    import manifold3d as m3
+
+    r = shoe.report
+    L = float(shoe.mesh.bounds[1, 0])            # (the back of the shoe is at x = 0)
+    whole = m3.Manifold(m3.Mesh(vert_properties=np.asarray(shoe.mesh.vertices, np.float32),
+                                tri_verts=np.asarray(shoe.mesh.faces, np.uint32)))
+    if whole.status() != m3.Error.NoError:
+        raise FootwearError(f"the shoe's solid can't be cut into trial pieces ({whole.status()}); please report the sizes used")
+    opening = float(r["opening_ends_mm"])
+    heel, ball = float(r["sole"]["under_heel_mm"]), float(r["sole"]["under_ball_mm"])
+
+    def ahead_of(solid, x):
+        return solid.trim_by_plane((1.0, 0.0, 0.0), float(x))
+
+    def behind(solid, x):
+        return solid.trim_by_plane((-1.0, 0.0, 0.0), -float(x))
+
+    cuts, left_out = {}, []                      # name: (the solid, what it is, from and to along the shoe)
+    b0, b1, half = (s * L for s in TRIAL_BLOCK)
+    block = behind(ahead_of(whole, b0), b1)      # (the heel's middle line is y = 0, for a left shoe too)
+    cuts["sole-block"] = (block.trim_by_plane((0.0, 1.0, 0.0), -half).trim_by_plane((0.0, -1.0, 0.0), -half),
+                          f"from under the heel, {b0:.0f} to {b1:.0f} mm from the back, {2 * half:.0f} mm wide", b0, b1)
+    if r["pattern"]["count"]:
+        pitch = STYLES[shoe.params.style]["pitch_mm"][0]
+        s0 = max(TRIAL_SWATCH_FROM * L, opening + TRIAL_ROOFED_MM)
+        s1 = s0 + max(TRIAL_SWATCH_MM, 2.5 * pitch)
+        ends = float(r["pattern"]["ends_mm"]) + MIN_STRUT_MM     # the last window whole, with a bar's width past it
+        if s1 > ends:                            # past that: slid back to end there, never onto the opening
+            s0, s1 = max(opening + TRIAL_ROOFED_MM, ends - (s1 - s0)), ends
+        if s1 - s0 < 1.5 * pitch:
+            left_out.append(f"{_TRIALS['swatch'][0]}: left out. There is only {max(s1 - s0, 0.0):.0f} mm to cut it from, "
+                            "between where this shoe's roof is whole and its last window: less than a window and a "
+                            f"half's spacing ({1.5 * pitch:.0f} mm).")
+        else:
+            z0 = ball - TRIAL_SWATCH_FLOOR_MM
+            ring = behind(ahead_of(whole, s0), s1).trim_by_plane((0.0, 0.0, 1.0), z0).translate((0.0, 0.0, -z0))
+            cuts["swatch"] = (ring, f"a ring across the shoe forward of its opening, {s0:.0f} to {s1:.0f} mm from the back, "
+                                    f"cut off flat {TRIAL_SWATCH_FLOOR_MM:.0f} mm under the inside's floor at the ball of the "
+                                    "foot (so its base is the top of the sole, and any footbed standing on it there)", s0, s1)
+    t0 = TRIAL_TOE_FROM * L
+    cuts["toe-cap"] = (ahead_of(whole, t0), f"everything forward of {t0:.0f} mm from the back", t0, L)
+    h0 = min(TRIAL_BACK_UNTIL * L, opening - TRIAL_OPEN_MM)
+    wall = max(TRIAL_BACK_WALL_MM, float(r["heel_rim_mm"]) + TRIAL_BACK_OVER_RIM_MM)
+    cuts["back-half"] = (behind(whole, h0).trim_by_plane((0.0, 0.0, -1.0), -(heel + wall)),
+                         f"everything behind {h0:.0f} mm from the back, its walls cut off level {wall:.0f} mm above the "
+                         "heel's floor", 0.0, h0)
+
+    pieces = {}
+    for name, (solid, cut, x0, x1) in cuts.items():
+        try:
+            parts = sorted(solid.decompose(), key=lambda part: -part.volume())      # the piece, and any crumbs
+            if not parts or sum(part.volume() for part in parts[1:]) > TRIAL_CRUMB_MM3:
+                raise FootwearError("it didn't come out as one piece; please report the sizes used")
+            mesh, _ = _closed_mesh(parts[0], "it")
+        except FootwearError as err:
+            left_out.append(f"{_TRIALS[name][0]}: left out ({err}).")
+            continue
+        ext = mesh.extents
+        pieces[name] = TrialPiece(name=name, mesh=mesh, report=dict(
+            piece=name, cut=cut, foot=shoe.foot, style=shoe.params.style, from_mm=round(float(x0), 1), to_mm=round(float(x1), 1),
+            length_mm=round(float(ext[0]), 1), width_mm=round(float(ext[1]), 1), height_mm=round(float(ext[2]), 1),
+            volume_cm3=round(float(mesh.volume) / 1000, 1)))
+    if not pieces:
+        raise FootwearError("no trial piece could be cut from this shoe: " + " ".join(left_out))
+    return pieces, left_out
+
+
+# What each trial piece is printed to find out: (what it is called, how to print it, what to look at).
+_TRIALS = {
+    "sole-block": ("Sole block",
+                   "Print three, with gyroid infill at {soft}, {medium} and {firm}% (3 walls, 4 top layers), and mark which is which.",
+                   "Squeeze each between finger and thumb, then press it under a heel while seated. Press in the middle "
+                   "of its top: its four cut sides are printed as walls, which the sole doesn't have there, so its "
+                   "edges will not feel like the shoe. Which one should the sole be: soft ({soft}%), medium ({medium}%) "
+                   "or firm ({firm}%)? Is the top closed and smooth? Does the tread underneath print cleanly?"),
+    "swatch": ("Pattern swatch",
+               "As the shoe would print: 3 walls, the cushioning's infill, supports inside (tree supports standing on its floor).",
+               "Are the windows' edges clean, with no strands drooping across them? Are the bars between them whole? "
+               "Did the roof print without sagging, and do the supports come out without tearing it? (Windows that "
+               "the two cuts went through are part windows: look at the whole ones.)"),
+    "toe-cap": ("Toe cap",
+                "As the shoe would print: 3 walls, the cushioning's infill, supports inside (tree supports standing on the footbed).",
+                "Do the supports under the roof come out through the open end, and is the inside smooth afterwards? "
+                "Seated, sock on, slide the front of the foot in: is there room past the toes and over them? Does "
+                "anything press on the toes or the sides?"),
+    "back-half": ("Back half",
+                  "As the shoe would print: 3 walls, the cushioning's infill. No roof, so it should need no supports.",
+                  "Seated, sock on, set the heel down into the cup and rest the foot on it. Does the heel sit down into "
+                  "the cup? Does the raised part under the arch feel like support or like a ridge? Do the walls touch "
+                  "the foot, press on it, or stand off it? Is the rim behind the heel too high or too low?"),
+}
+TRIAL_WARNING = ("Trial pieces are not shoes: they are for looking at, squeezing by hand and trying against the foot while "
+                 "seated. Do not stand or walk in one.")
+
+
+def _let_out_lines(let: dict, piece: dict) -> list:
+    """What the sheet says under a piece about walls let out for this foot: a line for each stretch that is
+    let out (by a millimetre or more) and reaches into the piece. Where a stretch runs on past the piece's cut,
+    the line says the piece shows it only that far, and whether its greatest point is in the piece."""
+    lines = []
+    for side, v in let.items():
+        for run in v.get("stretches") or []:
+            if run["from_mm"] >= piece["to_mm"] or run["to_mm"] <= piece["from_mm"]:
+                continue                         # none of this stretch is in the piece
+            said = (f"   This shoe's {side} wall is let out by up to {run['max_mm']} mm for this foot, between "
+                    f"{run['from_mm']:.0f} and {run['to_mm']:.0f} mm from the back")
+            if run["to_mm"] <= piece["to_mm"]:
+                lines.append(f"{said}: all of that is in this piece, which is where to check it.")
+            else:
+                most = ("the most of it included" if run["at_mm"] <= piece["to_mm"]
+                        else f"not the most of it, which is at {run['at_mm']:.0f} mm")
+                lines.append(f"{said}. This piece ends at {piece['to_mm']:.0f} mm: it shows that stretch as far as there "
+                             f"({most}), and the whole shoe the rest.")
+    return lines
+
+
+def trial_notes(shoe: Shoe, pieces: dict, left_out=()) -> str:
+    """The sheet that goes with the trial pieces: what each one is, how to print it and what to look at."""
+    let = (shoe.report.get("footbed") or {}).get("let_out") or {}
+    lines = [f"Footscan clog ({shoe.foot} foot, {shoe.params.style}): print trials",
+             f"NOT A MEDICAL DEVICE. {TRIAL_WARNING}", "", UNTESTED,
+             "Print these before a whole shoe, in this order. Each is that part of this shoe, cut out with flat cuts and",
+             "nothing else changed, so what goes wrong on a piece would have gone wrong on the shoe. (The cut faces are",
+             "the difference: a slicer closes them with walls the shoe doesn't have there.) For all of them: TPU 95A,",
+             "dried; the flat side down, as the file is placed; scale 100%. Starting points only: none of these settings",
+             "has been tried on this design.", ""]
+    for i, (name, piece) in enumerate(pieces.items(), 1):
+        title, how, look = (s.format(**CUSHION) for s in _TRIALS[name])
+        p = piece.report
+        lines += [f"{i}. {title}: {p['length_mm']} x {p['width_mm']} x {p['height_mm']} mm, {p['volume_cm3']} cm3 if it were solid.",
+                  f"   What it is: {p['cut']}.", f"   Print: {how}", f"   Look at: {look}"]
+        if name == "back-half":
+            lines += _let_out_lines(let, p)
+        lines.append("")
+    lines += [*left_out, *([""] if left_out else []),
+              "Write down what you see on each piece. The generator's thicknesses and allowances are corrected from that",
+              "before a whole shoe is printed.", ""]
+    return "\n".join(lines)
+
+
+def clear_trials(out_dir: Path, name: str) -> None:
+    """Remove the trial files written earlier under this name (only the names ``write_trials`` writes). They
+    were cut from an earlier shoe: left beside a new one, a piece of the old shoe would be printed as the new
+    one's (and a style without windows writes no swatch over the old style's). ``write_trials`` does this
+    before it writes; whoever writes a shoe again without its trials does it after the shoe is written."""
+    out = Path(out_dir)
+    for old in [*(out / f"{name}-trial-{piece}{end}" for piece in _TRIALS for end in (".3mf", ".stl")),
+                *(out / f"{name}-trials{end}" for end in (".txt", ".json", ".png"))]:
+        old.unlink(missing_ok=True)
+
+
+def write_trials(shoe: Shoe, out_dir: Path, name: str, label: str, synthetic: bool = False) -> tuple:
+    """The trial pieces' files in out_dir: <name>-trial-<piece>.3mf and .stl for each, <name>-trials.txt (what
+    each is for), <name>-trials.json and <name>-trials.png (every piece, seen from the front and outer side).
+    Earlier trial files under this name are removed first. -> (the files, a line for each piece this shoe
+    couldn't give)."""
+    from .review import write_png
+
+    out = Path(out_dir)
+    pieces, left_out = trial_pieces(shoe)        # (before anything is removed or written)
+    out.mkdir(parents=True, exist_ok=True)
+    clear_trials(out, name)
+    tag = SYNTHETIC_TAG if synthetic else ""
+    files = {}
+    views = []
+    for piece in pieces.values():
+        title = _TRIALS[piece.name][0].lower()
+        files[f"{piece.name}_threemf"], files[f"{piece.name}_stl"] = _write_solid(
+            piece.mesh, out, f"{name}-trial-{piece.name}", f"{tag}{name} trial: {title}",
+            f"{tag}Footscan clog ({shoe.foot} foot), print trial: {title}. NOT A MEDICAL DEVICE. {TRIAL_WARNING}",
+            shoe.params.bed_mm)
+        views.append(picture(piece.mesh, "quarter", shoe.foot))
+    files["notes"] = out / f"{name}-trials.txt"
+    files["notes"].write_text(tag + trial_notes(shoe, pieces, left_out), encoding="utf-8")
+    files["json"] = out / f"{name}-trials.json"
+    files["json"].write_text(json.dumps(dict(synthetic=synthetic, made_from=label,
+                                             warning=f"NOT A MEDICAL DEVICE. {TRIAL_WARNING}",
+                                             pieces=[p.report for p in pieces.values()], left_out=list(left_out)),
+                                        indent=2), encoding="utf-8")
+    files["picture"] = out / f"{name}-trials.png"
+    write_png(files["picture"], _side_by_side(views, standing=True))     # one row, every piece at the same scale
+    return {k: str(v) for k, v in files.items()}, list(left_out)

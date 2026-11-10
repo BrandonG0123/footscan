@@ -23,7 +23,9 @@ A slip-on clog, one print per shoe, made for one foot:
 model from the iPhone app say what it is, as the studio does:
 `--kind sole_up` (or `sole_hanging`, `impression`, `foot`), and `--up z` if
 its up axis isn't y. `--pair` also writes the other foot's shoe as this
-one's mirror image (see *A pair from one foot*). It writes, per shoe:
+one's mirror image (see *A pair from one foot*). `--trials` also writes
+small pieces of the shoe to print first (see *Print trials*). It writes,
+per shoe:
 
 | File | What |
 |---|---|
@@ -33,6 +35,7 @@ one's mirror image (see *A pair from one foot*). It writes, per shoe:
 | `right-clog-print-notes.txt` | Starting points for TPU 95A. Untested. |
 | `right-clog.json` | Everything above as data. |
 | `right-clog-views.png` | Six pictures on one sheet (side, three-quarter, top, sole, back, front), and one file per view. |
+| `right-clog-trial-*.3mf`, `right-clog-trials.txt` | With `--trials`: the print-trial pieces and their sheet. |
 
 ## What comes from the foot, and what doesn't
 
@@ -213,8 +216,66 @@ percentage; slow.
   the length), the shoe for a 285 mm foot fits (`vent`, `stone`; 280 mm for `stream`) and
   the one for a 290 mm foot doesn't; the report and the sheet say when it
   doesn't.
-- **Before a whole shoe:** trial pieces (a toe cap, a swatch of the pattern,
-  a block of the sole at each infill). Not generated yet.
+- **Before a whole shoe:** the trial pieces below.
+
+## Print trials
+
+A whole shoe is a long print, and nothing about this design has been
+printed. `--trials` (or `footwear.write_trials`) cuts small pieces out of
+the finished shoe with flat cuts and nothing else changed, so each is that
+part of the shoe: what goes wrong on a piece would have gone wrong on the
+shoe. The cut faces are the one difference: a slicer closes them with walls
+the shoe doesn't have there, which is why the sole block is pressed in the
+middle of its top and not at its edges. In the order to print them:
+
+| Piece | What it is | What it is printed to find out |
+|---|---|---|
+| `sole-block` | A block of the sole from under the heel (8% to 22% of the length, 14% of the length wide about the heel's middle line): the tread under it, the footbed on top, no wall. | The cushioning. Print three, at 15, 20 and 25% infill, and squeeze them. |
+| `swatch` | Styles with windows only. A ring across the shoe forward of its opening: from 58% of the length, or from 10 mm past where the opening ends if that is further on; 40 mm long, or two and a half windows where that is longer; never more than a bar's width (2.6 mm) past the last window. Cut off flat 2 mm under the inside's floor at the ball of the foot and set down on that cut. | Whether the windows' edges and the bars between them print cleanly, and whether the roof prints over supports that then come out. |
+| `toe-cap` | Everything forward of 70% of the length (forward of any opening the generator makes: it ends by 65% of the floor's length). | The roof over the toes, which hangs over empty space and needs supports inside; and, seated, the room past and over the toes. |
+| `back-half` | Everything behind 46% of the length, or 6 mm short of where the opening ends if that is sooner, so it is cut where the shoe is still open above. Its walls are cut off level 40 mm above the heel's floor (8 mm above the rim behind the heel where that is higher), so no tall free ends are left standing at the cut. | The fit a sole scan is used for: the heel cup, the footbed under the arch, the walls where they were let out for this foot, the rim. No roof, so no supports. |
+
+Files: `<name>-trial-<piece>.3mf` and `.stl`, `<name>-trials.txt` (what
+each piece is, how to print it, what to look at), `<name>-trials.json`,
+`<name>-trials.png`. With `--pair` they are the scanned foot's shoe's
+only, not its mirror image's.
+
+- **Old pieces are removed.** A piece of an earlier shoe left in the folder
+  would be printed as the new one's. Writing the trials again removes the
+  set written before (only the names above), and the command removes them
+  once it has written a shoe again without `--trials`. `write_outputs`
+  itself removes nothing: code that writes a shoe again calls
+  `footwear.clear_trials` after it.
+- **A piece that can't be made is left out and said.** Where a shoe has less
+  than a window and a half's spacing of patterned roof forward of its
+  opening there is no swatch; a piece that doesn't come out as one closed
+  solid is left out. Either way the sheet has a line for it, the command
+  prints a warning, and the other pieces are written. Only when no piece
+  can be made is it an error.
+- **Slivers.** Where two cuts meet the edge of a window they can free a
+  sliver of the upper far smaller than a nozzle's line. Loose bits of less
+  than 1 mm³ altogether are dropped (`TRIAL_CRUMB_MM3`): the one thing a
+  piece has less of than the shoe. Anything more coming loose and the piece
+  is left out.
+- **A let-out wall.** Under the back half the sheet has a line for each
+  stretch along which a wall was let out for this foot by a millimetre or
+  more: from where to where, in millimetres from the back of the shoe, and
+  by how much at most. It says whether the piece holds all of that stretch
+  or shows it only as far as its cut, and then whether the most of it is in
+  the piece. The shoe's report has the same under `let_out`: `at_mm`, and
+  `stretches` (each `from_mm`, `to_mm`, `max_mm`, `at_mm`). A wall let out
+  in two places, with the standard shape between, is two stretches.
+
+**Trial pieces are not shoes.** They are for looking at, squeezing by hand
+and trying against the foot while seated. The sheet, each 3MF's own note
+and the data file say NOT A MEDICAL DEVICE and: do not stand or walk in
+one. (An STL has nowhere to carry a note, and the picture is only a
+picture: keep the sheet with them.) A cut-off piece of a shoe has nothing
+holding it on the foot or level on the floor.
+
+The cut positions are judgments (`TRIAL_*` in `footwear.py`), like
+everything else here: each is meant to be a small piece that still shows
+what it is printed for.
 
 ## What's been checked
 
@@ -274,6 +335,43 @@ printer or a worn shoe.
   other foot's).
 - An openness below 0 or above 0.5 is refused; one given to `stone`, which
   has no windows, is said to change nothing.
+- The trial pieces: each is one closed solid standing on its flat side. The
+  toe cap's volume is what trimesh's own cut of the shoe has forward of the
+  same plane (to 1 part in 10,000), and 300 of its points lie on the shoe's
+  surface (within 0.001 mm). The sole block's top is the footbed and
+  nothing stands on it; the swatch has the shoe's windows through it (20 or
+  more on `vent`, 6 or more on `stream`) and a 2 mm floor; the back half
+  answers the same probes as the shoe for its footbed, both walls and the
+  lip, and no slice across it is closed over (no roof).
+- The trial cuts follow the shoe. A small shoe with a 12 mm drop, a 36 mm
+  rim and its opening ending at 0.35 (where a cut at 46% whatever the
+  opening leaves a strip of roof on the back half): the back half ends 6 mm
+  short of the opening's end and is open above all along. An opening ending
+  at 0.65: the swatch starts 10 mm past it, where the same shoe without
+  windows is closed over, and ends a bar's width past the last window; the
+  toe cap of the smallest adult size is still roofed where it is cut. A
+  44 mm rim is whole in its back half. A 185 mm foot's `stream` shoe with
+  the opening at 0.65 has too little patterned roof left for a swatch
+  (under a window and a half's spacing), so there is none, and the sheet
+  says so.
+- The block foot's inner wall against the same shoe from ruler numbers
+  alone: it stands out by the reported most (within 0.3 mm) at the reported
+  place, and by 1 mm where the reported stretch ends (within 1.5 mm), both
+  measured from the back of the shoe. A made-up outline with two 6 mm bumps
+  on its inner side, 80 mm apart, is let out in two stretches of 6 mm, not
+  one span.
+- A piece faked to come out broken is left out with its line on the sheet,
+  in the data and as a warning from the command, and the others are
+  written; with every piece broken it is an error, nothing is written or
+  removed, and the command still ends on its NOT A MEDICAL DEVICE line. Old
+  trial files go when the trials are written again or the command writes
+  the shoe again, and a file of one's own beside them stays.
+- 38 changes to the trial code tried one at a time (a cut moved or left
+  out or no longer following the opening or the rim, the swatch not set
+  down or run past the last window, a failed piece failing them all, old
+  files left, the let-out's place or wording, the not-a-shoe warning or NOT
+  A MEDICAL DEVICE dropped from the notes or the files, the command's error
+  handling), and each made a test fail.
 - The sheet carries NOT A MEDICAL DEVICE, walking and casual wear only, no
   posting, the standard-shape note, the untested note, the sign-off block,
   and the break-in: one paragraph in `insole.py` that both sheets print.
@@ -296,6 +394,16 @@ printer or a worn shoe.
   foot, left and right; each as scanned and with a ruler length 10% under
   and 7% over the scan's; three combinations of style, fit and toe): all 63
   came out as one closed solid, the most let out being the 20 mm limit.
+- A third SYNTHETIC sweep, for the trial pieces: ruler-number shoes for feet
+  185 to 325 mm long (width 0.373 of the length) in the three styles, with
+  the opening ending at 0.35, 0.42, 0.50, 0.58 and 0.65 and the rim at 20,
+  26 and 38 mm: 270 combinations. 9 were refused as shoes (a 38 mm rim as
+  high as the roof on the two smallest sizes). Of the 261 built, every
+  piece cut came out as one closed solid; 4 have no swatch and say why
+  (`stream` on the two smallest sizes with the opening at 0.65: too little
+  patterned roof left). Before slivers were dropped, the same sweep, stopped
+  part way, had lost the back half of three shoes (245 mm, patterned, the
+  opening at 0.35 or 0.42), each to one loose sliver of 0.004 mm³.
 
 ### The first real scan
 
@@ -330,7 +438,8 @@ stand on, are for the first print to answer.
 
 ## Not done yet
 
-- Print trials, and the settings and thicknesses they will correct.
+- Printing the trial pieces, and the settings and thicknesses they will
+  correct. The pieces are generated; none has been printed.
 - The studio: a *Make shoe* button, the preferences, a 3-D preview, and a
   plain description turned into these settings.
 - A left shoe from the left foot's own scan; a fit log that feeds back into

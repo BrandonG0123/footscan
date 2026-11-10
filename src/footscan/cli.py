@@ -248,8 +248,23 @@ def cmd_footwear(args) -> int:
             print(f"  warning: {w}", file=sys.stderr)
         for k, v in files.items():
             print(f"  {k}: {v}")
+        # trial pieces written here earlier were cut from the shoe these files replace
+        fw.clear_trials(Path(args.output), f"{s.foot}-clog")
+    status = 0
+    if args.trials:   # of the shoe made from this foot, not of its mirror image
+        try:
+            files, left_out = fw.write_trials(shoe, Path(args.output), f"{shoe.foot}-clog", label)
+        except fw.FootwearError as err:   # the shoe's own files are written and stand; only its pieces are missing
+            print(f"{shoe.foot} clog's trial pieces: {err} (The shoe's own files above are written.)", file=sys.stderr)
+            status = 1
+        else:
+            print(f"{shoe.foot} clog's trial pieces, to print before the whole shoe ({fw.TRIAL_WARNING})")
+            for line in left_out:
+                print(f"  warning: {line}", file=sys.stderr)
+            for k, v in files.items():
+                print(f"  {k}: {v}")
     print("NOT A MEDICAL DEVICE. Untested design. Walking and casual wear only, not sport; break-in as on the summary sheet.")
-    return 0
+    return status
 
 
 def cmd_export_measures(args) -> int:
@@ -432,6 +447,9 @@ def main(argv=None) -> int:
     fw.add_argument("--sock", type=float, default=0.0, help="extra room for a sock thicker than the one measured in, mm")
     fw.add_argument("--pair", action="store_true", help="also write the other foot's shoe as this one's mirror image "
                                                         "(not made from that foot's scan; its sheet says so)")
+    fw.add_argument("--trials", action="store_true", help="also write the print-trial pieces cut from this shoe (a block "
+                                                          "of its sole, a swatch of its pattern, its toe cap, its back "
+                                                          "half), to print before the whole of it")
     fw.set_defaults(func=cmd_footwear)
 
     cp = sub.add_parser("compare", help="how much two scans of the same foot agree (repeatability)")
