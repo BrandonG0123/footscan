@@ -550,7 +550,16 @@ printer or a worn shoe.
 - A code review of this stage found ten things, the first that the
   not-read rule was then a sentence wide and leaked ("For my flat feet:"
   followed by a list still set a firm sole beside the answer that nothing
-  was changed for that). Each has a test now that failed on the code before.
+  was changed for that). Eight have a test now that failed on the code
+  before. The ninth is in the page's own script, which the suite doesn't
+  run: the cut-open box ticked and unticked before the cut-open preview
+  arrives must leave the whole shoe drawn. That was tried in a headless
+  browser on scan 2349's shoe, as the page is (the whole shoe stayed) and
+  with the check taken out (the cut-open shoe was drawn with the box
+  unticked). The tenth was left as it is: the studio's Make printed shoe
+  repeats Make insole's choice of model instead of sharing one piece of
+  code with it, until the changes waiting on that code are merged. A test
+  holds the two to the same footbed.
 
 ### The first real scan
 
