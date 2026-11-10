@@ -39,7 +39,7 @@ MM_PER_PX = 0.5
 
 DEFAULT_SPEC = dict(shoe="ASICS Gel Resolution X", size="US men's 9.5", target_length_mm=275.0,
                     target_length_source="size-chart insole length, not a ruler measurement",
-                    length_tolerance_mm=1.0, pair_tolerance_mm=1.0,
+                    length_tolerance_mm=1.0, pair_tolerance_mm=1.0, shoe_length_tolerance_mm=5.0,
                     tolerances_source="a judgment, not measured", slicer="Bambu Studio",
                     slicer_scale_percent=100, bed_mm=256.0)
 
@@ -125,11 +125,50 @@ def checks(ins_dir: Path, meta: dict, report: dict, mesh, spec: dict, other: dic
     def add(name, ok, found):
         out.append(dict(name=name, ok=bool(ok), found=found))
 
-    target, tol = float(spec["target_length_mm"]), float(spec["length_tolerance_mm"])
+    tol = float(spec["length_tolerance_mm"])
     length = float(report["length_mm"])
-    add("length", abs(length - target) <= tol,
-        f"{length:.1f} mm long; the shoe's insole is {target:.1f} mm ({spec['target_length_source']}); "
-        f"allowed ±{tol:g} mm")
+    fit, shoe_name = report.get("shoe_fit"), report.get("shoe_name")
+    if fit:
+        # Cut to a shoe's outline (a saved shoe, or a shoe's-insole scan): the insole is checked against that
+        # outline, the one it was made to match, not the spec's size-chart length. A miss means the file was
+        # scaled or built another way.
+        target = float(fit["shoe_length_mm"])
+        which = f"the saved shoe {shoe_name}" if shoe_name else "the shoe's insole scan"
+        add("length", abs(length - target) <= tol,
+            f"{length:.1f} mm long; cut to the outline of {which}, {target:.1f} mm long; allowed ±{tol:g} mm")
+        named = f"{spec['shoe']}, {spec['size']}"
+        is_spec_shoe = True
+        if shoe_name:
+            from .shoes import same_shoe, slug
+
+            saved = (meta.get("insole") or {}).get("shoe") or {}
+            if saved.get("model") is not None and saved.get("size") is not None:
+                # name and size apart, compared as the shoe library tells shoes apart (two that share an id,
+                # "Nike Pegasus 40", "US 9" and "Nike Pegasus", "40 US 9", are different shoes)
+                is_spec_shoe = same_shoe(dict(name=saved["model"], size=saved["size"]),
+                                         dict(name=spec["shoe"], size=spec["size"]))
+            else:  # made before the server kept them apart: the label
+                is_spec_shoe = slug(shoe_name) == slug(named)
+            add("shoe", is_spec_shoe, f"cut to the saved shoe {shoe_name}; review-spec.json names {named}")
+        if is_spec_shoe:
+            # The insole matches its outline by construction, so that alone can't catch a wrong outline: a stock
+            # insole scanned a few percent small (LIDAR_nwb_relaxed_R_20261027-151404-2349 read the foot 8.4%
+            # shorter than a ruler) saves a short shoe, and every insole cut to it would pass. So the outline is
+            # checked against the spec's chart length too, more loosely (shoe_length_tolerance_mm, a judgment):
+            # a stock insole isn't exactly its size chart's length.
+            # The outline's own length (as saved), not along this foot: it's turned up to 10 degrees to the foot,
+            # which shortens it along the foot by a few mm
+            stol = float(spec["shoe_length_tolerance_mm"])
+            chart = float(spec["target_length_mm"])
+            own = outline_length(fit)
+            add("shoe_length", abs(own - chart) <= stol,
+                f"the outline of {which} is {own:.1f} mm long; review-spec.json's chart length for {named} is "
+                f"{chart:.1f} mm ({spec['target_length_source']}); allowed ±{stol:g} mm")
+    else:
+        target = float(spec["target_length_mm"])
+        add("length", abs(length - target) <= tol,
+            f"{length:.1f} mm long; the outline is the foot's own (no shoe's outline), checked against "
+            f"{spec['shoe']}, {spec['size']}: {target:.1f} mm ({spec['target_length_source']}); allowed ±{tol:g} mm")
 
     add("foot", report.get("foot") == meta.get("foot"),
         f"insole made for the {report.get('foot')} foot; the capture is a {meta.get('foot')} foot")
@@ -174,10 +213,24 @@ def checks(ins_dir: Path, meta: dict, report: dict, mesh, spec: dict, other: dic
         add("real_scan", False, "SYNTHETIC test geometry, not a foot: never print or wear it")
 
     if other is not None:
-        diff = length - float(other["length_mm"])
-        add("pair_length", abs(diff) <= float(spec["pair_tolerance_mm"]),
-            f"{other['foot']} insole ({other['capture']}) is {other['length_mm']:.1f} mm; difference {diff:+.1f} mm")
+        if fit and other.get("outline_length_mm") is not None:
+            # both cut to a shoe's outline: the outlines' own lengths. Each is turned to its own foot, so the
+            # insoles' lengths along the foot can differ by a mm or two for one and the same outline
+            mine, theirs = outline_length(fit), float(other["outline_length_mm"])
+            diff = mine - theirs
+            add("pair_length", abs(diff) <= float(spec["pair_tolerance_mm"]),
+                f"cut to an outline {mine:.1f} mm long; the {other['foot']} insole ({other['capture']}) to one "
+                f"{theirs:.1f} mm long; difference {diff:+.1f} mm")
+        else:
+            diff = length - float(other["length_mm"])
+            add("pair_length", abs(diff) <= float(spec["pair_tolerance_mm"]),
+                f"{other['foot']} insole ({other['capture']}) is {other['length_mm']:.1f} mm; difference {diff:+.1f} mm")
     return out
+
+
+def outline_length(fit: dict) -> float:
+    """A shoe outline's own length (as saved or scanned), not its length along the foot it was turned to."""
+    return float(fit.get("outline_length_mm", fit["shoe_length_mm"]))
 
 
 # ---------------------------------------------------------------------------
@@ -377,7 +430,8 @@ def _write_packet(data_dir, folder, meta, made, spec, work, out, read_json) -> N
         try:
             orep = read_json(other[0] / "insole" / "insole.json")
             other_info = dict(capture=other[0].name, foot=other[1]["foot"], length_mm=orep["length_mm"],
-                              width_mm=orep["width_mm"], made=other[1]["insole"]["made"])
+                              width_mm=orep["width_mm"], made=other[1]["insole"]["made"],
+                              outline_length_mm=outline_length(orep["shoe_fit"]) if orep.get("shoe_fit") else None)
             other_pts = _points(trimesh.load(other[0] / "insole" / "insole.stl", force="mesh"), 12.0)[0]
         except Exception as e:  # noqa: BLE001 - the other foot's broken files mustn't stop this foot's packet
             other_note = f"the other foot's insole ({other[0].name}) couldn't be read ({type(e).__name__})"
@@ -397,7 +451,8 @@ def _write_packet(data_dir, folder, meta, made, spec, work, out, read_json) -> N
         insole=dict(length_mm=report["length_mm"], width_mm=report["width_mm"], height_mm=report["height_mm"],
                     volume_cm3=report.get("volume_cm3"), max_fill_mm=report["max_fill_mm"],
                     max_fill_at_mm=report.get("max_fill_at_mm"), sole=report.get("sole"),
-                    shoe_fit=report.get("shoe_fit"), warnings=report.get("warnings", []),
+                    shoe_fit=report.get("shoe_fit"), shoe_name=report.get("shoe_name"),
+                    outline_from=report.get("outline_from"), warnings=report.get("warnings", []),
                     frame=report.get("frame")),
         other_foot=other_info, other_note=other_note,
         checks=results, flags=[c["name"] for c in results if not c["ok"]],
@@ -411,6 +466,15 @@ def _write_packet(data_dir, folder, meta, made, spec, work, out, read_json) -> N
     (work / "review.json").write_text(json.dumps(packet, indent=2), encoding="utf-8")
 
 
+def outline_line(i: dict) -> str:
+    """Where the insole's outline came from, for the packet: the shoe it was cut to, or the foot's own."""
+    fit = i.get("shoe_fit")
+    if not fit:
+        return "the foot's own (no shoe's outline): trim it to the shoe's stock insole, or rebuild it with a saved shoe."
+    which = f"the saved shoe {i['shoe_name']}" if i.get("shoe_name") else "a scan of the shoe's own insole"
+    return f"{which}, {outline_length(fit):g} mm long{' (mirrored for this foot)' if fit.get('mirrored') else ''}."
+
+
 def packet_markdown(p: dict) -> str:
     """The packet as a page a person or Claude reads top to bottom."""
     s, i = p["spec"], p["insole"]
@@ -422,8 +486,12 @@ def packet_markdown(p: dict) -> str:
               "(docs/SAFETY.md), and the break-in protocol still applies.", "",
               f"Made {p['made']}. Packet written {p['written']}.", "",
               "## The shoe", "",
-              f"- {s['shoe']}, {s['size']}: insole length {s['target_length_mm']:g} mm "
-              f"({s['target_length_source']}).",
+              f"- Outline: {outline_line(i)}",
+              f"- review-spec.json: {s['shoe']}, {s['size']}, insole length {s['target_length_mm']:g} mm "
+              f"({s['target_length_source']})"
+              + (f". An insole cut to a shoe's outline is checked against that outline's length, and the outline against "
+                 f"this length within ±{s['shoe_length_tolerance_mm']:g} mm" if i.get("shoe_fit")
+                 else "."),
               f"- Slice in {s['slicer']} at **{s['slicer_scale_percent']}% scale**. Never rescale the model in the "
               "slicer: if the size is wrong, rebuild the insole with the right length instead.", "",
               "## The insole (from insole.json)", "",

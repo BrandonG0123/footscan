@@ -187,8 +187,10 @@ you have one.
 
 | Check | PASS when | Why |
 |---|---|---|
-| `length` | within ±1 mm of the shoe's length | an insole built without the shoe length comes out at the foot's own length |
-| `pair_length` | left and right within ±1 mm of each other | both feet are built to the same shoe |
+| `length` | within ±1 mm of the shoe's length (for an insole cut to a shoe's outline, that outline's length) | an insole built without the shoe length comes out at the foot's own length |
+| `shoe` | a saved shoe's name and size are the spec's | an insole cut to another shoe |
+| `shoe_length` | the shoe's outline within ±5 mm of the spec's chart length (a judgment, not measured) | a stock insole scanned at the wrong scale, or another size, makes insoles that match it but not the shoe |
+| `pair_length` | left and right within ±1 mm of each other (cut to a shoe's outline: the outlines' own lengths, as each is turned a little to its foot) | both feet are built to the same shoe |
 | `3mf_size` | the 3MF is in millimetres, its placement only turns and moves it, and it and the STL are as long as insole.json says | it prints at the right size with the slicer at 100% |
 | `foot` | the insole was made for the capture's foot | a left/right mix-up |
 | `no_posting` | no posting angle set | the first fit has no posting (SAFETY.md) |

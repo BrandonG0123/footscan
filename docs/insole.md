@@ -20,6 +20,80 @@ reconstructions are; mm, cm or m are detected. It writes:
 | `print-notes.txt` | Starting points for TPU. Untested on this design (that's Phase 5). |
 | `right-insole.json` | Everything above as data. |
 
+## The outline is the shoe's: saved shoes
+
+The insole's outline belongs to the shoe, not the foot: it has to go into
+the shoe the way the stock insole came out, whoever wears it. So, as custom
+insole makers do, the outline is kept **per shoe model and size**, and only
+the top surface (the arch fill, the heel cup's depth) comes from the foot.
+A foot's own outline also carries any error in the scan's size into the
+insole: the right-foot sole-up scan LIDAR_nwb_relaxed_R_20261027-151404-2349
+measured 244.3 mm long and 94.3 mm wide, against the owner's ruler reading of
+the same foot, 10.5 x 4 in (266.7 x 101.6 mm, 2026-11-01): 8.4% and 7.2% small.
+An outline cut from it comes out too short and too narrow; a shoe's outline
+doesn't move with the scan.
+
+Save a shoe once, from a scan of its own stock insole lying flat (the app's
+*Shoe's insole* card):
+
+```bash
+.venv/bin/footscan shoe add stock-insole.obj --name "ASICS Gel Resolution X" --size "US men's 9.5" --default
+.venv/bin/footscan shoe list            # * marks the default
+.venv/bin/footscan shoe default none    # back to the foot's own outline
+```
+
+In the studio: *Save as a shoe* on the shoe's-insole scan's card, then the
+outline menu on any foot scan's card lists the saved shoes, the default
+chosen. Saved shoes are small JSON files in `data/shoes/`, each holding the
+outline in mm with the heel at the origin (`footscan/shoes.py`). A studio
+started with `--data X` keeps them in `X/shoes`; point the command line at
+the same folder with `--shoes X/shoes`. A shoe's insole isn't personal data.
+
+With a default saved shoe, `footscan insole` and *Make insole* take its
+outline unless told otherwise (`--shoe <another id or a scan>`, `--length`,
+or `--foot-outline`; in the studio, the outline menu). The outline is placed
+round the foot exactly as a scanned shoe's insole is (below) and keeps its
+shape. On SYNTHETIC test feet (`tests/test_shoes.py`, 2026-11-04), a foot and
+the same foot scaled to 93% got insole outlines of 22,847 mm2 each in the same
+saved shoe; with their own outlines, 20,144 and 17,532 mm2 (13.0% less). Without any shoe the outline is the foot's own, and
+the summary sheet and the studio say so: trim it to the stock insole.
+
+Saving a shoe again (a better scan of it) makes insoles made from the old
+outline stale in the studio, as a re-scanned foot does, and the studio says
+it was the shoe that changed.
+
+One saved outline serves both feet: it's kept as scanned (from the left or
+the right shoe's insole) and mirrored for the other foot, so that insole's
+sheet doesn't warn about mirroring. If the saved outline's side can't be told
+(its toe end points nearly straight ahead), both feet use it as saved and the
+sheet says to check each insole against its own stock insole.
+
+A default saved shoe that can't be read (its file was edited by hand or is
+gone) stops *Make insole* and `footscan insole` with a message saying so,
+rather than quietly cutting the insole to the foot's own outline. Save it
+again, choose another (`footscan shoe default <id>`), or ask for the foot's
+own outline (`--foot-outline`). A saved shoe's id is its file's name.
+
+The review packet (docs/ALWAYS-ON.md) checks an insole cut to a saved shoe
+against that shoe's outline length, FLAGs `shoe` if the saved shoe isn't the
+one the spec names, and FLAGs `shoe_length` if the outline is more than 5 mm
+off the spec's chart length (a stock insole scanned at the wrong scale would
+otherwise make insoles that match it exactly and pass).
+
+A saved shoe's outline also hides a foot scan that reads small: the insole
+still fits the shoe, but the arch support sits where the scan puts the arch.
+When the foot reads more than 20 mm shorter than the shoe's insole (a
+judgment: Brandon's ruler length, 266.7 mm, leaves about 8 mm in the 275 mm
+chart insole), the sheet says so and asks for a ruler measurement of the foot.
+
+Two different shoes can get the same id (the id keeps only a-z and 0-9, so
+"Nike Pegasus 40", "US 9" and "Nike Pegasus", "40 US 9" meet). Saving the
+second is refused with a message, rather than replacing the first; give it a
+name that tells them apart. The same shoe saved again, written a little
+differently, still replaces it.
+
+No saved shoe exists yet: the stock ASICS insole hasn't been scanned.
+
 `--length 270` lengthens the insole to a shoe's insole length (mm): only the
 flat front reaches further, the shape under the heel, arch and ball stays
 where the foot is, and it's never made shorter than the foot. In the studio
