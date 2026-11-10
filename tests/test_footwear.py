@@ -818,6 +818,30 @@ def test_the_trial_files_say_they_are_not_shoes_and_what_each_piece_is_for(vent,
     assert "SYNTHETIC" not in fw.trial_notes(vent, pieces)          # only what is labelled synthetic says so
 
 
+def test_the_trial_sheet_and_data_file_name_the_make_of_the_shoe_the_pieces_were_cut_from(vent, tmp_path):
+    """Pieces take hours to print, and the studio's shoe may be made again meanwhile. What they showed is recorded
+    about the shoe they were cut from, which the person has to name: the sheet and the data file say which, in
+    the words the studio lists that shoe by (footwear_fit.shown)."""
+    made = "2026-11-10T22:00:13"
+    name = fw.made_name("vent", "regular", "medium", made)
+    assert name == "Vent shoe made 2026-11-10 22:00:13, regular fit, medium cushioning"
+    files, _ = fw.write_trials(vent, tmp_path, "clog", "SYNTHETIC ruler numbers", synthetic=True, made=made)
+    notes = open(files["notes"], encoding="utf-8").read()
+    assert f"These pieces were cut from the {name}." in notes and "that is the shoe to pick" in notes
+    assert notes.index("NOT A MEDICAL DEVICE") < notes.index(name) < notes.index("1. Sole block")   # before the pieces
+    saved = json.loads(open(files["json"], encoding="utf-8").read())
+    assert saved["cut_from"] == dict(made=made, name=name, style="vent", fit="regular", cushion="medium")
+    # the name is of the shoe as it was made: another fit and cushioning, made in the same minute, reads differently
+    other = fw.build("right", fw.ShoeParams(style="stone", fit="roomy", cushion="firm", **RULER))
+    pieces, left_out = fw.trial_pieces(other)
+    assert ("These pieces were cut from the Stone shoe made 2026-11-10 22:00:41, roomy fit, firm cushioning."
+            in fw.trial_notes(other, pieces, left_out, "2026-11-10T22:00:41"))
+    # the command keeps no record of what pieces showed and stamps no make: its sheet names none
+    files, _ = fw.write_trials(vent, tmp_path / "command", "right-clog", "SYNTHETIC ruler numbers", synthetic=True)
+    assert "cut from the" not in open(files["notes"], encoding="utf-8").read()
+    assert json.loads(open(files["json"], encoding="utf-8").read())["cut_from"] is None
+
+
 def test_the_trial_cuts_follow_the_shoes_own_opening():
     """An opening that ends further back or further forward than the styles' own. The back half is cut where the
     shoe is still open above; the toe cap and the swatch start where its roof is whole. SYNTHETIC sizes; the

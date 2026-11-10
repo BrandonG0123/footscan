@@ -1802,6 +1802,7 @@ def make_clog(folder: Path, meta: dict, choices: dict | None = None, trials: boo
     tmp = folder / f"clog.part-{secrets.token_hex(4)}"  # this request's own: never shared with another
     label = f"{meta.get('capture_id', folder.name)}, {source}"
     cut = None
+    made = now_iso()  # before its files are written: the trial pieces' sheet names the shoe by this stamp too
     try:
         fw.write_outputs(shoe, tmp, "clog", label)
         (tmp / "clog-summary.html").rename(tmp / "summary.html")  # fixed names, so the studio can link them
@@ -1809,9 +1810,9 @@ def make_clog(folder: Path, meta: dict, choices: dict | None = None, trials: boo
         fw.write_preview(shoe, tmp, "clog")
         if trials:
             try:
-                _, left_out = fw.write_trials(shoe, tmp, "clog", label)
-                made = json.loads((tmp / "clog-trials.json").read_text(encoding="utf-8"))
-                cut = dict(pieces=made["pieces"], left_out=left_out, warning=fw.TRIAL_WARNING)
+                _, left_out = fw.write_trials(shoe, tmp, "clog", label, made=made)
+                written = json.loads((tmp / "clog-trials.json").read_text(encoding="utf-8"))
+                cut = dict(pieces=written["pieces"], left_out=left_out, warning=fw.TRIAL_WARNING)
             except fw.FootwearError as e:  # the shoe stands; only its trial pieces are missing, and that is said
                 cut = dict(error=str(e))
         old = folder / f"clog.old-{secrets.token_hex(4)}"
@@ -1826,7 +1827,7 @@ def make_clog(folder: Path, meta: dict, choices: dict | None = None, trials: boo
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
     r = shoe.report
-    return dict(made=now_iso(), foot=foot, style=r["style"], choices=choices, made_for=r["made_for"], inside=r["inside"],
+    return dict(made=made, foot=foot, style=r["style"], choices=choices, made_for=r["made_for"], inside=r["inside"],
                 length_mm=r["length_mm"], width_mm=r["width_mm"], height_mm=r["height_mm"], volume_cm3=r["volume_cm3"],
                 sole=r["sole"], pattern=r["pattern"], bed=r["bed_fit"],
                 footbed=None if r["footbed"] is None else {k: r["footbed"][k] for k in (

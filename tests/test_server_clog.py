@@ -2,6 +2,8 @@
 the footwear API). Every foot here is ``synth.block_foot`` (SYNTHETIC), imported as the iPhone app would send it.
 """
 
+import datetime as dt
+import itertools
 import json
 import os
 import threading
@@ -284,8 +286,12 @@ def test_making_an_insole_and_a_shoe_from_one_capture_keeps_both(servers):
 
 # ---- what a shoe can be set to, and a description read into those settings ------------------------------------
 
-def test_what_the_trial_pieces_showed_is_kept_about_the_shoe_they_were_cut_from_and_changes_no_choice(servers):
+def test_what_the_trial_pieces_showed_is_kept_about_the_shoe_they_were_cut_from_and_changes_no_choice(servers, monkeypatch):
     op, phone, data = servers
+    # a clock that moves on a second every time it is read: two stamps taken in one build would differ
+    seconds = itertools.count()
+    monkeypatch.setattr(server, "now_iso", lambda: (dt.datetime(2026, 11, 10, 22, 0) + dt.timedelta(seconds=next(seconds)))
+                        .isoformat(timespec="seconds"))
     cid = _foot_capture(op)
     meta = lambda: json.loads((data / "captures" / cid / "capture.json").read_text())  # noqa: E731
     clog, url = f"{op}/api/captures/{cid}/clog", f"{op}/api/captures/{cid}/clog/fit"
@@ -304,7 +310,13 @@ def test_what_the_trial_pieces_showed_is_kept_about_the_shoe_they_were_cut_from_
     pieces = [p["piece"] for p in shoe["trials"]["pieces"]]
     (first,) = body(call(url))["shoes"]
     assert first == dict(made=shoe["made"], style="stone", choices=shoe["choices"], pieces=pieces, recordable=True,
+                         name=fw.made_name("stone", "snug", "medium", shoe["made"]),
                          questions=footwear_fit.questions(pieces), records=[], suggestion=None)
+    # the pieces' own sheet and data file name the shoe they were cut from, in the words the page lists it by
+    sheet = lambda: call(f"{op}/api/captures/{cid}/clog/clog-trials.txt")[1].decode()  # noqa: E731
+    assert f"These pieces were cut from the {first['name']}." in sheet()
+    assert body(call(f"{op}/api/captures/{cid}/clog/clog-trials.json"))["cut_from"] == dict(
+        made=shoe["made"], name=first["name"], style="stone", fit="snug", cushion="medium")
     assert "windows" not in [q["key"] for q in first["questions"]]   # Stone has no windows, so no swatch was cut
     assert call(f"{phone}/api/captures/{cid}/clog/fit")[0] == 403                      # studio only, like the shoe
     assert call(f"{phone}/api/captures/{cid}/clog/fit", "POST", {"made": shoe["made"], "answers": {"hurt": "no"}})[0] == 403
@@ -332,7 +344,8 @@ def test_what_the_trial_pieces_showed_is_kept_about_the_shoe_they_were_cut_from_
     # The shoe made again to the cushioning suggested, before its other pieces were tried. Its back half, tried
     # afterwards, is recorded about the shoe it was cut from, and read with that shoe's first record.
     again = body(call(clog, "POST", {"style": "stone", "fit": "snug", "cushion": "firm", "trials": True}))
-    assert [s["made"] for s in meta()["clog_trial_shoes"]] == [shoe["made"], again["made"]]
+    assert [s["made"] for s in meta()["clog_trial_shoes"]] == [shoe["made"], again["made"]] and again["made"] != shoe["made"]
+    assert fw.made_name("stone", "snug", "firm", again["made"]) in sheet() and first["name"] not in sheet()
     said = body(call(url, "POST", {"made": shoe["made"], "answers": {"hurt": "no", "walls": "press"}}))
     newest, first = said["shoes"]
     assert newest["made"] == again["made"] and newest["records"] == [] and newest["suggestion"] is None

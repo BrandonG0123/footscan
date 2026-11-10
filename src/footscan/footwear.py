@@ -1837,11 +1837,35 @@ def _let_out_lines(let: dict, piece: dict) -> list:
     return lines
 
 
-def trial_notes(shoe: Shoe, pieces: dict, left_out=()) -> str:
-    """The sheet that goes with the trial pieces: what each one is, how to print it and what to look at."""
+def made_name(style: str, fit: str, cushion: str, made: str) -> str:
+    """One make of a shoe, named so a person can tell it from the one made before or after it: its style, when
+    it was made (to the second) and the fit and cushioning it was made to (the two choices a trial record can
+    suggest changing). The trial pieces' sheet and the studio's trial record (footwear_fit.shown) both name a
+    shoe with this, so the shoe a printed piece was cut from is picked out by reading its sheet."""
+    label = STYLES[style]["label"] if style in STYLES else style
+    return f"{label} shoe made {str(made).replace('T', ' ')}, {fit} fit, {cushion} cushioning"
+
+
+def _cut_from(shoe: Shoe, made: str | None) -> dict | None:
+    """Which make of the shoe these trial pieces were cut from, where the studio stamped one (``made``)."""
+    p = shoe.params
+    return None if made is None else dict(made=made, name=made_name(p.style, p.fit, p.cushion, made),
+                                          style=p.style, fit=p.fit, cushion=p.cushion)
+
+
+def trial_notes(shoe: Shoe, pieces: dict, left_out=(), made: str | None = None) -> str:
+    """The sheet that goes with the trial pieces: what each one is, how to print it and what to look at.
+    ``made``: the studio's stamp for this make of the shoe. The sheet then says which shoe the pieces were cut
+    from: they take hours to print, the shoe may be made again meanwhile, and what they show is recorded about
+    the shoe they came from."""
     let = (shoe.report.get("footbed") or {}).get("let_out") or {}
+    cut_from = _cut_from(shoe, made)
     lines = [f"Footscan clog ({shoe.foot} foot, {shoe.params.style}): print trials",
-             f"NOT A MEDICAL DEVICE. {TRIAL_WARNING}", "", UNTESTED,
+             f"NOT A MEDICAL DEVICE. {TRIAL_WARNING}", "",
+             *([f"These pieces were cut from the {cut_from['name']}.",
+                "When you record in the studio what they showed, that is the shoe to pick, also if it has been made",
+                "again since.", ""] if cut_from else []),
+             UNTESTED,
              "Print these before a whole shoe, in this order. Each is that part of this shoe, cut out with flat cuts and",
              "nothing else changed, so what goes wrong on a piece would have gone wrong on the shoe. (The cut faces are",
              "the difference: a slicer closes them with walls the shoe doesn't have there.) For all of them: TPU 95A,",
@@ -1872,11 +1896,13 @@ def clear_trials(out_dir: Path, name: str) -> None:
         old.unlink(missing_ok=True)
 
 
-def write_trials(shoe: Shoe, out_dir: Path, name: str, label: str, synthetic: bool = False) -> tuple:
+def write_trials(shoe: Shoe, out_dir: Path, name: str, label: str, synthetic: bool = False,
+                 made: str | None = None) -> tuple:
     """The trial pieces' files in out_dir: <name>-trial-<piece>.3mf and .stl for each, <name>-trials.txt (what
     each is for), <name>-trials.json and <name>-trials.png (every piece, seen from the front and outer side).
-    Earlier trial files under this name are removed first. -> (the files, a line for each piece this shoe
-    couldn't give)."""
+    Earlier trial files under this name are removed first. ``made``: the studio's stamp for this make of the
+    shoe, which the sheet and the data file then carry (``cut_from``), so a record of what the pieces showed
+    can name the shoe they were cut from. -> (the files, a line for each piece this shoe couldn't give)."""
     from .review import write_png
 
     out = Path(out_dir)
@@ -1894,9 +1920,9 @@ def write_trials(shoe: Shoe, out_dir: Path, name: str, label: str, synthetic: bo
             shoe.params.bed_mm)
         views.append(picture(piece.mesh, "quarter", shoe.foot))
     files["notes"] = out / f"{name}-trials.txt"
-    files["notes"].write_text(tag + trial_notes(shoe, pieces, left_out), encoding="utf-8")
+    files["notes"].write_text(tag + trial_notes(shoe, pieces, left_out, made), encoding="utf-8")
     files["json"] = out / f"{name}-trials.json"
-    files["json"].write_text(json.dumps(dict(synthetic=synthetic, made_from=label,
+    files["json"].write_text(json.dumps(dict(synthetic=synthetic, made_from=label, cut_from=_cut_from(shoe, made),
                                              warning=f"NOT A MEDICAL DEVICE. {TRIAL_WARNING}",
                                              pieces=[p.report for p in pieces.values()], left_out=list(left_out)),
                                         indent=2), encoding="utf-8")

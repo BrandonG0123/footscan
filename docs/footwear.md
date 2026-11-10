@@ -230,7 +230,12 @@ note in the person's own words (`footwear_fit.py`,
 to print, and the shoe on the page may have been made again meanwhile, so
 the studio keeps the shoes whose trial pieces it cut (`clog_trial_shoes` in
 `capture.json`, the newest 10: when each was made, its choices and its
-pieces) and the form asks which one the pieces are from. Only that shoe's
+pieces) and the form asks which one the pieces are from. The pieces' own
+sheet says which: the studio stamps each make of a shoe before its files are
+written, and the trial sheet and data file carry that stamp (`cut_from`) and
+name the shoe in the words the form lists it by (`footwear.made_name`: its
+style, when it was made to the second, its fit and cushioning). The command
+keeps no record and stamps none. Only that shoe's
 own pieces are asked about (Stone has no pattern swatch); a shoe made
 without trial pieces has nothing to record. Records are kept with the
 capture (`clog_fit`, the newest 20) and stay when a shoe is made again or
@@ -715,6 +720,14 @@ printer or a worn shoe.
 - Each of those rules has a test that fails without it: 89 changes tried
   one at a time across the rules, the studio, the page's arithmetic and the
   unfit-scan rule, and each made a test fail.
+- The trial pieces' sheet and data file name the make of the shoe they were
+  cut from, in the words the form lists that shoe by, and the command's name
+  none (`tests/test_footwear.py`, `tests/test_footwear_fit.py`; the studio's
+  stamp in `tests/test_server_clog.py`, on a clock that moves on a second at
+  every reading). A Codex review found the sheet said nothing of it. 12
+  changes tried one at a time, and each made a test fail. In the headless
+  browser (scan 2349 again), two shoes made 14 seconds apart were listed
+  apart, and the newer one's sheet named it in its option's own words.
 - The page itself, in a headless browser against a scratch studio holding
   scan 2349 and a SYNTHETIC left foot (`tests/synth.py`), each with its
   shoe. The other foot's shoe was shown with the two feet's lengths (260 mm

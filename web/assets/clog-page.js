@@ -380,12 +380,10 @@ function usePairChoices() {
 // from, which may have been made again since: the form asks which.
 let fitPicked = null;     // the shoe the form is about, where the person picked one (when it was made)
 
-// A shoe of the record by what tells it from the one made before or after it: when, and the fit and cushioning
-// it was made to (the two choices a record can suggest changing).
-function shoeName(s) {
-  const c = { ...options.defaults, ...(s.choices || {}) };
-  return `${styleLabel(s.style)} shoe made ${when(s.made)}, ${c.fit} fit, ${c.cushion} cushioning`;
-}
+// A shoe of the record by what tells it from the one made before or after it: its style, when it was made (to
+// the second), and the fit and cushioning it was made to. The studio sends the words (footwear.made_name), the
+// same ones the shoe's trial pieces' sheet names it by, so a person can pick the shoe by reading the sheet.
+const shoeName = (s) => s.name;
 
 function shoeHtml(s) {
   const above = shoeAbove(s, clog);
@@ -435,7 +433,8 @@ function fitFormHtml() {
     ? `<div class="field" style="margin-top:12px"><label for="fit-shoe">Which shoe were these pieces cut from?</label>
       <select id="fit-shoe">${open.map((s) => `<option value="${esc(s.made)}"${s.made === shoe.made ? " selected" : ""}>The ${esc(shoeName(s))}${
     shoeAbove(s, clog) ? " (the shoe above)" : ""}</option>`).join("")}</select>
-      <p class="hint" style="margin:6px 0 0">The pieces' own sheet and data file were written when their shoe was made.</p></div>`
+      <p class="hint" style="margin:6px 0 0">The pieces' own sheet (clog-trials.txt) names the shoe they were cut from in these
+        words, near its top.</p></div>`
     : `<p style="margin:10px 0 0">About the pieces cut from the ${esc(shoeName(shoe))}${shoeAbove(shoe, clog) ? " (the shoe above)" : ""}.</p>`;
   return `<h3 style="margin:20px 0 0">Record what they showed</h3>
     <p class="hint" style="margin:4px 0 0">Answer for the pieces you have printed and leave the rest: what is recorded about one shoe is

@@ -229,6 +229,22 @@ def test_only_a_shoe_whose_trial_pieces_were_cut_can_be_recorded_about():
     assert ff.pieces_cut(None) == [] and ff.pieces_cut({}) == []
 
 
+def test_a_shoe_is_shown_by_the_name_its_trial_pieces_sheet_carries():
+    """The person picks the shoe their pieces were cut from by reading the pieces' sheet: the page lists each
+    shoe in the sheet's own words (footwear.made_name), to the second, with the fit and cushioning it was made to."""
+    newest, older = ff.shown([], [A, B])["shoes"]
+    assert older["name"] == "Vent shoe made 2026-11-10 10:00:00, regular fit, medium cushioning"
+    assert newest["name"] == "Stone shoe made 2026-11-11 10:00:00, roomy fit, medium cushioning"
+    firm = ff.shoe_of(_report("2026-11-10T10:00:07", fit="regular", cushion="firm"))   # seven seconds after A
+    assert ff.shown([], [firm])["shoes"][0]["name"] == "Vent shoe made 2026-11-10 10:00:07, regular fit, firm cushioning"
+    bare = ff.shoe_of(_report("2026-11-12T10:00:00"))                                 # nothing chosen: the generator's own
+    assert ff.shown([], [bare])["shoes"][0]["name"] == fw.made_name("vent", fw.ShoeParams().fit, fw.ShoeParams().cushion,
+                                                                    "2026-11-12T10:00:00")
+    # a shoe the studio no longer keeps is still named, from what its records say they are about
+    (gone,) = ff.shown([_rec(A, "t1")], [])["shoes"]
+    assert gone["name"] == older["name"] and gone["recordable"] is False
+
+
 def test_everything_recorded_about_one_shoe_is_read_together():
     """Pieces are recorded one at a time as they are printed: a shoe's suggestion is made from all of them."""
     # the block picked in one record and a wall that pressed in the next: both stand

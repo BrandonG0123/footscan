@@ -314,7 +314,8 @@ def shown(records: list, shoes: list, stopped: dict | None = None) -> dict:
     oldest first: a record can be added about any of them. ``stopped``: what the studio kept when a record said
     something hurt (``hurt_in``), or None.
     -> dict(shoes=[...], stop=None or dict(recorded, made, words, nothing)). Each shoe, the newest first: made,
-    style, choices, pieces, ``recordable`` (its pieces are still known here) with its ``questions``, its
+    style, choices, pieces, ``name`` (footwear.made_name: the words its trial pieces' sheet names it by),
+    ``recordable`` (its pieces are still known here) with its ``questions``, its
     ``records`` (newest first, each with ``said``: its answers in words), and ``suggestion``: what everything
     recorded about it says for its choices (``suggest``), None where nothing is recorded. A shoe whose records
     outlived the studio's memory of it is shown with them, and can't be added to.
@@ -324,10 +325,14 @@ def shown(records: list, shoes: list, stopped: dict | None = None) -> dict:
     for r in records:
         known.setdefault(r["about"].get("made"), dict(r["about"], recordable=False))
     out = []
+    defaults = fw.ShoeParams()
     for made, shoe in known.items():
         mine = [r for r in records if r["about"].get("made") == made]
+        chosen = shoe.get("choices") or {}
         out.append(dict(
-            shoe, questions=questions(shoe.get("pieces") or []) if shoe["recordable"] else [],
+            shoe, name=fw.made_name(shoe.get("style"), chosen.get("fit") or defaults.fit,
+                                    chosen.get("cushion") or defaults.cushion, made),
+            questions=questions(shoe.get("pieces") or []) if shoe["recordable"] else [],
             records=[dict(recorded=r["recorded"], note=r["note"], said=in_words(r["answers"])) for r in reversed(mine)],
             suggestion=suggest(merged(mine), shoe.get("choices"), hurt=bool(stopped)) if mine else None))
     out.sort(key=lambda s: str(s.get("made") or ""), reverse=True)
