@@ -129,6 +129,13 @@ foot scan into a 3MF for the slicer plus a clinician summary sheet (see
 posting or stiffness zones, which wait for the Phase 0 repeatability gate
 and the Phase 5 material tests.
 
+**Printed clog (first shape, untested):** `footscan footwear` makes a one-piece
+slip-on clog for one foot, sized by ruler or by the sole scan, with that
+foot's first-fit footbed built into its floor, and its walls let out where
+the sole scan shows the foot wider than the standard shape (see
+[docs/footwear.md](docs/footwear.md)). Walking and casual wear only, never
+sport; nothing from it has been printed or worn yet. Not in the studio yet.
+
 JavaScript tests (frame quality, coverage, and camera position from the mat):
 
 ```bash

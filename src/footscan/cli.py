@@ -214,6 +214,44 @@ def cmd_insole(args) -> int:
     return 0
 
 
+def cmd_footwear(args) -> int:
+    from . import footwear as fw
+    from .insole import InsoleError
+    from .recon.imported import load_geometry, to_millimetres
+
+    params = fw.ShoeParams(foot_length_mm=args.length, foot_width_mm=args.width, fit=args.fit, sock_mm=args.sock,
+                           toe=args.toe, style=args.style, openness=args.openness, sole_mm=args.sole, cushion=args.cushion)
+    try:
+        if args.scan:
+            mesh = load_geometry(args.scan)
+            if args.kind == "mat":
+                mesh, _, _ = to_millimetres(mesh)
+            shoe = fw.from_scan(mesh, args.foot, params, kind=args.kind, up=args.up)
+            label = f"{args.scan} ({args.kind} scan)"
+        else:
+            shoe = fw.build(args.foot, params)
+            label = "ruler measurements only (no sole scan)"
+    except (InsoleError, ValueError) as err:  # (a FootwearError or a FootPrepError is a ValueError)
+        print(f"{args.scan or 'footwear'}: {err}", file=sys.stderr)
+        return 1
+    made = [shoe] + ([fw.mirrored(shoe)] if args.pair else [])
+    for s in made:
+        r = s.report
+        files = fw.write_outputs(s, Path(args.output), f"{s.foot}-clog", label)
+        print(f"{s.foot} clog ({r['style']}): {r['length_mm']} x {r['width_mm']} x {r['height_mm']} mm, {r['volume_cm3']} cm3; "
+              f"inside {r['inside']['length_mm']} x {r['inside']['width_mm']} mm for a foot {r['made_for']['foot_length_mm']} x "
+              f"{r['made_for']['foot_width_mm']} mm")
+        if r["footbed"]:
+            print(f"  footbed: highest fill {r['footbed']['max_fill_mm']} mm, from the sole scan")
+        print(f"  bed: {r['bed_fit']['how'] if r['bed_fit']['fits'] else 'does not fit'}")
+        for w in r["warnings"] + ((r["footbed"] or {}).get("insole_warnings") or []):
+            print(f"  warning: {w}", file=sys.stderr)
+        for k, v in files.items():
+            print(f"  {k}: {v}")
+    print("NOT A MEDICAL DEVICE. Untested design. Walking and casual wear only, not sport; break-in as on the summary sheet.")
+    return 0
+
+
 def cmd_export_measures(args) -> int:
     from .landmarks import export_rows, list_picks
 
@@ -372,6 +410,29 @@ def main(argv=None) -> int:
                                     "the insole takes its outline, fitted round the foot")
     ins.add_argument("--shoe-up", default="y", choices=["y", "z"], help="the shoe scan's up axis (default y)")
     ins.set_defaults(func=cmd_insole)
+
+    fw = sub.add_parser("footwear", help="a printable clog for one foot, its first-fit footbed built in (3MF + STL + "
+                                         "summary sheet + pictures), sized by ruler or by the sole scan")
+    fw.add_argument("--foot", choices=["left", "right"], required=True)
+    fw.add_argument("-o", "--output", required=True, help="folder for the files")
+    fw.add_argument("--scan", help="the foot's sole scan: its first-fit insole surface becomes the footbed. Without "
+                                   "one the footbed is flat, and --length and --width are needed")
+    fw.add_argument("--kind", default="mat", choices=["mat", "sole_up", "sole_hanging", "impression", "foot"],
+                    help="what the scan is: 'mat' (default) is a scan in the mat frame, as `footscan insole` takes; "
+                         "the others are iPhone Object Capture models, as the studio imports them")
+    fw.add_argument("--up", default="y", choices=["y", "z"], help="an Object Capture model's up axis (default y)")
+    fw.add_argument("--length", type=float, help="foot length by ruler, mm, standing (default: the scan's)")
+    fw.add_argument("--width", type=float, help="foot width across the ball by ruler, mm, standing (default: the scan's)")
+    fw.add_argument("--style", default="vent", choices=["vent", "stream", "stone"])
+    fw.add_argument("--fit", default="regular", choices=["snug", "regular", "roomy"])
+    fw.add_argument("--toe", default="round", choices=["round", "square", "tapered"])
+    fw.add_argument("--cushion", default="medium", choices=["soft", "medium", "firm"], help="the sole's suggested infill")
+    fw.add_argument("--sole", type=float, help="sole thickness under the ball of the foot, mm (default: the style's)")
+    fw.add_argument("--openness", type=float, help="share of the patterned area cut away, 0 to 0.5 (default: the style's)")
+    fw.add_argument("--sock", type=float, default=0.0, help="extra room for a sock thicker than the one measured in, mm")
+    fw.add_argument("--pair", action="store_true", help="also write the other foot's shoe as this one's mirror image "
+                                                        "(not made from that foot's scan; its sheet says so)")
+    fw.set_defaults(func=cmd_footwear)
 
     cp = sub.add_parser("compare", help="how much two scans of the same foot agree (repeatability)")
     cp.add_argument("a", help="first scan (as the iPhone app hands it over: OBJ/PLY, metres, Y up)")

@@ -58,6 +58,10 @@ cd ios/FootscanCapture && xcodebuild test -project FootscanCapture.xcodeproj -sc
 
 - `src/footscan/insole.py`: insole generator (height map of the sole, caps, outline, heel cup, bevel, 3MF/STL,
   summary sheet, 3-D preview).
+- `src/footscan/footwear.py`: clog generator (`footscan footwear`): a standard-shape upper in the foot's size (its
+  walls let out where the sole scan's sides stand wider), the first-fit insole's surface as its floor, styles,
+  summary sheet, pictures. Tests: `tests/test_footwear.py`, ~2 min.
+  Walking and casual wear only; docs/footwear.md says what is a judgment and that nothing is printed yet.
 - `src/footscan/recon/foot_prep.py`: turns an Object Capture model (metres, Y up) into a foot on a flat floor, per
   scan kind (`foot`, `sole_up`, `sole_hanging`, `impression`), plus the plausibility warnings.
 - `src/footscan/recon/shoe.py`: a shoe's own insole scan → outline, handedness, fit round the foot.

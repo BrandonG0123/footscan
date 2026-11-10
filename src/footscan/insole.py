@@ -118,6 +118,9 @@ class Insole:
     params: InsoleParams
     report: dict = field(default_factory=dict)
     sole: object = None             # the scan in the insole's own frame (for the 3-D preview)
+    surface: dict | None = None     # the fill as a grid, before the base goes under it (xs, ys, fill), and the
+                                    # foot's outline it was read under: footwear.py builds a shoe's footbed from
+                                    # the same heights
 
 
 # ---------------------------------------------------------------------------
@@ -391,7 +394,8 @@ def build(foot_mesh, foot: str, params: InsoleParams | None = None) -> Insole:
         warnings=warnings,
         frame="mm; x forward from the back of the heel, y toward the foot's left, z up; bottom at z = 0",
     )
-    return Insole(mesh=mesh, foot=foot, params=p, report=report, sole=m)
+    return Insole(mesh=mesh, foot=foot, params=p, report=report, sole=m,
+                  surface=dict(xs=xs, ys=ys, fill=fill, under_foot=in_sil, foot_outline=sil))
 
 
 def bed_fit_shape(xy, bed: float, clearance: float = 3.0) -> dict:
