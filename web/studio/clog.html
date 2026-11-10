@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Make shoe — footscan</title>
+  <link rel="stylesheet" href="/assets/style.css">
+  <style>
+    .stage { position: relative; border-radius: 16px; overflow: hidden; background: var(--surface-2); }
+    .stage canvas { display: block; width: 100%; height: min(64vh, 520px, 85vw); touch-action: none; cursor: grab; }
+    .stage canvas:active { cursor: grabbing; }
+    .stage img { display: block; width: 100%; height: auto; background: #fff; }
+    .views { display: flex; gap: 6px; flex-wrap: wrap; margin: 12px 0 0; align-items: center; }
+    .views button { font-size: 0.85rem; padding: 6px 12px; min-height: 36px; }
+    .views label { display: flex; gap: 8px; align-items: center; margin-right: 10px; }
+    .hint-key { font-size: 0.82rem; color: var(--muted); margin: 8px 0 0; }
+    .big { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin: 14px 0 0; }
+    .big div { background: var(--surface-2); border-radius: 12px; padding: 12px 14px; }
+    .big dt { color: var(--muted); font-size: 0.78rem; }
+    .big dd { margin: 4px 0 0; font: 700 1.05rem/1.2 var(--mono); font-variant-numeric: tabular-nums; }
+    .form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 16px 20px; margin: 16px 0 0; }
+    .segmented { flex-wrap: wrap; }
+    .segmented label { padding: 8px 16px; text-transform: capitalize; }
+    fieldset { border: 0; padding: 0; margin: 18px 0 0; min-width: 0; }
+    legend { font-weight: 650; padding: 0; margin: 0 0 8px; }
+    textarea { min-height: 84px; resize: vertical; }
+    .read { margin: 12px 0 0; }
+    .read ul { margin: 6px 0 0; padding-left: 20px; }
+    .section { margin-top: var(--gap); }
+    .pieces { display: grid; gap: 8px; margin: 10px 0 0; padding: 0; list-style: none; }
+    .pieces li { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; justify-content: space-between;
+      background: var(--surface-2); border-radius: 12px; padding: 10px 14px; }
+  </style>
+</head>
+<body data-area="studio">
+<main class="wrap" style="max-width:980px">
+  <p class="eyebrow">Clog · make and preview</p>
+  <h1 style="font-size:clamp(1.7rem,4vw,2.4rem);margin:0 0 6px" id="title">Make a shoe</h1>
+  <p class="muted" style="margin:0 0 18px" id="back"></p>
+  <div id="root" aria-live="polite"><p class="muted">Loading…</p></div>
+</main>
+<script type="module" src="/assets/layout.js"></script>
+<script type="module" src="/assets/clog-page.js"></script>
+</body>
+</html>

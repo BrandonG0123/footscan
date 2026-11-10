@@ -133,8 +133,13 @@ and the Phase 5 material tests.
 slip-on clog for one foot, sized by ruler or by the sole scan, with that
 foot's first-fit footbed built into its floor, and its walls let out where
 the sole scan shows the foot wider than the standard shape (see
-[docs/footwear.md](docs/footwear.md)). Walking and casual wear only, never
-sport; nothing from it has been printed or worn yet. Not in the studio yet.
+[docs/footwear.md](docs/footwear.md)). In the studio, a foot capture's *Make
+shoe* button opens a page with the same preferences as a form, a 3-D preview
+of the shoe (whole, or cut open to show the footbed in its floor), and a box
+for a description that is read into the form's settings (on this computer by
+default; by Claude only with `footscan serve --describe-with-claude`).
+Walking and casual wear only, never sport; nothing from it has been printed
+or worn yet.
 
 JavaScript tests (frame quality, coverage, and camera position from the mat):
 

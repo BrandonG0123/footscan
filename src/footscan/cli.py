@@ -299,7 +299,7 @@ def cmd_serve(args) -> int:
         threading.Thread(target=review.watch, args=(data,), kwargs=dict(log=lambda m: print(m, flush=True)),
                          daemon=True, name="review-packets").start()
     serve(args.host, args.port, args.https, args.public, data_dir=Path(args.data) if args.data else None,
-          allow_indexing=True if args.allow_indexing else None)
+          allow_indexing=True if args.allow_indexing else None, describe_with_claude=args.describe_with_claude)
     return 0
 
 
@@ -478,6 +478,10 @@ def main(argv=None) -> int:
                     help="let search engines index the site (with --public it is hidden from them by default)")
     sv.add_argument("--review", action="store_true",
                     help="also write a review packet (checks + pictures) for each new insole: footscan review")
+    sv.add_argument("--describe-with-claude", action="store_true",
+                    help="Make shoe: send a typed description of a shoe to Anthropic's API to be read into settings "
+                         "(the typed words only; needs `pip install anthropic` and ANTHROPIC_API_KEY). Without "
+                         "this it is read on this computer, by looking for known words")
     sv.set_defaults(func=cmd_serve)
 
     rv = sub.add_parser("review", help="review packets for new insoles: plain checks + pictures, for a person or "

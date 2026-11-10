@@ -10,7 +10,9 @@
 > thickness, height and allowance below is a starting judgment, and its
 > grip, wear and strength are unknown.
 
-A slip-on clog, one print per shoe, made for one foot:
+A slip-on clog, one print per shoe, made for one foot. From the studio, a
+foot capture's **Make shoe** button makes it with a form and a 3-D preview
+(see *In the studio*); from the command line:
 
 ```bash
 # sized by a ruler, with the foot's own footbed from its sole scan
@@ -93,6 +95,107 @@ image of this one. Its footbed is then the *first* foot's: two feet are not
 mirror images of each other, and their arches differ. Its sheet and its
 warnings say so first. It is for trying a pair on before the other foot has
 a scan of its own, not instead of that scan.
+
+## In the studio
+
+Every foot capture in the research library with a 3D model has a **Make
+shoe** button beside *Make insole*. It opens a page for that capture
+(`/studio/clog.html`): the preferences above as a form, the foot's two ruler
+numbers, a box to also cut the print-trial pieces, and *Make shoe*. The
+studio makes the clog from the capture's model exactly as *Make insole*
+picks and prepares it (`server.make_clog`), so the footbed is the insole
+that capture would get. Like everything under `/studio`, it answers only on
+the studio's own computer or with the studio key.
+
+- The form's lists and limits are the generator's own
+  (`/api/footwear/options`, from `footwear_choices.options`), and what is
+  sent is checked against them again (`footwear_choices.checked`): a value
+  outside them, or a key that isn't one of the shoe's settings (there is no
+  posting setting to send), is refused in words and nothing is made.
+- The shoe is kept with its capture (`<capture>/clog/`, and a `clog` entry
+  in `capture.json` with the choices it was made to, so the form opens as it
+  was left). One shoe per capture: making it again replaces it, trial pieces
+  included.
+- Its footbed is that model's. If the model is replaced or rebuilt, or the
+  way a sole scan is prepared changes, the shoe is marked stale and its
+  files are refused until it is made again; a new import removes it. A
+  build that fails leaves nothing to download.
+- **The 3-D preview** is the shoe's own solid, not a drawing of it
+  (`footwear.write_preview`). *Cut it open* shows the same solid with its
+  outer half taken away by one flat upright cut along the middle of the heel
+  (`footwear.opened_up`): the half on the foot's inner side is kept, so the
+  footbed rising under the arch, the sole under it and the thickness of the
+  upper can be seen. The cut's face has its own colour. Nothing is printed
+  from the cut shape. The viewer rounds an edge over when the faces on both
+  sides share their points, so the preview's points are split wherever two
+  faces meet at more than 35 degrees (`PREVIEW_CREASE_DEG`, a judgment about
+  a picture): the sole's lines and the windows' edges are drawn as edges.
+
+### Describing the shoe
+
+The page has a box for a description in the wearer's own words ("airy and
+roomy, with a thick sole, for thick socks"). **No shape is made from the
+words.** They are read into the same form (`footwear_choices.read`), the
+page shows which words each choice was read from, and nothing is made until
+*Make shoe* is pressed.
+
+There are two readers, and the page says which one this studio uses before
+anything is typed:
+
+- **On this computer** (the default): `from_keywords` looks for known words
+  (`WORDS`). It does not understand a sentence. A word with "no", "not" or
+  "without" up to three words before it, in the same clause, doesn't count.
+  Nothing leaves the computer.
+- **By Claude**, only where the studio was started with
+  `footscan serve --describe-with-claude` and has an API key
+  (`ANTHROPIC_API_KEY`, and `pip install anthropic`): `from_claude` sends
+  the typed words, and nothing else (no scan, no measurement, no name), to
+  Anthropic's API. Its answer can only be one value per setting from the
+  generator's lists, and is then held to the form's rules whatever it says:
+  a value outside the limits is dropped and said; a choice is kept only if
+  the words it was read from are in the description as the person wrote it
+  (whole words); those words are the only text shown from the answer; and
+  an amount the person gave no figure for ("a chunky sole" read as 30 mm) is
+  shown as Claude's own number. If it can't be reached or declines, the
+  keyword reader reads the description and the page says why.
+
+What a description asks for that no setting gives is answered in fixed
+words (`NOT_SETTINGS`), found by looking for words whichever reader read the
+rest: colour is the spool; the heel's height, laces and other kinds of shoe
+don't exist; grip is untested; a shoe size isn't used (the ruler is). Two of
+those answers are safety rules and must not be softened:
+
+- anything medical (flat feet, arch support, pain, a foot condition): *Not a
+  medical device: no setting supports, corrects or treats anything, and none
+  was changed for that. [...] see a podiatrist or another clinician.*
+- any sport: *This shoe is for walking and casual wear only, not for sport:
+  nothing was set for that.*
+
+To make those two true, **a description that says the shoe is wanted for a
+foot condition or for sport is not read into settings at all**
+(`footwear_choices.wanted_for`), by either reader, and it is never sent to
+Claude. "A firm sole and a snug fit for my flat feet" sets nothing, and so
+does "Airy and roomy. I have flat feet.": the page gives the fixed answer,
+says the description was not read, and leaves the form as it was. The rule
+is the whole description because a wish is often written as a list ("For my
+flat feet:", then a line each for a firm sole and a snug fit), and no rule
+about sentences can tell which lines belong to it. It is a rule about
+words, not about meaning, and it errs toward not reading:
+
+- a sport said not to be wanted ("not for sport") is no wish for sport, and
+  the description is read; a pain said not to be wanted ("so my feet don't
+  hurt") is still a wish to treat a foot, and it is not;
+- a description that mentions hiking socks is a description about a sport;
+- the lists can't name every sport or every way to say a foot hurts, so the
+  keyword reader will read a description that names a sport it has never
+  heard of. Where Claude reads, it is also asked whether the description
+  says the shoe is for a foot condition or for a sport, and its yes is
+  enough for nothing to be set.
+
+A request the generator refuses in its own words (a ruler length more than
+15% from the scan's, a pattern that left the upper in pieces) changes
+nothing: the page says why beside the button, and the shoe already made
+from that model, if there is one, stays.
 
 ## How the shape is made
 
@@ -200,6 +303,12 @@ None of these is measured from a last, a worn shoe or a printed trial:
   surface (`FOOTBED_EDGE_MM`, 3 mm: twice the insole's smoothing width).
 - The window sizes and the 2.6 mm between them.
 - Every print setting.
+- What a word for an amount becomes when a description is read on this
+  computer (`footwear_choices.py`): "a thick sole" 24 mm, "a thin sole"
+  10 mm, "very open" 38% and "less open" 18% of the patterned area, "thick
+  socks" 1.5 mm. Each is shown as the reader's own number beside the
+  setting. Which words mean which style, fit, toe and cushioning (`WORDS`)
+  is a judgment too.
 
 ## Printing
 
@@ -404,6 +513,40 @@ printer or a worn shoe.
   patterned roof left). Before slivers were dropped, the same sweep, stopped
   part way, had lost the back half of three shoes (245 mm, patterned, the
   opening at 0.35 or 0.42), each to one loose sliver of 0.004 mm³.
+- The studio, on the SYNTHETIC block foot imported as the iPhone app sends
+  one (`tests/test_server_clog.py`): the shoe is made to the choices sent
+  and they are kept with it; its footbed's highest fill is the block's
+  11 mm (within 0.6 mm); a choice outside the generator's lists and limits,
+  a key that isn't a setting (posting, arch support) or a body that isn't
+  an object is refused and nothing is made; the shoe goes stale when its
+  model changes and is removed when the model is replaced; a build or a
+  save that fails leaves nothing to download; trial pieces are there when
+  asked for and gone when the shoe is made again without them; two builds
+  at once leave one whole result; a phone on the Wi-Fi is refused all of it.
+- The cut-open preview (`tests/test_footwear.py`): what is kept is one
+  closed solid, the half on the foot's inner side (right and left), closed
+  by one flat face on the heel's middle line whose area is the material a
+  cut there goes through, and its footbed is where the whole shoe has it
+  (within 0.0001 mm at four places under the arch).
+- A description read on this computer (`tests/test_footwear_choices.py`):
+  known words into their settings, the words each was read from, a "not"
+  that stops at its own clause, numbers in millimetres, and each fixed
+  answer. Nothing is read from a description that says the shoe is for a
+  foot condition or for sport, wherever in it that is said (another
+  sentence, a list, after a semicolon), and a pain said not to be wanted
+  counts. The reader that asks Claude is tested with a stand-in for the API
+  only: what is sent (the typed words, the generator's lists as the only
+  answers), that such a description is not sent at all, that Claude's own
+  yes to "for a sport" or "for a foot condition" sets nothing, and that a
+  choice without the person's own whole words or a value outside the limits
+  is dropped.
+- Each of those rules has a test that fails without it: 66 changes
+  tried one at a time across the studio, the preview, the reader and the
+  page's form (`tests/js/clog-form.test.mjs`), and each made a test fail.
+- A code review of this stage found ten things, the first that the
+  not-read rule was then a sentence wide and leaked ("For my flat feet:"
+  followed by a list still set a firm sole beside the answer that nothing
+  was changed for that). Each has a test now that failed on the code before.
 
 ### The first real scan
 
@@ -432,6 +575,20 @@ standing, regular fit. Generated, looked at, not printed:
   278.3 x 120.9 x 93.3 mm (the standard shape in that size is 103.8, 106.8
   and 111.8 mm wide).
 
+Through the studio (a copy of that capture in a scratch studio on a cloud
+machine, 10 November 2026), *Make shoe* with the ruler's 260 x 97 mm gave the
+same `stone` shoe as the command (278.3 x 112.9 x 84.3 mm, 548.2 cm³, the
+inner wall let out by up to 16.9 mm from 10.4 to 187.4 mm from the back),
+with three trial pieces (`stone` has no windows, so no swatch). From the
+page in a headless browser, `vent`, roomy, with a 20 mm sole came out
+281.4 x 119 x 95 mm (inside 275 x 102 mm), the footbed's highest fill
+19.25 mm again, and both previews drew. The description "Something airy and
+roomy with a thick sole, for thick socks, in red." set the style, the fit,
+a 24 mm sole and 1.5 mm for the sock, left the ruler numbers alone, and
+answered the colour in the fixed words. With "I play tennis and have flat
+feet." added it set nothing, gave the medical and the sport answers, and
+said the description was not read.
+
 One real foot. Whether a wall let out this way sits well against that foot,
 and whether the footbed's shelf along the inner side is comfortable to
 stand on, are for the first print to answer.
@@ -440,8 +597,11 @@ stand on, are for the first print to answer.
 
 - Printing the trial pieces, and the settings and thicknesses they will
   correct. The pieces are generated; none has been printed.
-- The studio: a *Make shoe* button, the preferences, a 3-D preview, and a
-  plain description turned into these settings.
+- Reading a description by Claude against the real API. Its code is tested
+  with a stand-in for the API (what is sent, and what is done with each kind
+  of answer); no description has been sent to Anthropic from it yet, so how
+  well it reads one is not known.
+- The shoe in the iPhone app (the studio page only, for now).
 - A left shoe from the left foot's own scan; a fit log that feeds back into
   the allowances.
 - A rolled edge round the opening, toe spring, other printers and beds, a

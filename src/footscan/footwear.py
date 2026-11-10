@@ -198,6 +198,12 @@ FOOTBED_EDGE_MM = 2 * insole_mod.SMOOTH_SIGMA_MM
 # densities the insole print notes suggest trying as cubes first).
 CUSHION = {"soft": 15, "medium": 20, "firm": 25}
 
+# What a wearer may ask for where it is a number: outside these the generator refuses. The studio's form and a
+# description read into settings (footwear_choices.py) are held to the same three.
+SOLE_MM = (8.0, 40.0)     # thickness under the ball of the foot
+SOCK_MM = (0.0, 4.0)      # room for a sock thicker than the one the foot was measured in
+OPENNESS = (0.0, 0.5)     # share of the patterned area cut away
+
 # Styles: what the outside looks like. None changes the inside. ``pattern`` is the window shape (width along the
 # shoe : height up the wall), ``pitch_mm`` the spacing of windows, ``openness`` the share of the patterned area
 # that is window, ``sole_mm`` the thickness under the ball of the foot, ``flare_mm`` how far the sole stands out
@@ -360,8 +366,9 @@ def size_inside(foot_length_mm: float, foot_width_mm: float, p: ShoeParams, scan
                             f"({FOOT_LENGTH_MM[0]:.0f}-{FOOT_LENGTH_MM[1]:.0f} mm): check the length, in millimetres")
     if foot_width_mm <= 0:
         raise FootwearError("the foot's width must be more than 0 mm")
-    if not 0.0 <= p.sock_mm <= 4.0:
-        raise FootwearError("sock_mm is the extra thickness of the sock to be worn: between 0 and 4 mm")
+    if not SOCK_MM[0] <= p.sock_mm <= SOCK_MM[1]:
+        raise FootwearError("sock_mm is the extra thickness of the sock to be worn: between "
+                            f"{SOCK_MM[0]:.0f} and {SOCK_MM[1]:.0f} mm")
     f = FIT[p.fit]
     length = foot_length_mm + f["toe_room_mm"] + p.sock_mm
     wanted = foot_width_mm + f["width_mm"] + 2 * p.sock_mm
@@ -967,8 +974,9 @@ def _windows(loft: _Loft, p: ShoeParams, edge, edge_ends: float, bed: Footbed | 
 
     st = STYLES[p.style]
     openness = st["openness"] if p.openness is None else p.openness
-    if not 0 <= openness <= 0.5:
-        raise FootwearError("openness is the share of the patterned area cut away: between 0 and 0.5")
+    if not OPENNESS[0] <= openness <= OPENNESS[1]:
+        raise FootwearError("openness is the share of the patterned area cut away: between "
+                            f"{OPENNESS[0]:.0f} and {OPENNESS[1]:g}")
     if st["pattern"] is None or openness == 0:
         return [], dict(count=0, openness=0.0), None
     (rw, rh), (px, pg) = st["pattern"], st["pitch_mm"]
@@ -1099,8 +1107,8 @@ def build(foot: str, params: ShoeParams | None = None, footbed=None) -> Shoe:
         raise FootwearError(f"cushion must be one of {sorted(CUSHION)}")
     st = STYLES[p.style]
     sole = st["sole_mm"] if p.sole_mm is None else p.sole_mm
-    if not 8.0 <= sole <= 40.0:
-        raise FootwearError("the sole is between 8 and 40 mm thick under the ball of the foot")
+    if not SOLE_MM[0] <= sole <= SOLE_MM[1]:
+        raise FootwearError(f"the sole is between {SOLE_MM[0]:.0f} and {SOLE_MM[1]:.0f} mm thick under the ball of the foot")
     if not 0.0 <= p.drop_mm <= 12.0:
         raise FootwearError("the heel sits between 0 and 12 mm higher than the ball of the foot")
     if not 1.6 <= p.upper_mm <= 5.0:
@@ -1543,6 +1551,79 @@ def write_outputs(shoe: Shoe, out_dir: Path, name: str, label: str, synthetic: b
     return {k: str(v) for k, v in files.items()}
 
 
+# The studio's 3-D preview: the shoe's colour (the pictures' own), the colour of the face where it is cut open
+# (the studio's teal, so the cut reads as a cut and not as part of the shoe), and how sharp an edge is kept sharp.
+PREVIEW_COLOUR = tuple(int(round(255 * c)) for c in PICTURE_COLOUR)
+PREVIEW_CUT_COLOUR = (95, 194, 182)
+PREVIEW_CREASE_DEG = 35.0
+
+
+def opened_up(shoe: Shoe):
+    """The shoe with its outer half cut away, for looking into: -> (trimesh.Trimesh, which of its faces are the cut).
+
+    One flat cut, upright and along the shoe, through the heel's middle line (y = 0). The half on the foot's
+    inner side is kept, so from the outer side the inside shows: the footbed rising toward the inner wall under
+    the arch, the thickness of the sole under it, the roof over the toes and how thick the upper is. Nothing is
+    printed from this; it is a picture of the same solid the 3MF holds.
+    """
+    import manifold3d as m3
+    import trimesh
+
+    whole = m3.Manifold(m3.Mesh(vert_properties=np.asarray(shoe.mesh.vertices, np.float32),
+                                tri_verts=np.asarray(shoe.mesh.faces, np.uint32)))
+    if whole.status() != m3.Error.NoError:
+        raise FootwearError(f"the shoe's solid can't be cut open for the preview ({whole.status()}); please report the sizes used")
+    inner = 1.0 if shoe.foot == "right" else -1.0        # a right shoe's inner side is toward +y, a left one's -y
+    out = whole.trim_by_plane((0.0, inner, 0.0), 0.0).to_mesh()
+    V, F = np.asarray(out.vert_properties, float)[:, :3], np.asarray(out.tri_verts, np.int64)
+    if not len(F):
+        raise FootwearError("nothing was left of the shoe after cutting it open for the preview; please report the sizes used")
+    mesh = trimesh.Trimesh(V, F, process=False)
+    on_cut = np.abs(V[:, 1]) < 1e-3                       # the cut's face: every corner on the cutting plane
+    return mesh, on_cut[F].all(axis=1)
+
+
+def _sharp_edges_kept(mesh, colour) -> tuple:
+    """``mesh`` ready for the studio's viewer, all one colour: -> (points, faces, a colour per point).
+
+    The viewer shades a surface by the direction each point faces, averaged over the faces that share the
+    point, which rounds every edge over. Here the points are split wherever two faces meet at more than
+    ``PREVIEW_CREASE_DEG``, so the sole's lines, the windows' edges and a cut are drawn as edges."""
+    import trimesh
+
+    kept = trimesh.graph.smooth_shade(mesh, angle=np.radians(PREVIEW_CREASE_DEG), facet_minarea=None)
+    return (np.asarray(kept.vertices, float), np.asarray(kept.faces, np.int64),
+            np.tile(np.array(colour, np.uint8), (len(kept.vertices), 1)))
+
+
+def write_preview(shoe: Shoe, out_dir: Path, name: str) -> dict:
+    """<name>-preview.bin (the whole shoe) and <name>-preview-open.bin (``opened_up``: its outer half cut away,
+    the cut's face in its own colour), in the studio viewer's format and the shoe's own frame."""
+    import trimesh
+
+    from .recon import viewer_data
+
+    out = Path(out_dir)
+    out.mkdir(parents=True, exist_ok=True)
+    files = dict(whole=out / f"{name}-preview.bin", open=out / f"{name}-preview-open.bin")
+    opened, cut = opened_up(shoe)
+    surfaces = dict(whole=[(shoe.mesh, PREVIEW_COLOUR)],
+                    open=[(opened.submesh([np.flatnonzero(~cut)], append=True), PREVIEW_COLOUR),
+                          (opened.submesh([np.flatnonzero(cut)], append=True), PREVIEW_CUT_COLOUR)])
+    for key, parts in surfaces.items():
+        V, F, C, n = [], [], [], 0
+        for mesh, colour in parts:
+            v, faces, c = _sharp_edges_kept(mesh, colour)
+            V.append(v)
+            F.append(faces + n)
+            C.append(c)
+            n += len(v)
+        both = trimesh.Trimesh(np.vstack(V), np.vstack(F), process=False)
+        both.visual = trimesh.visual.ColorVisuals(both, vertex_colors=np.vstack(C))
+        viewer_data.write(both, files[key])
+    return {k: str(v) for k, v in files.items()}
+
+
 # ---------------------------------------------------------------------------
 # print trials: small pieces of the shoe, to print before a whole one
 # ---------------------------------------------------------------------------
@@ -1666,7 +1747,8 @@ def trial_pieces(shoe: Shoe):
             continue
         ext = mesh.extents
         pieces[name] = TrialPiece(name=name, mesh=mesh, report=dict(
-            piece=name, cut=cut, foot=shoe.foot, style=shoe.params.style, from_mm=round(float(x0), 1), to_mm=round(float(x1), 1),
+            piece=name, title=_TRIALS[name][0], cut=cut, foot=shoe.foot, style=shoe.params.style,
+            from_mm=round(float(x0), 1), to_mm=round(float(x1), 1),
             length_mm=round(float(ext[0]), 1), width_mm=round(float(ext[1]), 1), height_mm=round(float(ext[2]), 1),
             volume_cm3=round(float(mesh.volume) / 1000, 1)))
     if not pieces:

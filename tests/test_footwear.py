@@ -1035,6 +1035,68 @@ def test_pictures_show_the_shoe_from_every_side(shod):
     assert band.all()
 
 
+@pytest.mark.parametrize("foot, inner", [("right", 1.0), ("left", -1.0)])
+def test_the_shoe_cut_open_is_its_inner_half_closed_by_one_flat_face(foot, inner):
+    """SYNTHETIC block foot, whose 11 mm arch fill is on the inner side only: the half that is kept is the one
+    with the fill in it (a left shoe's is the other side), and what is kept is the shoe's own surface, unmoved."""
+    block = insole.from_scan(synth.block_foot(37.0, foot), foot)
+    shoe = fw.build(foot, fw.ShoeParams(style="stone"), footbed=block)
+    opened, cut = fw.opened_up(shoe)
+    assert opened.is_watertight and opened.is_winding_consistent and 0.3 < opened.volume / shoe.mesh.volume < 0.7
+    side = inner * opened.vertices[:, 1]                           # how far toward the foot's inner side
+    assert side.min() == pytest.approx(0.0, abs=1e-3)              # nothing of the outer half is left
+    assert side.max() == pytest.approx((inner * shoe.mesh.vertices[:, 1]).max(), abs=1e-6)
+    # the cut is one flat face on the heel's middle line, facing the half that was taken away, and it is all of
+    # the material a cut there goes through
+    assert cut.any() and np.abs(opened.vertices[opened.faces[cut]][:, :, 1]).max() < 1e-3
+    assert np.allclose(opened.face_normals[cut], [0.0, -inner, 0.0], atol=1e-6)
+    assert not np.isclose(np.abs(opened.face_normals[~cut][:, 1]), 1.0, atol=1e-9).all()
+    assert opened.area_faces[cut].sum() == pytest.approx(_cut_area(shoe.mesh, [0, 0, 0], [0, 1.0, 0]), rel=1e-4)
+    # the footbed under the arch is still where the whole shoe has it, fill and all
+    for x in (60.0, 100.0, 125.0, 180.0):
+        assert _floor(opened, x, inner * 22.0, 36.0) == pytest.approx(_floor(shoe.mesh, x, inner * 22.0, 36.0), abs=1e-4)
+    assert _floor(opened, 110.0, -inner * 22.0, 36.0) is None      # and there is no floor on the other side
+
+
+def test_the_3d_preview_is_the_shoe_itself_whole_and_cut_open_with_its_edges_kept(shod, tmp_path):
+    """The studio's viewer rounds over any edge whose two faces share their points; the preview's points are
+    split at the shoe's sharp edges, so it has more points than the shoe and the same faces."""
+    from footscan.recon import viewer_data
+
+    files = fw.write_preview(shod, tmp_path, "clog")
+    assert set(files) == {"whole", "open"} and sorted(p.name for p in tmp_path.iterdir()) == [
+        "clog-preview-open.bin", "clog-preview.bin"]
+    whole = viewer_data.read(files["whole"])
+    assert len(whole["faces"]) == len(shod.mesh.faces) and len(whole["vertices"]) > len(shod.mesh.vertices)
+    assert (whole["colors"] == fw.PREVIEW_COLOUR).all()
+    # the same shape, in the shoe's own frame (millimetres, heel at the back, sole on the floor)
+    assert np.allclose(whole["vertices"].min(axis=0), shod.mesh.bounds[0], atol=1e-3)
+    assert np.allclose(whole["vertices"].max(axis=0), shod.mesh.bounds[1], atol=1e-3)
+    area = lambda d: float(np.linalg.norm(np.cross(*(d["vertices"][d["faces"][:, i]].astype(float) - d["vertices"][d["faces"][:, 0]]
+                                                     for i in (1, 2))), axis=1).sum() / 2)
+    assert area(whole) == pytest.approx(shod.mesh.area, rel=1e-5)
+
+    opened, cut = fw.opened_up(shod)
+    inside = viewer_data.read(files["open"])
+    assert len(inside["faces"]) == len(opened.faces) and area(inside) == pytest.approx(opened.area, rel=1e-5)
+    # the cut's face, and only that, is in the cut's colour
+    is_cut = (inside["colors"] == fw.PREVIEW_CUT_COLOUR).all(axis=1)
+    assert is_cut.any() and (inside["colors"][~is_cut] == fw.PREVIEW_COLOUR).all()
+    assert np.abs(inside["vertices"][is_cut][:, 1]).max() < 1e-3
+    tri = is_cut[inside["faces"]]
+    assert (tri.all(axis=1) | ~tri.any(axis=1)).all()              # no face is half one colour and half the other
+    assert area(dict(vertices=inside["vertices"], faces=inside["faces"][tri.all(axis=1)])) == pytest.approx(
+        opened.area_faces[cut].sum(), rel=1e-5)
+
+
+def test_a_shoe_that_isnt_a_closed_solid_is_not_cut_open(plain):
+    import trimesh
+
+    holed = replace(plain, mesh=trimesh.Trimesh(plain.mesh.vertices, plain.mesh.faces[:-40], process=False))
+    with pytest.raises(fw.FootwearError, match="can't be cut open"):
+        fw.opened_up(holed)
+
+
 def test_a_sole_up_phone_scan_makes_the_shoe_the_way_the_studio_makes_the_insole():
     """SYNTHETIC sole-up scan (as the iPhone app hands one over): prepared exactly as for an insole, whose
     surface is then the footbed; the insole's own notes travel with the shoe."""

@@ -60,8 +60,15 @@ cd ios/FootscanCapture && xcodebuild test -project FootscanCapture.xcodeproj -sc
   summary sheet, 3-D preview).
 - `src/footscan/footwear.py`: clog generator (`footscan footwear`): a standard-shape upper in the foot's size (its
   walls let out where the sole scan's sides stand wider), the first-fit insole's surface as its floor, styles,
-  summary sheet, pictures. Tests: `tests/test_footwear.py`, ~2 min.
+  summary sheet, pictures, print-trial pieces, the studio's 3-D preview. Tests: `tests/test_footwear.py`, ~2 min.
   Walking and casual wear only; docs/footwear.md says what is a judgment and that nothing is printed yet.
+- `src/footscan/footwear_choices.py`: the clog's choices checked against the generator's own lists and limits, and a
+  typed description read into them (by known words on this computer; by Claude only with `footscan serve
+  --describe-with-claude`). The fixed answers for anything medical or any sport are safety requirements, and a
+  description that says the shoe is for either is not read into settings at all, nor sent to Claude (`wanted_for`):
+  don't narrow that. Tests: `tests/test_footwear_choices.py`.
+  The studio's Make shoe is `server.make_clog`, `web/studio/clog.html`, `web/assets/clog-page.js` and `clog-form.js`.
+  Tests: `tests/test_server_clog.py` (~2 min), `tests/js/clog-form.test.mjs`.
 - `src/footscan/recon/foot_prep.py`: turns an Object Capture model (metres, Y up) into a foot on a flat floor, per
   scan kind (`foot`, `sole_up`, `sole_hanging`, `impression`), plus the plausibility warnings.
 - `src/footscan/recon/shoe.py`: a shoe's own insole scan → outline, handedness, fit round the foot.
