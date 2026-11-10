@@ -1426,8 +1426,13 @@ def insole_is_stale(folder: Path, meta: dict) -> bool:
 def insole_downloadable(folder: Path, meta: dict) -> bool:
     """Only an insole from a successful build whose source model is still the current one."""
     ins = meta.get("insole") or {}
-    return (bool(ins) and "error" not in ins and source_stamp(insole_source(folder, meta)) is not None
-            and insole_stale_reason(folder, meta) is None)
+    if not ins or "error" in ins:
+        return False
+    try:
+        current = source_stamp(insole_source(folder, meta))
+    except (ValueError, OSError):  # what it was made from can't be read (or is mid-rebuild): not current
+        return False
+    return current is not None and insole_stale_reason(folder, meta) is None
 
 
 def parse_shoe_length(value) -> float | None:
