@@ -11,8 +11,8 @@
 > grip, wear and strength are unknown.
 
 A slip-on clog, one print per shoe, made for one foot. From the studio, a
-foot capture's **Make shoe** button makes it with a form and a 3-D preview
-(see *In the studio*); from the command line:
+foot capture's **Make printed shoe** button makes it with a form and a 3-D
+preview (see *In the studio*); from the command line:
 
 ```bash
 # sized by a ruler, with the foot's own footbed from its sole scan
@@ -99,13 +99,17 @@ a scan of its own, not instead of that scan.
 ## In the studio
 
 Every foot capture in the research library with a 3D model has a **Make
-shoe** button beside *Make insole*. It opens a page for that capture
-(`/studio/clog.html`): the preferences above as a form, the foot's two ruler
-numbers, a box to also cut the print-trial pieces, and *Make shoe*. The
-studio makes the clog from the capture's model exactly as *Make insole*
-picks and prepares it (`server.make_clog`), so the footbed is the insole
-that capture would get. Like everything under `/studio`, it answers only on
-the studio's own computer or with the studio key.
+printed shoe** button beside *Make insole*. ("Printed", because a shoe in
+the library is otherwise a bought shoe that an insole is cut to fit: the
+saved shoes of [insole.md](insole.md), `footscan shoe`. Those play no part
+here.) It opens a page for that capture (`/studio/clog.html`): the
+preferences above as a form, the foot's two ruler numbers, a box to also cut
+the print-trial pieces, and *Make shoe*. The studio makes the clog from the
+capture's model, picked and prepared as *Make insole* does it
+(`server.make_clog`), so the footbed is the first-fit surface that capture's
+insole has, on the foot's own outline: a saved shoe's outline shapes an
+insole's edge, never a clog's floor. Like everything under `/studio`, it
+answers only on the studio's own computer or with the studio key.
 
 - The form's lists and limits are the generator's own
   (`/api/footwear/options`, from `footwear_choices.options`), and what is

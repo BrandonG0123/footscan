@@ -67,7 +67,8 @@ cd ios/FootscanCapture && xcodebuild test -project FootscanCapture.xcodeproj -sc
   --describe-with-claude`). The fixed answers for anything medical or any sport are safety requirements, and a
   description that says the shoe is for either is not read into settings at all, nor sent to Claude (`wanted_for`):
   don't narrow that. Tests: `tests/test_footwear_choices.py`.
-  The studio's Make shoe is `server.make_clog`, `web/studio/clog.html`, `web/assets/clog-page.js` and `clog-form.js`.
+  The studio's Make printed shoe is `server.make_clog`, `web/studio/clog.html`, `web/assets/clog-page.js` and
+  `clog-form.js` (not `shoes.py`: that is saved bought shoes, whose outline an insole is cut to).
   Tests: `tests/test_server_clog.py` (~2 min), `tests/js/clog-form.test.mjs`.
 - `src/footscan/recon/foot_prep.py`: turns an Object Capture model (metres, Y up) into a foot on a flat floor, per
   scan kind (`foot`, `sole_up`, `sole_hanging`, `impression`), plus the plausibility warnings.

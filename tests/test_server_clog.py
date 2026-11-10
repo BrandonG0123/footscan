@@ -166,6 +166,27 @@ def test_the_shoes_footbed_is_the_insole_the_studio_makes_from_the_same_capture(
     assert b"sole-up" in call(f"{op}/api/captures/{cid}/clog/summary.html")[1].lower().replace(b" ", b"-")
 
 
+def test_a_saved_bought_shoe_changes_insoles_and_never_a_printed_shoe(servers):
+    """A saved shoe (shoes.py) is a bought shoe whose outline new insoles are cut to. A clog has its own
+    outline, so saving one as the default must leave a printed shoe exactly as it was, and not stale."""
+    import synth
+
+    op, _, _ = servers
+    cid = _foot_capture(op)
+    before = body(call(f"{op}/api/captures/{cid}/clog", "POST", {"style": "stone"}))
+    bought = body(call(f"{op}/api/captures", "POST", {"condition": "shoe_insole", "session": "LIDAR",
+                                                      "method": "imported_mesh"}))["id"]
+    assert call(f"{op}/api/captures/{bought}/mesh?ext=obj&up=y", "PUT", synth.shoe_insole().export(file_type="obj").encode(),
+                OBJ)[0] == 200
+    assert call(f"{op}/api/shoes", "POST", {"capture": bought, "name": "Test Trainer", "size": "US men's 9.5",
+                                            "default": True})[0] == 201
+    assert body(call(f"{op}/api/captures/{cid}/insole", "POST", {}))["outline"] == "saved"   # the insole follows it
+    assert "stale" not in _listed(op, cid)["clog"] and call(f"{op}/api/captures/{cid}/clog/clog.3mf")[0] == 200
+    after = body(call(f"{op}/api/captures/{cid}/clog", "POST", {"style": "stone"}))
+    same = ("length_mm", "width_mm", "height_mm", "volume_cm3", "inside", "footbed", "warnings")
+    assert {k: after[k] for k in same} == {k: before[k] for k in same}
+
+
 def test_a_shoe_goes_stale_when_its_model_changes_and_is_removed_when_the_model_is_replaced(servers):
     """Its footbed is that model's: never offer a shoe made from a model that has since been replaced or rebuilt."""
     op, _, data = servers

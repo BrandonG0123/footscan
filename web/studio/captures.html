@@ -58,8 +58,14 @@
 
   async function load() {
     try {
-      const r = await fetch("/api/captures");
+      // the captures and the saved shoes (one insole outline per shoe model and size; none is fine), together
+      const [r, shoes] = await Promise.all([
+        fetch("/api/captures"),
+        // not listed (an error): the menu then asks for the default, so the studio applies it or says why
+        fetch("/api/shoes").then((r) => r.ok ? r.json() : UNLISTED).catch(() => UNLISTED),
+      ]);
       all = await r.json();
+      saved = shoes;
     } catch {
       $("list").innerHTML = `<div class="callout stop"><p>Can't reach the footscan server. Start it with <span class="mono">footscan serve</span>.</p></div>`;
       return;
@@ -67,6 +73,9 @@
     render();
     if (location.hash) document.getElementById(location.hash.slice(1))?.scrollIntoView({ block: "center" });
   }
+
+  let saved = { shoes: [], default: null };
+  const UNLISTED = { shoes: [], default: null, unlisted: true };
 
   function render() {
     const cond = $("f-cond").value, foot = $("f-foot").value;
@@ -120,12 +129,14 @@
             ? `<a class="btn secondary" href="/studio/model.html?capture=${encodeURIComponent(c.capture_id)}">3D model</a>` : ""}
           ${c.foot && (c.frame_files?.length || c.mesh)
             ? `<a class="btn secondary" href="/studio/landmarks.html?capture=${encodeURIComponent(c.capture_id)}">Landmarks</a>` : ""}
+          ${c.condition === "shoe_insole" && c.mesh
+            ? `<button class="btn secondary" type="button" data-save-shoe="${esc(c.capture_id)}">Save as a shoe</button>` : ""}
           ${c.foot && (c.frame_files?.length || c.mesh)
             ? `${shoePicker(c)}<span class="shoe-len"><input type="number" inputmode="decimal" min="150" max="360" step="1"
                  placeholder="shoe insole, mm" aria-label="Shoe insole length in mm (optional)" data-length-for="${esc(c.capture_id)}"
-                 value="${c.insole?.shoe_length_mm ?? ""}" style="width:9.5em" ${c.insole?.shoe ? "disabled" : ""}></span>
+                 value="${c.insole?.shoe_length_mm ?? ""}" style="width:9.5em" ${outlineChoice(c) !== "foot" ? "disabled" : ""}></span>
                <button class="btn secondary" type="button" data-insole="${esc(c.capture_id)}">${c.insole && !c.insole.error ? "Remake insole" : "Make insole"}</button>
-               <a class="btn secondary" href="/studio/clog.html?capture=${encodeURIComponent(c.capture_id)}">${c.clog && !c.clog.error ? "Shoe" : "Make shoe"}</a>` : ""}</p>
+               <a class="btn secondary" href="/studio/clog.html?capture=${encodeURIComponent(c.capture_id)}">${c.clog && !c.clog.error ? "Printed shoe" : "Make printed shoe"}</a>` : ""}</p>
         <div class="insole-out" id="insole-${esc(c.capture_id)}">${c.insole ? insoleHtml(c.capture_id, c.insole) : ""}</div>
         ${clogHtml(c)}
         ${compareHtml(c)}
@@ -133,22 +144,68 @@
     }).join("");
   }
 
-  // Fit to a shoe: the outline of a scanned shoe's insole (recon/shoe.py). Either a shoe or a length, not both.
+  // The insole's outline: a saved shoe's (one outline per shoe model and size, footscan/shoes.py), a scanned
+  // shoe's insole (recon/shoe.py), or the foot's own (optionally lengthened). A saved shoe or a scan, or a length.
+  // What the menu shows: what was picked on this card since the page loaded, else what the last insole was made
+  // with (the server records it: a saved shoe, a shoe's scan, or the foot's own, lengthened or not), else the
+  // default saved shoe. An insole made before the server recorded the choice counts as the foot's own if it
+  // was lengthened (a length was only ever given with the foot's outline).
+  const picked = {};
+  function outlineChoice(c) {
+    if (picked[c.capture_id]) return picked[c.capture_id];
+    const ins = c.insole && !c.insole.error ? c.insole : undefined;
+    const shoe = ins?.shoe;
+    if (shoe?.saved && saved.shoes.some((s) => s.id === shoe.saved)) return `saved:${shoe.saved}`;
+    if (shoe?.capture && all.some((s) => s.capture_id === shoe.capture)) return `scan:${shoe.capture}`;
+    if (ins && !shoe && (ins.outline === "foot" || ins.shoe_length_mm != null)) return "foot";
+    // a default that was chosen but can't be read: ask for it anyway, so Make insole says what's wrong with it
+    // instead of quietly cutting the insole to the foot's own outline
+    return saved.default ? `saved:${saved.default}` : saved.default_problem || saved.unlisted ? "" : "foot";
+  }
+
   function shoePicker(c) {
-    const shoes = all.filter((s) => s.condition === "shoe_insole" && s.mesh);
-    if (!shoes.length) return "";
-    const chosen = c.insole?.shoe?.capture;
-    return `<select data-shoe-for="${esc(c.capture_id)}" aria-label="Fit the insole to a shoe's insole (optional)">
-      <option value="">Outline: the foot's own</option>
-      ${shoes.map((s) => `<option value="${esc(s.capture_id)}" ${s.capture_id === chosen ? "selected" : ""}>Fit to the shoe's insole
-        scanned ${esc(s.created?.slice(0, 16).replace("T", " "))}</option>`).join("")}</select>`;
+    const scans = all.filter((s) => s.condition === "shoe_insole" && s.mesh);
+    if (!scans.length && !saved.shoes.length && !saved.default_problem && !saved.unlisted) return "";
+    const chosen = outlineChoice(c);
+    const opt = (value, label) => `<option value="${esc(value)}" ${value === chosen ? "selected" : ""}>${label}</option>`;
+    return `<select data-shoe-for="${esc(c.capture_id)}" aria-label="The insole's outline: a shoe's, or the foot's own">
+      ${saved.default_problem ? opt("", "Outline: the default saved shoe (can't be read)") : ""}
+      ${saved.unlisted ? opt("", "Outline: the default saved shoe, if any (the saved shoes couldn't be listed)") : ""}
+      ${saved.shoes.map((s) => opt(`saved:${s.id}`, `Outline: ${esc(s.name)}, ${esc(s.size)}${s.id === saved.default ? " (default)" : ""}`)).join("")}
+      ${scans.map((s) => opt(`scan:${s.capture_id}`, `Outline: the shoe's insole scanned ${esc(s.created?.slice(0, 16).replace("T", " "))}`)).join("")}
+      ${opt("foot", "Outline: the foot's own")}</select>`;
   }
 
   document.addEventListener("change", (e) => {
     const sel = e.target.closest("[data-shoe-for]");
     if (!sel) return;
+    picked[sel.dataset.shoeFor] = sel.value;
     const len = document.querySelector(`[data-length-for="${CSS.escape(sel.dataset.shoeFor)}"]`);
-    if (len) { len.disabled = !!sel.value; if (sel.value) len.value = ""; }
+    if (len) { len.disabled = sel.value !== "foot"; if (sel.value !== "foot") len.value = ""; }
+  });
+
+  // Save a shoe's-insole scan as a saved shoe: its outline, kept for that shoe model and size
+  document.addEventListener("click", async (e) => {
+    const btn = e.target.closest("[data-save-shoe]");
+    if (!btn) return;
+    const name = prompt("Which shoe is this insole from? (e.g. ASICS Gel Resolution X)");
+    if (!name) return;
+    const size = prompt("Which size? (e.g. US men's 9.5)");
+    if (!size) return;
+    const makeDefault = confirm("Make it the default? New insoles then take this shoe's outline unless you choose another.");
+    btn.disabled = true;
+    try {
+      const r = await fetch("/api/shoes", { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ capture: btn.dataset.saveShoe, name, size, default: makeDefault }) });
+      const out = await r.json();
+      if (!r.ok) throw new Error(out.error || r.status);
+      await load(); // the captures too: insoles cut to an earlier save of this shoe are stale now
+      alert(`Saved: ${out.name}, ${out.size} (${out.length_mm} × ${out.width_mm} mm).`);
+    } catch (err) {
+      alert(`Couldn't save the shoe: ${err.message}`);
+    } finally {
+      btn.disabled = false;
+    }
   });
 
   // Repeatability: compare this scan with another of the same foot (recon/compare.py)
@@ -184,30 +241,32 @@
     }
   });
 
-  // The clog made from this capture (its own page makes it and shows it): one line here, so the library says
-  // there is one and whether it still matches the scan. Not a medical device; walking and casual wear only.
+  // The printed shoe (a clog) made from this capture (its own page makes it and shows it): one line here, so the
+  // library says there is one and whether it still matches the scan. "Printed", because a shoe on this page is
+  // otherwise a bought shoe an insole is cut to fit. Not a medical device; walking and casual wear only.
   function clogHtml(c) {
     const r = c.clog;
     if (!r || r.error) return "";
     const page = `/studio/clog.html?capture=${encodeURIComponent(c.capture_id)}`;
-    if (r.stale) return `<p class="hint" style="color:var(--warn);margin:8px 0 0">The 3D model has changed since this capture's shoe
-      was made, so it no longer matches. <a href="${page}">Make the shoe again</a>.</p>`;
-    return `<p class="hint" style="margin:8px 0 0"><strong>Clog</strong> (${esc(r.style)}, ${esc(r.length_mm)} × ${esc(r.width_mm)} mm,
+    if (r.stale) return `<p class="hint" style="color:var(--warn);margin:8px 0 0">The 3D model has changed since this capture's printed
+      shoe was made, so it no longer matches. <a href="${page}">Make it again</a>.</p>`;
+    return `<p class="hint" style="margin:8px 0 0"><strong>Printed shoe</strong> (clog, ${esc(r.style)}, ${esc(r.length_mm)} × ${esc(r.width_mm)} mm,
       untested design, walking and casual wear only): <a href="${page}">open it</a>.</p>`;
   }
 
   // First-fit insole: not a medical device; no posting; walking-only until a clinician signs the sheet.
   function insoleHtml(id, r) {
     if (r.error) return `<p class="hint" style="color:var(--warn);margin:8px 0 0">${esc(r.error)}</p>`;
-    if (r.stale) return `<p class="hint" style="color:var(--warn);margin:8px 0 0">The 3D model has changed since this insole was
-      made, so it no longer matches. Press Make insole to make it again.</p>`;
+    if (r.stale) return `<p class="hint" style="color:var(--warn);margin:8px 0 0">${esc(r.stale_message || "This insole no longer matches what it was made from.")}
+      Press Make insole to make it again.</p>`;
     const base = `/api/captures/${encodeURIComponent(id)}/insole/`;
     const warn = (r.warnings || []).map((w) => `<li>${esc(w)}</li>`).join("");
     return `<div class="card" style="margin-top:10px;padding:12px">
       <strong>First-fit insole</strong> <span class="badge">${esc(r.foot)} foot</span> <span class="badge">no posting</span>
       <p class="hint" style="margin:6px 0">${r.length_mm} × ${r.width_mm} mm, ${r.height_mm} mm tall · highest arch fill ${r.max_fill_mm} mm ·
         sole seen ${Math.round(100 * r.sole.seen)}% (arch ${Math.round(100 * r.sole.seen_under_arch)}%) · bed: ${esc(r.bed.how)}</p>
-      ${r.shoe?.fit ? `<p class="hint" style="margin:0 0 6px">Outline: the shoe's own insole (${esc(r.shoe.fit.shoe_length_mm)} mm),
+      ${!r.shoe ? `<p class="hint" style="margin:0 0 6px">Outline: the foot's own${r.shoe_length_mm ? `, lengthened to the shoe's ${esc(r.shoe_length_mm)} mm` : " (no shoe chosen)"}: trim it to the shoe's stock insole.</p>` : ""}
+      ${r.shoe?.fit ? `<p class="hint" style="margin:0 0 6px">Outline: ${r.shoe.name ? esc(r.shoe.name) : "the shoe's own insole"} (${esc(r.shoe.fit.shoe_length_mm)} mm),
         ${esc(r.shoe.fit.room_past_toes_mm)} mm past the toes${r.shoe.fit.overhang.max_mm > 1
           ? `; the foot is over its edge by up to ${esc(r.shoe.fit.overhang.max_mm)} mm at the ${esc(r.shoe.fit.overhang.where)}` : "; the foot is inside it all round"}.</p>` : ""}
       ${warn ? `<ul class="checklist" style="margin:6px 0;color:var(--warn)">${warn}</ul>` : ""}
@@ -232,11 +291,13 @@
     try {
       // optional: the shoe's insole length; the front is lengthened to it, the foot-shaped part unchanged
       const len = document.querySelector(`[data-length-for="${CSS.escape(id)}"]`)?.value.trim();
-      // or a scanned shoe's insole: its outline, fitted round the foot
-      const shoe = document.querySelector(`[data-shoe-for="${CSS.escape(id)}"]`)?.value;
+      // or a shoe's outline (saved, or a scanned insole), fitted round the foot
+      const pick = document.querySelector(`[data-shoe-for="${CSS.escape(id)}"]`)?.value;
+      const body = pick?.startsWith("saved:") ? { saved_shoe: pick.slice(6) }
+        : pick?.startsWith("scan:") ? { shoe: pick.slice(5) }
+        : len ? { length_mm: Number(len) } : pick === "foot" ? { foot_outline: true } : {};
       const r = await fetch(`/api/captures/${encodeURIComponent(id)}/insole`, {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(shoe ? { shoe } : len ? { length_mm: Number(len) } : {}),
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
       });
       const out = await r.json();
       if (!r.ok) throw new Error(out.error || r.status);

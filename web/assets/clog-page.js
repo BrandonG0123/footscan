@@ -352,7 +352,7 @@ async function init() {
     return;
   }
   clog = capture.clog || null;
-  $("title").textContent = `Make a shoe for the ${capture.foot} foot`;
+  $("title").textContent = `Make a printed shoe for the ${capture.foot} foot`;
   $("root").innerHTML = formHtml();
   // the form opens as it was left when this shoe was made, else at the generator's defaults
   writeForm(valuesFrom(clog && !clog.error ? clog.choices : null, options.defaults));
