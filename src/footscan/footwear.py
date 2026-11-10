@@ -27,9 +27,12 @@ What comes from the foot, and what doesn't
   pattern cut into the upper, how open it is, the sole's thickness, the toe's
   shape. A style never changes the inside.
 
-Proportions stay a shoe's whatever the foot: the inside's width is held
-between ``BALL_SHARE`` of its length (a long, narrow foot gets a normal shoe
-in its length, never a long thin one, and the result says so).
+Proportions stay a shoe's whatever the foot: the standard shape's width is
+held between ``BALL_SHARE`` of its length (a long, narrow foot gets a normal
+shoe in its length, never a long thin one, and the result says so). Only
+where the sole scan shows the foot wider than that shape is it let out, so
+a shoe is never tighter than the scanned foot for the sake of its looks;
+the sheet says where.
 
 How the shape is made
 ---------------------
@@ -75,8 +78,10 @@ the end for a left one.
    is subtracted from the outside. What is left is the sole with the footbed
    as its top, and a shell of even thickness over the foot.
 8. **The opening**: everything above a curve that starts low behind the heel
-   (``heel_rim_mm``) and climbs to the top of the instep is cut away. That
-   leaves a low lip round the heel and a closed front: a clog.
+   (``heel_rim_mm`` above the floor) and climbs to the top of the instep is
+   cut away. That leaves a low lip round the heel and a closed front: a
+   clog. The curve stays at least ``HEEL_LIP_MIN_MM`` above the footbed all
+   along, or the shoe is refused.
 9. **The pattern**: diamond-shaped windows are cut through the upper, each
    pointing straight out of the surface, in rows that follow the shoe's own
    curves. Diamonds, so that on the upright sides a window narrows to a
@@ -203,6 +208,10 @@ STYLES = {
 
 MIN_STRUT_MM = 2.6        # the least material left between two windows (a judgment: about six 0.4 mm lines)
 WINDOW_EDGE_MM = 5.0      # no window closer than this to the opening's edge
+# The least the opening's edge stands above the footbed anywhere along it (mm). A JUDGMENT, the same 12 mm the
+# rim has always had to stand over a flat floor: lower, a clog's back holds too little of the heel. With the
+# insole's 12 mm heel cap and the default 26 mm rim it is at least 14 mm.
+HEEL_LIP_MIN_MM = 12.0
 GROOVE_DEPTH_MM = 0.9     # the lines round the sole's side
 TREAD_DEPTH_MM = 1.6
 TREAD_WIDTH_MM = 2.4
@@ -225,7 +234,8 @@ class ShoeParams:
     drop_mm: float = 6.0                  # the heel sits this much higher than the ball (front to back only: no
                                           # sideways tilt, which would be posting)
     cushion: str = "medium"               # soft | medium | firm: the sole's infill when printed (CUSHION)
-    heel_rim_mm: float = 26.0             # the lip behind the heel, above the footbed
+    heel_rim_mm: float = 26.0             # the rim behind the heel, above the inside's floor (the footbed's heel
+                                          # cup stands in it: the rim must clear that by HEEL_LIP_MIN_MM)
     throat: float = 0.50                  # the opening ends this share of the length from the heel
     upper_mm: float = 2.4                 # the upper's thickness (six 0.4 mm lines). A judgment for TPU 95A
     tread: bool = True
@@ -324,12 +334,19 @@ def _tube(rings: np.ndarray):
 # ---------------------------------------------------------------------------
 # sizing: the foot -> the inside
 # ---------------------------------------------------------------------------
-def size_inside(foot_length_mm: float, foot_width_mm: float, p: ShoeParams) -> dict:
-    """The inside's length and width (mm) for a foot, the fit's room added, and any note about its proportions.
+TIGHT_AT_BALL = "It may be tight across the ball: check before wearing."
+
+
+def size_inside(foot_length_mm: float, foot_width_mm: float, p: ShoeParams, scanned: bool = False) -> dict:
+    """The standard shape's inside length and width (mm) for a foot, the fit's room added, and any note about
+    its proportions.
 
     The length is the foot's plus the fit's room past the toes; the width is the foot's plus the fit's ease. The
     width is then held between ``BALL_SHARE`` of the length: a foot much narrower or wider than a shoe's
     proportions gets the nearest normal shoe in its length, and a note saying how far off its own width that is.
+    ``scanned``: a sole scan comes with the foot, so where it shows the foot wider than that the walls will be
+    let out (``_let_out``), and whether a wide foot still has too little room is only known after that: the
+    note for it is left to ``build`` (``narrower_mm`` says by how much the standard shape is narrower).
     """
     if p.fit not in FIT:
         raise FootwearError(f"fit must be one of {sorted(FIT)}")
@@ -349,12 +366,27 @@ def size_inside(foot_length_mm: float, foot_width_mm: float, p: ShoeParams) -> d
         notes.append(f"this foot is narrow for its length ({foot_width_mm:.0f} mm across the ball, {foot_length_mm:.0f} mm "
                      f"long): the shoe keeps a normal shoe's proportions, so its inside is {width - wanted:.0f} mm wider "
                      "than the fit alone would make it. Expect room at the sides.")
-    elif width < wanted - 0.05:
+    elif width < wanted - 0.05 and not scanned:
         notes.append(f"this foot is wide for its length ({foot_width_mm:.0f} mm across the ball, {foot_length_mm:.0f} mm "
                      f"long): the shoe keeps a normal shoe's proportions, so its inside is {wanted - width:.0f} mm narrower "
-                     "than the fit alone would make it. It may be tight across the ball: check before wearing.")
+                     f"than the fit alone would make it. {TIGHT_AT_BALL}")
     return dict(length_mm=round(length, 1), width_mm=round(width, 1), toe_room_mm=f["toe_room_mm"] + p.sock_mm,
-                width_ease_mm=round(width - foot_width_mm, 1), roof_ease_mm=f["roof_mm"] + p.sock_mm, notes=notes)
+                width_ease_mm=round(width - foot_width_mm, 1), roof_ease_mm=f["roof_mm"] + p.sock_mm, notes=notes,
+                narrower_mm=round(max(0.0, wanted - width), 1) if width < wanted - 0.05 else 0.0)
+
+
+def _wide_note(length: float, width: float, narrower: float, let_out, loft, over: dict) -> str:
+    """The note for a scanned foot wide for its length, once the walls have been let out for it: whether they
+    were let out across the ball (and the shoe is wider there than a normal one's proportions), whether the
+    scan's outline fits across the ball anyway, or whether it still may not (then ``over`` says where)."""
+    head = (f"this foot is wide for its length ({width:.0f} mm across the ball, {length:.0f} mm long): a normal shoe's "
+            f"proportions make the standard shape {narrower:.0f} mm narrower than the fit alone would. ")
+    if over["where"] and "ball" in over["where"]:
+        return head + TIGHT_AT_BALL
+    if let_out is not None and max(float(f(0.72 * loft.L)) for f in let_out) >= 0.5:
+        return head + ("The sole scan shows the foot wider than that across the ball, so the walls are let out for it "
+                       "there: the shoe is wider than a normal shoe's proportions where this foot needs it.")
+    return head + "The sole scan's outline fits inside it across the ball."
 
 
 # ---------------------------------------------------------------------------
@@ -653,9 +685,8 @@ class Footbed:
                     standing = near
             except (insole_mod.InsoleError, shapely.errors.GEOSException, ValueError, AttributeError):
                 pass
-        x0, _, x1, _ = outline.bounds
-        q = ins.params   # the heel's cap easing into the arch's (insole.build, step 2, has the same heel zone)
-        w_heel = np.clip((x0 + (q.heel_zone + 0.15) * (x1 - x0) - xs) / (0.15 * (x1 - x0)), 0.0, 1.0)
+        q = ins.params   # the heel's cap easing into the arch's, over the insole's own heel zone (1 in the heel, 0 past it)
+        w_heel = s["heel_weight"]
         fill = np.minimum(fill, (q.max_arch_fill_mm + (q.heel_cup_depth_mm - q.max_arch_fill_mm) * _smoothstep(w_heel))[None, :])
         if foot == "left":   # the insole's frame has y toward the foot's left: a left foot's inner side is -y there
             ys, fill, under = -ys[::-1], fill[::-1], under[::-1]
@@ -812,23 +843,11 @@ def _let_out(loft: _Loft, foot, ease: float):
 
 
 def _hangs_over(loft: _Loft, foot) -> dict:
-    """Where the foot is still wider than the shoe's inside at its widest, and by how much (as
-    ``recon.shoe.fit_to_foot`` reports it for an insole's outline)."""
-    import shapely
+    """Where the foot is still wider than the shoe's inside at its widest, and by how much, reported the way
+    ``recon.shoe.fit_to_foot`` reports it for an insole's outline (the same helper)."""
+    from .recon import shoe as shoe_mod
 
-    edge = np.asarray(foot.exterior.segmentize(1.0).coords)[:-1]
-    out = ~shapely.contains_xy(loft.inside_widest, edge[:, 0], edge[:, 1])
-    if not out.any():
-        return dict(max_mm=0.0, where=None)
-    over = np.asarray(shapely.distance(loft.inside_widest.exterior, shapely.points(edge[out])))
-    i = int(np.argmax(over))
-    px, py = edge[out][i]
-    share = px / loft.L
-    part = "heel" if share < 0.3 else "arch" if share < 0.6 else "ball of the foot" if share < 0.85 else "toes"
-    inner = py > float(loft.floor.middle(px))
-    return dict(max_mm=round(float(over[i]), 1),
-                where=part if part in ("heel", "toes") else f"{part}, {'inner' if inner else 'outer'} side",
-                area_mm2=round(float(foot.difference(loft.inside_widest).area), 0))
+    return shoe_mod.overhang_of(loft.inside_widest, foot, 0.0, loft.L, lambda px, py: py > float(loft.floor.middle(px)))
 
 
 def _prism(polygon, z0: float, z1: float):
@@ -866,18 +885,23 @@ def _under_the_foot(loft: _Loft, bed: Footbed | None):
 # ---------------------------------------------------------------------------
 # the opening, the windows, the tread
 # ---------------------------------------------------------------------------
-def _opening(loft: _Loft, p: ShoeParams):
-    """The opening's edge as a height at each x (``edge(x)``), and the solid above it that is cut away.
+def _opening(loft: _Loft, p: ShoeParams, bed: Footbed | None = None):
+    """The opening's edge as a height at each x (``edge(x)``), the solid above it that is cut away, where the
+    edge ends, and the least it stands above the footbed (mm).
 
-    The edge starts ``heel_rim_mm`` above the footbed behind the heel and climbs, slowly then faster, to just
-    over the roof where the opening ends (``throat``); past that it is above the shoe, so the front stays closed.
+    The edge starts ``heel_rim_mm`` above the inside's floor behind the heel and climbs, slowly then faster, to
+    just over the roof where the opening ends (``throat``); past that it is above the shoe, so the front stays
+    closed. The footbed stands on that floor (its heel cup up to the insole's heel cap behind the heel), so the
+    edge is checked against the footbed's highest point across the shoe all along the opening: anywhere less
+    than ``HEEL_LIP_MIN_MM`` above it the rim would hold too little of the heel, and below it the cut would take
+    the top off the footbed. That is refused.
     """
     import manifold3d as m3
 
     if not 0.35 <= p.throat <= 0.65:
         raise FootwearError("the opening ends between 0.35 and 0.65 of the length from the heel")
-    if p.heel_rim_mm < 12.0:
-        raise FootwearError("the heel's rim is at least 12 mm above the footbed (the footbed's own heel cup is that deep)")
+    if p.heel_rim_mm < HEEL_LIP_MIN_MM:
+        raise FootwearError(f"the heel's rim is at least {HEEL_LIP_MIN_MM:.0f} mm above the floor of the inside")
     back = loft.x0 - 1.0
     xt = p.throat * loft.L
     z_rim = float(loft.floor_z(0.0)) + p.heel_rim_mm
@@ -889,12 +913,28 @@ def _opening(loft: _Loft, p: ShoeParams):
         u = np.clip((np.asarray(x, float) - back) / (xt - back), 0.0, None)
         return z_rim + (z_top - z_rim) * u ** 2.2
 
+    # the footbed's highest point across the inside, every 2 mm from the heel's end to where the opening ends
+    xs = np.arange(loft.x0 + 0.5, xt, 2.0)
+    lo, hi = _across(loft.inside_widest, xs)
+    ok = np.isfinite(lo)
+    xs, lo, hi = xs[ok], lo[ok], hi[ok]
+    top = loft.floor_z(xs)
+    if bed is not None:
+        t = np.linspace(0.0, 1.0, 41)[None, :]
+        top = top + bed.height(np.repeat(xs[:, None], 41, axis=1), lo[:, None] + t * (hi - lo)[:, None]).max(axis=1)
+    lip = edge(xs) - top
+    i = int(np.argmin(lip))
+    if lip[i] < HEEL_LIP_MIN_MM - 0.05:
+        raise FootwearError(f"the opening's edge would stand only {lip[i]:.1f} mm above the footbed {xs[i]:.0f} mm from the "
+                            f"back (at least {HEEL_LIP_MIN_MM:.0f} mm, so the rim holds the heel and the cut stays clear of "
+                            f"the footbed): raise heel_rim_mm by {HEEL_LIP_MIN_MM - lip[i]:.1f} mm or more")
+
     x = np.linspace(back, back + 1.35 * (xt - back), 80)
     ring = np.r_[[(back - 40.0, z_rim)], np.c_[x, edge(x)], [(x[-1], 600.0), (back - 40.0, 600.0)]]
     wide = 2 * loft.floor.width + 80.0
     cut = m3.Manifold.extrude(m3.CrossSection([ring], m3.FillRule.Positive), wide)   # drawn in x and height...
     cut = cut.rotate((90.0, 0.0, 0.0)).translate((0.0, wide / 2, 0.0))              # ...then stood up across the shoe
-    return edge, cut, float(x[-1])
+    return edge, cut, float(x[-1]), round(float(lip[i]), 1)
 
 
 def _windows(loft: _Loft, p: ShoeParams, edge, edge_ends: float, bed: Footbed | None):
@@ -910,10 +950,10 @@ def _windows(loft: _Loft, p: ShoeParams, edge, edge_ends: float, bed: Footbed | 
 
     st = STYLES[p.style]
     openness = st["openness"] if p.openness is None else p.openness
-    if st["pattern"] is None or openness <= 0:
-        return [], dict(count=0, openness=0.0)
-    if not 0 < openness <= 0.5:
+    if not 0 <= openness <= 0.5:
         raise FootwearError("openness is the share of the patterned area cut away: between 0 and 0.5")
+    if st["pattern"] is None or openness == 0:
+        return [], dict(count=0, openness=0.0)
     (rw, rh), (px, pg) = st["pattern"], st["pitch_mm"]
     h = np.sqrt(2 * openness * px * pg * rh / rw)          # a diamond w x h has area w * h / 2
     w = h * rw / rh
@@ -1038,14 +1078,15 @@ def build(foot: str, params: ShoeParams | None = None, footbed=None) -> Shoe:
         if footbed.foot != foot:
             raise FootwearError(f"the footbed is a {footbed.foot} foot's and the shoe a {foot} one")
         bed = Footbed(footbed, foot)
+    scan_notes = bed.size_to(p.foot_length_mm, p.foot_width_mm) if bed is not None else []
     length = p.foot_length_mm or (bed.scan_length if bed else None)
-    width = p.foot_width_mm or (bed.scan_width if bed else None)
+    # without a ruler's width, the scan's own, scaled to the ruler's length with the rest of the footbed (the
+    # foot the shoe holds is that size)
+    width = p.foot_width_mm or (bed.scan_width * bed.scale if bed else None)
     if length is None or width is None:
         raise FootwearError("give the foot's length and width in mm, or a sole scan to read them from")
-    size = size_inside(length, width, p)
-    warnings += size["notes"]
-    if bed is not None:
-        warnings += bed.size_to(p.foot_length_mm, p.foot_width_mm)
+    size = size_inside(length, width, p, scanned=bed is not None)
+    warnings += size["notes"] + scan_notes
 
     loft = _loft_for(size, p, sole, st["flare_mm"], st["grooves"])
     fit = let = over = room = None
@@ -1061,6 +1102,8 @@ def build(foot: str, params: ShoeParams | None = None, footbed=None) -> Shoe:
                                     f"inside is let out there by up to {let[side]['max_mm']} mm ({let[side]['at']:.0%} of the "
                                     "way along), so the shoe is fuller on that side than its style's standard shape.")
         over = _hangs_over(loft, whole)
+        if size["narrower_mm"]:
+            warnings.append(_wide_note(length, width, size["narrower_mm"], let_out, loft, over))
         if over["max_mm"] > 1.0:
             warnings.append(f"the scanned foot is wider than the shoe's inside at the {over['where']}, by up to {over['max_mm']} mm. "
                             "It may press there: check before wearing, or choose a roomier fit.")
@@ -1071,11 +1114,13 @@ def build(foot: str, params: ShoeParams | None = None, footbed=None) -> Shoe:
     # hollow the outside by the inside, down to the footbed's surface (the inside's slices start under the
     # floor, so that surface always cuts cleanly through their sides)
     shoe = loft.outside() - (loft.inside(below=1.5) - _under_the_foot(loft, bed))
-    edge, cut, edge_ends = _opening(loft, p)
+    edge, cut, edge_ends, rim_over_footbed = _opening(loft, p, bed)
     shoe -= cut
     pegs, pattern = _windows(loft, p, edge, edge_ends, bed)
     if pegs:
         shoe -= m3.Manifold.batch_boolean(pegs, m3.OpType.Add)
+    if p.openness and st["pattern"] is None:
+        warnings.append(f"the {p.style} style has no windows, so the openness asked for ({p.openness:g}) changes nothing.")
     if p.tread:
         shoe -= _tread(loft.ground)
     if foot == "left":
@@ -1112,6 +1157,7 @@ def build(foot: str, params: ShoeParams | None = None, footbed=None) -> Shoe:
                   infill_percent=CUSHION[p.cushion], cushion=p.cushion),
         upper_mm=p.upper_mm,
         heel_rim_mm=p.heel_rim_mm,
+        rim_over_footbed_mm=rim_over_footbed,
         pattern=pattern,
         footbed=None if bed is None else dict(
             max_fill_mm=round(bed.highest(loft.inside_widest), 2), scan_length_mm=round(bed.scan_length, 1),
@@ -1246,9 +1292,15 @@ def mirrored(shoe: Shoe) -> Shoe:
     report = json.loads(json.dumps(shoe.report))
     report["foot"] = other
     report["mirrored_from"] = shoe.foot
-    report["warnings"] = [f"this {other} shoe is the {shoe.foot} shoe's mirror image: its footbed is the {shoe.foot} foot's, "
-                          f"not made from a scan of the {other} foot. Two feet differ; make it again from the {other} foot's "
-                          "own sole scan before relying on it."] + report["warnings"]
+    if report.get("footbed"):
+        first = (f"this {other} shoe is the {shoe.foot} shoe's mirror image: its footbed is the {shoe.foot} foot's, not "
+                 f"made from a scan of the {other} foot. Two feet differ; make it again from the {other} foot's own sole "
+                 "scan before relying on it.")
+    else:   # a flat floor from ruler numbers: what came from the other foot is only its size
+        first = (f"this {other} shoe is the {shoe.foot} shoe's mirror image, sized from the {shoe.foot} foot's measurements, "
+                 f"not the {other} foot's. Two feet differ in length and width; measure the {other} foot and make it "
+                 "again before relying on it.")
+    report["warnings"] = [first] + report["warnings"]
     report["bed_fit"] = insole_mod.bed_fit_shape(V[:, :2], shoe.params.bed_mm)
     return Shoe(mesh=mesh, foot=other, params=shoe.params, report=report)
 
@@ -1278,12 +1330,8 @@ def from_scan(mesh, foot: str, params: ShoeParams | None = None, kind: str = "ma
 UNTESTED = ("No shoe from this design has been printed or worn yet. Its thicknesses, heights and allowances are "
             "starting judgments, and its grip, wear and strength are unknown.")
 
-# The break-in, word for word as the insole's summary sheet has it (docs/SAFETY.md, requirement 2; a test holds
-# the two together).
-BREAK_IN_HTML = """<p>Day 1: 1 h &middot; days 2&ndash;3: 2 h &middot; days 4&ndash;5: 3 h &middot; days 6&ndash;7: 4 h &middot; days 8&ndash;10: 6 h &middot;
-days 11&ndash;14: all day. Check both feet after every session.
-<b>Stop at once</b> and don't resume until reviewed if anything new hurts (foot, ankle, shin, knee, hip or back),
-a skin mark is still there the next day, a foot feels numb, tingly or burning, or an existing pain gets worse.</p>"""
+# The break-in, the insole's summary sheet's own paragraph (docs/SAFETY.md, requirement 2): one text for both.
+BREAK_IN_HTML = insole_mod.BREAK_IN_HTML
 
 
 def print_notes(shoe: Shoe) -> str:
@@ -1384,7 +1432,7 @@ the instep and the toes is not measured from this foot.</p>
 <tr><th>Style</th><td colspan="3">{escape(st['label'])}: {escape(st['about'])}</td></tr>
 <tr><th>Size</th><td>{r['length_mm']} &times; {r['width_mm']} mm, {r['height_mm']} mm tall</td><th>Volume</th><td>{r['volume_cm3']} cm&sup3; if printed solid (less with infill)</td></tr>
 <tr><th>Sole</th><td>{sole['under_ball_mm']} mm under the ball, {sole['under_heel_mm']} mm under the heel</td><th>Heel above the ball</th><td>{round(sole['under_heel_mm'] - sole['under_ball_mm'], 1)} mm, front to back only (no sideways tilt)</td></tr>
-<tr><th>Upper</th><td>{r['upper_mm']} mm thick; {r['heel_rim_mm']} mm lip behind the heel</td><th>Cushioning</th><td>{escape(sole['cushion'])}: {sole['infill_percent']}% infill suggested (untested)</td></tr>
+<tr><th>Upper</th><td>{r['upper_mm']} mm thick; rim behind the heel {r['heel_rim_mm']} mm above the floor, at least {r['rim_over_footbed_mm']} mm above the footbed</td><th>Cushioning</th><td>{escape(sole['cushion'])}: {sole['infill_percent']}% infill suggested (untested)</td></tr>
 <tr><th>Pattern</th><td colspan="3">{pattern}</td></tr>
 <tr><th>Printer bed</th><td colspan="3">{escape(r['bed_fit']['how']) if r['bed_fit']['fits'] else 'does not fit a ' + format(r['bed_fit']['bed_mm'], '.0f') + ' mm bed'}</td></tr>
 </table>

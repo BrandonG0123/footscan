@@ -246,6 +246,28 @@ def _place(shoe, mirrored: bool, turn_deg: float, x: float, y: float):
     return shapely.affinity.affine_transform(shoe, [c, -s * my, s, c * my, x, y])
 
 
+def overhang_of(outline, foot, x0: float, length: float, inner) -> dict:
+    """Where ``foot`` (an outline seen from above) stands outside ``outline``, and by how much: the most (mm out
+    from the outline's edge), where along the foot that is (heel, arch, ball of the foot or toes, as a share of
+    ``length`` from ``x0``; the arch and the ball on the inner or outer side, ``inner(x, y)`` saying which), and
+    the area outside. Nothing outside: max_mm 0, where None. The insole's fit (``fit_to_foot``) and the printed
+    shoe (``footwear.py``) both report a foot hanging over this way."""
+    import shapely
+
+    edge = np.asarray(foot.exterior.segmentize(1.0).coords)[:-1]
+    out = ~shapely.contains_xy(outline, edge[:, 0], edge[:, 1])
+    over = np.asarray(shapely.distance(outline.exterior, shapely.points(edge[out]))) if out.any() else np.zeros(0)
+    if not len(over) or over.max() <= 0:
+        return dict(max_mm=0.0, where=None)
+    i = int(np.argmax(over))
+    px, py = edge[out][i]
+    share = (px - x0) / length
+    part = "heel" if share < 0.3 else "arch" if share < 0.6 else "ball of the foot" if share < 0.85 else "toes"
+    return dict(max_mm=round(float(over[i]), 1),
+                where=part if part in ("heel", "toes") else f"{part}, {'inner' if inner(px, py) else 'outer'} side",
+                area_mm2=round(float(foot.difference(outline).area), 0))
+
+
 def fit_to_foot(shoe, sil, foot: str, heel_gap_mm: float):
     """Place the shoe's outline (heel at the origin, see outline_from_scan) round the foot's outline within
     FIT_HEIGHT_MM of the floor, ``sil`` (insole frame). -> (placed outline, fit report). See the module docstring."""
@@ -281,20 +303,8 @@ def fit_to_foot(shoe, sil, foot: str, heel_gap_mm: float):
     _, mir, turn, dy = best
     placed = _place(shoe, mir, turn, hx, hy + dy)
 
-    # where the foot hangs over the shoe's edge, and by how much
-    edge = np.asarray(sil.exterior.segmentize(1.0).coords)[:-1]
-    out = ~shapely.contains_xy(placed, edge[:, 0], edge[:, 1])
-    over = np.asarray(shapely.distance(placed.exterior, shapely.points(edge[out]))) if out.any() else np.zeros(0)
-    overhang = dict(max_mm=0.0, where=None)
-    if len(over) and over.max() > 0:
-        i = int(np.argmax(over))
-        px, py = edge[out][i]
-        share = (px - x0) / length
-        part = "heel" if share < 0.3 else "arch" if share < 0.6 else "ball of the foot" if share < 0.85 else "toes"
-        inner = (py - hy) * (1.0 if foot == "right" else -1.0) > 0  # the foot's inner side is +y for a right foot
-        overhang = dict(max_mm=round(float(over.max()), 1),
-                        where=part if part in ("heel", "toes") else f"{part}, {'inner' if inner else 'outer'} side",
-                        area_mm2=round(float(sil.difference(placed).area), 0))
+    # where the foot hangs over the shoe's edge, and by how much (the foot's inner side is +y for a right foot)
+    overhang = overhang_of(placed, sil, x0, length, lambda px, py: (py - hy) * (1.0 if foot == "right" else -1.0) > 0)
     px0, _, px1, _ = placed.bounds
     report = dict(shoe=hand, toe_end_left_mm=toe_left, mirrored=bool(mir), turned_deg=round(float(turn), 2), slid_mm=round(float(dy), 2),
                   shoe_length_mm=round(px1 - px0, 1), foot_length_mm=round(length, 1),

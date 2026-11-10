@@ -255,6 +255,34 @@ def test_the_rulers_width_sizes_the_shoe_and_is_only_compared_with_the_scans(blo
         fw.build("right", fw.ShoeParams(style="stone", foot_width_mm=110.0), footbed=block)
 
 
+def test_a_ruler_length_alone_scales_the_scans_width_with_it(block):
+    """SYNTHETIC block foot, 240 x 90 mm as scanned, given only a ruler length of 252 mm (5% longer): the
+    footbed is scaled 5% along and across, so the shoe is sized for the foot it holds, 94.5 mm across, not
+    for the scan's 90."""
+    r = fw.build("right", fw.ShoeParams(style="stone", foot_length_mm=252.0), footbed=block).report
+    assert r["footbed"]["scaled_percent"] == pytest.approx(5.0, abs=0.05)
+    assert r["made_for"]["width_from"] == "scan" and r["made_for"]["foot_width_mm"] == pytest.approx(94.5, abs=0.1)
+    assert r["inside"]["width_mm"] == pytest.approx(94.5 + 2.0, abs=0.1)        # the regular fit's ease
+
+
+def test_a_foot_wide_for_its_length_is_let_out_at_the_ball_and_not_told_it_may_be_tight():
+    """SYNTHETIC block foot made 20% wider (240 x 108 mm): wider than a normal shoe's proportions allow, so the
+    standard shape is narrower than the fit alone would make it. The scan shows the foot there, so the walls
+    are let out for it across the ball, and the sheet says that instead of 'it may be tight'. From ruler
+    numbers alone nothing can be let out, and the warning stays."""
+    m = synth.block_foot(0.0, "right")
+    m.apply_transform(np.diag([1.0, 1.2, 1.0, 1.0]))
+    wide = insole.from_scan(m, "right")
+    r = fw.build("right", fw.ShoeParams(style="stone"), footbed=wide).report
+    note = [w for w in r["warnings"] if "wide for its length" in w]
+    assert len(note) == 1 and "may be tight" not in note[0] and "let out" in note[0]
+    let = r["footbed"]["let_out"]
+    assert let["inner"]["max_mm"] > 1.0 and let["outer"]["max_mm"] > 1.0
+    assert not r["footbed"]["overhang"]["where"] or "ball" not in r["footbed"]["overhang"]["where"]
+    ruler = fw.build("right", fw.ShoeParams(style="stone", foot_length_mm=240.0, foot_width_mm=108.0)).report
+    assert any("wide for its length" in w and "may be tight across the ball" in w for w in ruler["warnings"])
+
+
 def _wall(mesh, x, z, toward):
     """Where the inside's wall stands at (x, z): a level ray from the middle of the shoe toward +y or -y."""
     return float(_hit(mesh, [x, 0.0, z], [0.0, toward, 0.0])[1])
@@ -403,6 +431,35 @@ def test_the_footbed_climbs_between_the_insoles_two_caps_instead_of_stepping(blo
     assert abs(fit["turned_deg"]) < 3.0                                      # (so "along x" is along the foot)
 
 
+def test_the_footbed_takes_its_caps_from_the_insole_not_from_a_copy_of_its_rule(curved):
+    """SYNTHETIC curved foot: its arch fill stands above the heel's 12 mm cap. The footbed eases between the
+    insole's two caps where the insole itself says its heel zone is (``surface["heel_weight"]``): told the
+    heel zone runs the whole length, it is capped at the heel's 12 mm everywhere."""
+    assert curved.report["max_fill_mm"] > 12.5
+    s = curved.surface
+    heel_everywhere = replace(curved, surface={**s, "heel_weight": np.ones_like(s["heel_weight"])})
+    p = fw.ShoeParams(style="stone")
+    for ins, top in ((curved, curved.report["max_fill_mm"]), (heel_everywhere, 12.0)):
+        bed = fw.Footbed(ins, "right")
+        loft = fw._loft_for(fw.size_inside(bed.scan_length, bed.scan_width, p), p, 13.0, 0.0, 0)
+        bed.place(loft.floor.polygon, loft.inside_ends()[0])
+        assert bed.highest(loft.inside_widest) == pytest.approx(top, abs=0.05)
+
+
+def test_the_heel_rim_stands_clear_of_the_footbed_not_only_of_the_floor(plain, block):
+    """SYNTHETIC: the block foot's footbed raised 10 mm everywhere under the foot (as a deep heel cup stands
+    at the back). A rim 12 mm above the floor, enough over a flat footbed, would stand 2 mm over this one and
+    the opening would cut into it, so it is refused; the default rim stands at least ``HEEL_LIP_MIN_MM`` over
+    it all along, and the report says how much."""
+    s = block.surface
+    raised = replace(block, surface={**s, "fill": np.where(s["under_foot"], s["fill"] + 10.0, 0.0)})
+    with pytest.raises(fw.FootwearError, match="above the footbed"):
+        fw.build("right", fw.ShoeParams(style="stone", heel_rim_mm=12.0), footbed=raised)
+    r = fw.build("right", fw.ShoeParams(style="stone"), footbed=raised).report
+    assert fw.HEEL_LIP_MIN_MM <= r["rim_over_footbed_mm"] <= r["heel_rim_mm"] - 10.0 + 0.1
+    assert plain.report["rim_over_footbed_mm"] == pytest.approx(plain.report["heel_rim_mm"], abs=0.3)
+
+
 def test_a_style_changes_the_outside_never_the_inside(plain):
     vent = fw.build("right", fw.ShoeParams(style="vent", **RULER))
     stream = fw.build("right", fw.ShoeParams(style="stream", **RULER))
@@ -540,6 +597,7 @@ def test_a_shoe_too_long_for_the_bed_says_so(plain):
 def test_what_isnt_a_shoe_is_refused(curved):
     for bad in (dict(style="boot"), dict(fit="tight"), dict(toe="pointed"), dict(cushion="hard"), dict(sole_mm=3.0),
                 dict(drop_mm=30.0), dict(upper_mm=0.8), dict(throat=0.9), dict(heel_rim_mm=5.0), dict(sock_mm=9.0),
+                dict(style="vent", openness=-0.3), dict(style="vent", openness=0.8),
                 dict(foot_length_mm=26.0)):                        # centimetres
         with pytest.raises(fw.FootwearError):
             fw.build("right", fw.ShoeParams(**{**RULER, **bad}))
@@ -549,6 +607,9 @@ def test_what_isnt_a_shoe_is_refused(curved):
         fw.build("left", fw.ShoeParams(), footbed=curved)
     with pytest.raises(fw.FootwearError, match="left.*right"):
         fw.build("both", fw.ShoeParams(**RULER))
+    # a style with no pattern takes no openness, and says so rather than ignoring it
+    stone = fw.build("right", fw.ShoeParams(style="stone", openness=0.3, **RULER))
+    assert stone.report["pattern"]["count"] == 0 and any("has no windows" in w for w in stone.report["warnings"])
 
 
 def test_a_mirrored_shoe_says_it_was_not_made_from_that_foots_scan(shod):
@@ -561,6 +622,14 @@ def test_a_mirrored_shoe_says_it_was_not_made_from_that_foots_scan(shod):
     assert "mirror image" in fw.summary_html(left, "x")
 
 
+def test_a_mirrored_flat_shoe_says_it_is_sized_from_the_other_foot_not_that_its_footbed_is(plain):
+    """A shoe from ruler numbers has a flat footbed, from no scan: its mirror image is warned about the size
+    (measured on the other foot), never told its footbed is the other foot's."""
+    w = fw.mirrored(plain).report["warnings"][0]
+    assert "mirror image" in w and "the right foot's measurements" in w and "left foot" in w
+    assert "footbed" not in w and "scan" not in w
+
+
 def test_the_files_carry_the_safety_rules_and_say_what_is_untested(curved, shod, tmp_path):
     files = fw.write_outputs(shod, tmp_path, "right-clog", "SYNTHETIC curved foot", synthetic=True)
     sheet = open(files["summary"], encoding="utf-8").read()
@@ -570,7 +639,8 @@ def test_the_files_carry_the_safety_rules_and_say_what_is_untested(curved, shod,
                  "standard shape in this foot's size", fw.UNTESTED, "Clinician review", "Signature",
                  "walking and casual wear", "not approved", "First wear indoors"):
         assert must in sheet, must
-    # the break-in is the insole sheet's, word for word (docs/SAFETY.md, requirement 2)
+    # the break-in is the insole sheet's own paragraph, not a copy of it (docs/SAFETY.md, requirement 2)
+    assert fw.BREAK_IN_HTML is insole.BREAK_IN_HTML
     assert fw.BREAK_IN_HTML in sheet and fw.BREAK_IN_HTML in insole.summary_html(curved, "x")
     assert "Day 1: 1 h" in fw.BREAK_IN_HTML and "Stop at once" in fw.BREAK_IN_HTML
     # a shoe made from a real scan isn't labelled synthetic

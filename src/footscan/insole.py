@@ -118,9 +118,10 @@ class Insole:
     params: InsoleParams
     report: dict = field(default_factory=dict)
     sole: object = None             # the scan in the insole's own frame (for the 3-D preview)
-    surface: dict | None = None     # the fill as a grid, before the base goes under it (xs, ys, fill), and the
-                                    # foot's outline it was read under: footwear.py builds a shoe's footbed from
-                                    # the same heights
+    surface: dict | None = None     # the fill as a grid, before the base goes under it (xs, ys, fill), the foot's
+                                    # outline it was read under, and the heel zone's weight along xs (1 in the
+                                    # heel, fading to 0 past it: where the caps changed): footwear.py builds a
+                                    # shoe's footbed from the same heights and caps
 
 
 # ---------------------------------------------------------------------------
@@ -395,7 +396,7 @@ def build(foot_mesh, foot: str, params: InsoleParams | None = None) -> Insole:
         frame="mm; x forward from the back of the heel, y toward the foot's left, z up; bottom at z = 0",
     )
     return Insole(mesh=mesh, foot=foot, params=p, report=report, sole=m,
-                  surface=dict(xs=xs, ys=ys, fill=fill, under_foot=in_sil, foot_outline=sil))
+                  surface=dict(xs=xs, ys=ys, fill=fill, under_foot=in_sil, foot_outline=sil, heel_weight=w_heel[0]))
 
 
 def bed_fit_shape(xy, bed: float, clearance: float = 3.0) -> dict:
@@ -591,6 +592,14 @@ def shoe_row(fit: dict | None) -> str:
             f'{fit["room_past_toes_mm"]} mm past the toes{", matched mirrored" if fit["mirrored"] else ""}); {over}</td></tr>')
 
 
+# The break-in protocol (docs/SAFETY.md, requirement 2), as every summary sheet prints it: the insole's and the
+# printed shoe's (footwear.py) both use this one paragraph.
+BREAK_IN_HTML = """<p>Day 1: 1 h &middot; days 2&ndash;3: 2 h &middot; days 4&ndash;5: 3 h &middot; days 6&ndash;7: 4 h &middot; days 8&ndash;10: 6 h &middot;
+days 11&ndash;14: all day. Check both feet after every session.
+<b>Stop at once</b> and don't resume until reviewed if anything new hurts (foot, ankle, shin, knee, hip or back),
+a skin mark is still there the next day, a foot feels numb, tingly or burning, or an existing pain gets worse.</p>"""
+
+
 def summary_html(insole: Insole, scan_label: str, synthetic: bool = False) -> str:
     """The clinician summary sheet (docs/SAFETY.md, requirement 1), for this first-fit device."""
     from html import escape
@@ -658,10 +667,7 @@ The foot frame is {"provisional (from the scan alone)" if scan.get('provisional'
 <p>Notes:</p><div style="border:1px solid #ccc;height:90px"></div>
 
 <h2>Break-in (walking only until signed above)</h2>
-<p>Day 1: 1 h &middot; days 2&ndash;3: 2 h &middot; days 4&ndash;5: 3 h &middot; days 6&ndash;7: 4 h &middot; days 8&ndash;10: 6 h &middot;
-days 11&ndash;14: all day. Check both feet after every session.
-<b>Stop at once</b> and don't resume until reviewed if anything new hurts (foot, ankle, shin, knee, hip or back),
-a skin mark is still there the next day, a foot feels numb, tingly or burning, or an existing pain gets worse.</p>
+{BREAK_IN_HTML}
 </body></html>"""
 
 
