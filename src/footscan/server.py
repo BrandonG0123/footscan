@@ -892,8 +892,11 @@ def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check
 
         def clog_api(self, method: str, d: Path, rest: list[str]):
             """A clog for a foot capture, its footbed from that capture's sole scan (footwear.py): POST makes it
-            to the choices sent (footwear_choices.py), GET <file> downloads it."""
+            to the choices sent (footwear_choices.py), GET <file> downloads it. .../clog/fit is what its
+            print-trial pieces showed (footwear_fit.py): GET the questions and the records kept, POST a record."""
             out = d / "clog"
+            if rest == ["fit"]:
+                return self.clog_fit_api(method, d)
             if method == "GET" and len(rest) == 1:
                 name = rest[0]
                 if name not in CLOG_FILES:
@@ -909,7 +912,7 @@ def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check
                 return self.send_file(f, CLOG_FILES[name], headers=None if shown else {
                     "Content-Disposition": f'attachment; filename="{d.name}-{name}"'})
             if method == "POST" and not rest:
-                from . import footwear_choices
+                from . import footwear_choices, footwear_fit
 
                 raw = self.read_body(MAX_JSON_BYTES) if int(self.headers.get("Content-Length") or 0) else b""
                 try:
@@ -940,8 +943,55 @@ def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check
                         shutil.rmtree(d / "clog", ignore_errors=True)
                     meta = read_json(d / "capture.json")  # re-read: don't undo other changes made meanwhile
                     meta["clog"] = result
+                    tried = footwear_fit.shoe_of(result)
+                    if tried:
+                        # its trial pieces may be printed and tried after it has been made again: what they
+                        # showed is recorded about this shoe, not whichever one stands then (clog_fit_api)
+                        meta["clog_trial_shoes"] = [*(meta.get("clog_trial_shoes") or []), tried][-footwear_fit.SHOES_KEPT:]
                     write_json(d / "capture.json", meta)
                 return self.send_json(result)
+            raise FileNotFoundError
+
+        def clog_fit_api(self, method: str, d: Path):
+            """What the print-trial pieces of this capture's shoes showed (footwear_fit.py). GET: the shoes whose
+            trial pieces were cut here, each with its questions, the records about it and what they say together
+            for its choices; and the stop rule, once any record said something hurt.
+            POST {"made": ..., "answers": {...}, "note": "..."}: keep one more record, about the shoe made then.
+
+            A record is about the shoe its pieces were cut from, which the person names ("made"): pieces take
+            hours to print, and the shoe on the page may have been made again since. Records stay with the
+            capture when a shoe is made again or its model is replaced: they are the fit log of what was
+            printed. Nothing here changes a choice or makes a shoe; a suggestion is for the page to offer.
+            """
+            from . import footwear_fit
+
+            def shown(meta):
+                return dict(footwear_fit.shown(meta.get("clog_fit") or [], meta.get("clog_trial_shoes") or [],
+                                               meta.get("clog_fit_stop")), max_note=footwear_fit.MAX_NOTE)
+
+            if method == "GET":
+                return self.send_json(shown(read_json(d / "capture.json")))
+            if method == "POST":
+                findings = self.json_body()
+                with capture_lock(d.name):
+                    meta = read_json(d / "capture.json")
+                    made = findings.pop("made", None) if isinstance(findings, dict) else None
+                    shoe = next((s for s in meta.get("clog_trial_shoes") or [] if s["made"] == made), None)
+                    if shoe is None:
+                        raise BadRequest("say which shoe these trial pieces were cut from (made: when it was made). It "
+                                         "must be one made for this capture with its print-trial pieces: make the shoe "
+                                         "with them, print those, and record here what they showed")
+                    try:
+                        found = footwear_fit.checked(findings, shoe["pieces"])
+                    except ValueError as e:
+                        raise BadRequest(str(e)) from None
+                    kept = footwear_fit.record(found["answers"], found["note"], shoe, now_iso())
+                    meta["clog_fit"] = [*(meta.get("clog_fit") or []), kept][-footwear_fit.KEPT:]
+                    if "clog_fit_stop" not in meta and footwear_fit.hurt_in([kept]):
+                        # kept apart from the records (only the newest are kept), and never taken away here
+                        meta["clog_fit_stop"] = footwear_fit.hurt_in([kept])
+                    write_json(d / "capture.json", meta)
+                return self.send_json(shown(meta))
             raise FileNotFoundError
 
         def footwear_api(self, method: str, rest: list[str]):
@@ -1714,7 +1764,9 @@ def make_clog(folder: Path, meta: dict, choices: dict | None = None, trials: boo
     openness, sock_mm, and the foot's ruler length_mm and width_mm); kept in the report, so the studio's form
     opens as it was left. ``trials``: also cut the print-trial pieces from this shoe.
     Files go to <capture>/clog/. Returns a short report, or {"error": ...}; with "refused": True where the
-    generator (or the scan's preparation) said no in its own words before anything was written.
+    generator (or the scan's preparation) said no to these choices in its own words before anything was written.
+    A sole scan that can't be a footbed at all (footwear.unfit_for_a_footbed) is an error without "refused":
+    an earlier shoe from the same model is no better, and isn't kept.
     """
     import shutil
 
@@ -1739,6 +1791,9 @@ def make_clog(folder: Path, meta: dict, choices: dict | None = None, trials: boo
             source = "footscan photo reconstruction"
         else:
             return dict(error="this capture has no 3D model yet: build it (3D model) or import one first")
+    except fw.UnfitScan as e:
+        # the scan, not the choices: a shoe made from this same model before stands no better, so nothing is kept
+        return dict(error=str(e))
     except (ValueError, insole_mod.InsoleError) as e:  # (a FootwearError or a FootPrepError is a ValueError)
         return dict(error=str(e), refused=True)
     except Exception as e:  # noqa: BLE001 - an unreadable or broken model is reported, never a crash
@@ -1829,7 +1884,7 @@ def other_scans(captures_dir: Path, meta: dict) -> list[dict]:
                 c = dict(error=f"couldn't be measured ({type(e).__name__}: {e})", measured_as=version,
                          checked=now_iso())
             else:
-                c = dict(measures=measures, problems=completeness.problems(measures) + completeness.from_prep(info),
+                c = dict(measures=measures, problems=completeness.refusals(measures, info),
                          checked=now_iso())
             # saved under that capture's own lock, re-read inside it, so an insole build or a model upload
             # there doesn't lose its write or this one; if it's busy, it's measured again next time
@@ -1869,8 +1924,7 @@ def check_completeness(captures_dir: Path, folder: Path, meta: dict) -> dict | N
     except Exception as e:  # noqa: BLE001 - our own failure never blocks a scan
         return dict(error=f"the completeness check couldn't run ({type(e).__name__}: {e})",
                     measured_as=foot_prep.prep_version(meta.get("scan_kind")), checked=now_iso())
-    problems = (completeness.problems(measures) + completeness.from_prep(info)
-                + completeness.against_others(measures, other_scans(captures_dir, meta)))
+    problems = completeness.refusals(measures, info) + completeness.against_others(measures, other_scans(captures_dir, meta))
     return dict(measures=measures, problems=problems, checked=now_iso())
 
 

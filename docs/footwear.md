@@ -74,6 +74,22 @@ more is noted, and more than 15% is refused. Without a ruler's width the
 scan's own is used, scaled with the footbed: a scan 5% short, given only a
 ruler's length, is sized for a foot 5% wider than it reads too.
 
+**A sole scan the studio would refuse makes no shoe.** A sole scan missing
+its toes or its heel, torn open near the floor, or with its forefoot rolled
+onto one edge is refused by the studio when it arrives (docs/insole.md).
+Given such a scan anyway, the insole generator warns ("Don't print this
+insole") and still writes its insole, a small print that is looked at on
+its own. The shoe generator makes nothing (`footwear.unfit_for_a_footbed`,
+the same checks in the same words): a shoe's footbed can't be taken out of
+it. Under a rolled forefoot the fill is higher on the raised side, a wedge
+across the shoe's floor, and a first fit has no posting; with part of the
+foot missing, the footbed and the walls let out to the scan would follow a
+foot that isn't all there. The refusal says what was found and what to do
+on the next scan. In the studio this is for scans kept before the arrival
+check existed, and a shoe made from such a scan earlier is removed, not
+kept. A foam print or a whole-foot model isn't checked on arrival, and
+isn't checked here.
+
 ## Preferences
 
 | | Choices | What it changes |
@@ -94,7 +110,9 @@ Colour is the spool that's loaded.
 image of this one. Its footbed is then the *first* foot's: two feet are not
 mirror images of each other, and their arches differ. Its sheet and its
 warnings say so first. It is for trying a pair on before the other foot has
-a scan of its own, not instead of that scan.
+a scan of its own, not instead of that scan. A pair proper is two shoes,
+each made from its own foot's scan: in the studio, one from each foot's
+capture ([A pair](#a-pair), below).
 
 ## In the studio
 
@@ -200,6 +218,97 @@ A request the generator refuses in its own words (a ruler length more than
 15% from the scan's, a pattern that left the upper in pieces) changes
 nothing: the page says why beside the button, and the shoe already made
 from that model, if there is one, stays.
+
+### What the trial pieces showed
+
+Under the shoe, the page asks what a shoe's print-trial pieces showed: the
+trial sheet's own questions, piece by piece, each with fixed answers, and a
+note in the person's own words (`footwear_fit.py`,
+`/api/captures/<id>/clog/fit`).
+
+**A record is about the shoe its pieces were cut from.** Pieces take hours
+to print, and the shoe on the page may have been made again meanwhile, so
+the studio keeps the shoes whose trial pieces it cut (`clog_trial_shoes` in
+`capture.json`, the newest 10: when each was made, its choices and its
+pieces) and the form asks which one the pieces are from. Only that shoe's
+own pieces are asked about (Stone has no pattern swatch); a shoe made
+without trial pieces has nothing to record. Records are kept with the
+capture (`clog_fit`, the newest 20) and stay when a shoe is made again or
+its model is replaced. They are the fit log of what was printed, and what
+went wrong is recorded as carefully as what went right
+([fit-log.md](fit-log.md)).
+
+**A shoe's suggestion is made from everything recorded about it.** Pieces
+are recorded one at a time as they are printed, so the answers of all the
+records about one shoe are read together, the newest answer to each
+question standing. From them the studio suggests changes to that shoe's
+choices, by fixed rules and no model. It suggests and changes nothing. A
+suggestion is shown with the answers it came from; *Put these into the
+choices* moves it into the form, and nothing is made until *Make shoe* is
+pressed. (It is offered only for the shoe on the page, while that shoe
+still matches its scan.) Two choices are ever suggested:
+
+- **Cushioning:** the sole block picked (soft, medium or firm) is the
+  cushioning suggested.
+- **Fit:** one step along the generator's three fits. Roomier where the toe
+  cap's roof pressed on the toes, the toe cap pressed on their sides, or
+  the back half's walls pressed on the foot; snugger where those walls
+  stood off it. Several answers one way still move it one step. Answers
+  that point both ways suggest no fit and say why: a fit moves the room
+  across the ball, over the toes and past them together. For the same
+  reason toes that touched the end hold a snugger fit back (it would take
+  room from past the toes too), though they ask for no roomier one. Past
+  the roomiest or the snuggest fit there is nothing further to suggest,
+  and that is said.
+
+What is never suggested:
+
+- **The footbed.** An answer about the heel cup or the rise under the arch
+  (a ridge, or nothing felt) is kept and changes nothing. The footbed is
+  the first-fit insole's surface, from the sole scan. It is not raised,
+  lowered or tilted to how it felt: that would be correcting a foot by feel
+  (no posting or correction: [SAFETY.md](SAFETY.md)).
+- **Anything, once something hurt.** Every record has to say whether
+  anything hurt, rubbed or left a mark. A yes shows the stop rule
+  (SAFETY.md, requirement 2), and from then on nothing at all is suggested
+  for any shoe of that capture, the cushioning included: this program does
+  not adjust a shoe round a pain, and its fixed rules can't know what a
+  later, painless piece has to do with an earlier pain. That holds for
+  later records, for the shoe made again, and after the record itself has
+  dropped off the newest 20 (`clog_fit_stop`). Nothing in the studio lifts
+  it: the rule is "until reviewed", and the program can't know of a
+  review. The answers are kept, and the form is still the person's to
+  change.
+- **Slicer settings.** A top that didn't close, strands across a window, a
+  roof that sagged or tore with its supports: how the piece printed, not
+  the shoe's shape. Broken bars point at the pattern's openness (a less
+  open pattern leaves wider bars; Stone has no windows), with no number
+  suggested, because none has been tried.
+- **Length.** Toes touching the end of a toe cap is not a measure of the
+  shoe's length: the piece has no heel to stand the foot against. The
+  answer points back to the ruler.
+- **The rim behind the heel.** Too high or too low is kept. Its height is
+  not a choice on the form yet.
+
+The note is kept as written and shown beside its record. Nothing reads it.
+
+### A pair
+
+A pair is two shoes, each made from its own foot's capture. A left
+capture's *Make printed shoe* makes a left shoe with the left foot's own
+footbed and its own walls let out (the generator turns a left foot's sole
+to a right foot's layout, builds the shoe, and mirrors the result, so the
+steps are the same for both feet). Where the other foot has a shoe that
+still matches its scan, the page shows it under this one: the feet the two
+were made for, in their reports' own numbers, how far apart those are in
+length, and which of the pair's choices differ (compared as the shoes were
+made: a sole left empty is the style's own, the same as that number typed
+in). Where one length is a ruler's and the other a scan's it says so,
+whether or not the two numbers match, and asks for both feet to be
+measured by ruler before a pair is printed: the two don't always agree (on
+scan 2349 the scan read 244.0 mm where the ruler read 260). *Use the other
+shoe's choices* puts its style, fit, toe, cushioning, sole, pattern and
+sock into this form. Each foot keeps its own ruler numbers.
 
 ## How the shape is made
 
@@ -313,6 +422,9 @@ None of these is measured from a last, a worn shoe or a printed trial:
   socks" 1.5 mm. Each is shown as the reader's own number beside the
   setting. Which words mean which style, fit, toe and cushioning (`WORDS`)
   is a judgment too.
+- Which answers about the trial pieces suggest another fit, and that they
+  move it one step (`footwear_fit.py`). Written before any piece was
+  printed.
 
 ## Printing
 
@@ -560,6 +672,66 @@ printer or a worn shoe.
   repeats Make insole's choice of model instead of sharing one piece of
   code with it, until the changes waiting on that code are merged. A test
   holds the two to the same footbed.
+- What the trial pieces showed (`tests/test_footwear_fit.py`, and the
+  studio's part in `tests/test_server_clog.py`). Every answer in these
+  tests is made up: no piece has been printed. The questions are about the
+  generator's own pieces and cushionings, and a shoe with no swatch is not
+  asked about one; a record that isn't answers to them, or doesn't say
+  whether anything hurt, is refused and nothing is kept; the block picked
+  is the cushioning suggested; a piece that pressed suggests one fit
+  roomier and walls that stood off one snugger, one step however many
+  answers say so; answers both ways, and a fit with none further, change
+  nothing and say why; toes that touched the end hold a snugger fit back
+  and ask for no roomier one; an answer about the footbed, the print or
+  the rim changes nothing and gets its fixed words; a record is about the
+  shoe named, which must be one made here with its trial pieces (one made
+  without them has nothing to record), also after that shoe was made again
+  or its model replaced; what is recorded about one shoe is read together
+  (the block picked in one record and a wall that pressed in the next both
+  stand, and a toe cap that pressed in one and walls that stood off in the
+  next point both ways); once a record says something hurt, the stop rule
+  is shown and no shoe of that capture gets a suggestion, in later records
+  about the same shoe, for the shoe made again, and after that record has
+  been dropped as one of the oldest; a record changes neither the shoe nor
+  its choices; only the newest 20 records and 10 shoes are kept; a phone on
+  the Wi-Fi is refused all of it.
+- The page's part of that and of a pair (`tests/js/clog-form.test.mjs`):
+  what is sent for the form (which shoe included), a suggestion laid over
+  the choices, which shoe of the record is the shoe on the page (not one
+  made again since, nor one whose scan changed), which shoe the form opens
+  on, which shoe is the other foot's (the newest that still matches its
+  scan), which choices a pair shares (never the ruler numbers) and that a
+  sole or pattern left empty is the style's own, and what is said of two
+  feet's lengths (the ruler-against-scan line also when they match).
+- A sole scan the studio would refuse makes no shoe: a SYNTHETIC sole-up
+  scan with its forefoot rolled 15 degrees is refused in the arrival check's
+  own words, and one rolled 5 degrees (which the floor levels) makes a shoe;
+  a SYNTHETIC scan cut off 200 mm from the heel is refused by the command,
+  which writes nothing; a whole-foot model or a foam print with the same
+  open edges is not judged. In the studio (the rolled scan put in the
+  library as scans were kept before the arrival check, and a shoe faked
+  from it as before this rule): no shoe is made, the earlier one is
+  removed, and *Make insole* still warns as it always has.
+- Each of those rules has a test that fails without it: 89 changes tried
+  one at a time across the rules, the studio, the page's arithmetic and the
+  unfit-scan rule, and each made a test fail.
+- The page itself, in a headless browser against a scratch studio holding
+  scan 2349 and a SYNTHETIC left foot (`tests/synth.py`), each with its
+  shoe. The other foot's shoe was shown with the two feet's lengths (260 mm
+  by ruler against the synthetic foot's 240 mm by scan, and the line about
+  ruler and scan), and its choices were put into the form with this foot's
+  ruler numbers kept. A shoe made without trial pieces said there was
+  nothing to record. For one made with them, a record was refused until it
+  said whether anything hurt; walls that pressed, recorded first, suggested
+  fit regular to roomy; the firm sole block, recorded next, added
+  cushioning medium to firm beside it; the button put both into the form.
+  With the shoe made again to those choices the form asked which shoe the
+  pieces were from, the first shoe's records stayed under it without the
+  button, and a third record was added to it. A record that said a piece
+  of the new shoe hurt put the stop rule above both shoes with no
+  suggestion and no button for either, and a later painless record about
+  the first shoe brought none back. No page errors. No real left scan was
+  used, and no person has used the page.
 
 ### The first real scan
 
@@ -606,6 +778,28 @@ One real foot. Whether a wall let out this way sits well against that foot,
 and whether the footbed's shelf along the inner side is comfortable to
 stand on, are for the first print to answer.
 
+### The first real left scan
+
+Left sole scan 2190 (`LIDAR_nwb_relaxed_L_20261027-151815-2190`: a
+legs-flat iPhone model with both feet in it, the left one cut out by the
+preparation), put through the command on the Mac on 10 November 2026 with
+the code as it was before the rule that a scan the studio would refuse
+makes no shoe (`2dfc561`):
+
+- Sized by the scan alone, it reads the foot 220.0 x 111.0 mm (the right
+  foot is 260 mm by ruler). The preparation warned of 225 mm of open edges
+  within 40 mm of the floor, one side of the ball of the foot 23 mm higher
+  than the other, both feet in the scan, and the fill clipped by the caps
+  over 28.2% of the foot.
+- The generator passed those warnings on and still wrote a shoe: 238.1 x
+  121.7 x 74.4 mm, its inner wall let out by the whole 20 mm allowed, with
+  its footbed made from that scan.
+- Sized by the right foot's ruler numbers (260 x 97 mm) it was refused: 220
+  mm against 260 is not the same foot in millimetres.
+
+That shoe is why the rule was added. The rule has not been run on that scan
+yet.
+
 ## Not done yet
 
 - Printing the trial pieces, and the settings and thicknesses they will
@@ -615,7 +809,13 @@ stand on, are for the first print to answer.
   of answer); no description has been sent to Anthropic from it yet, so how
   well it reads one is not known.
 - The shoe in the iPhone app (the studio page only, for now).
-- A left shoe from the left foot's own scan; a fit log that feeds back into
-  the allowances.
+- A left shoe from a real left sole scan. The generator and the studio make
+  one from a left foot's own scan by the same steps as a right (tested on
+  SYNTHETIC left feet). The one real left scan put through them is torn,
+  rolled and has both feet in it (above): a pair needs a new left sole
+  scan, with only that foot in view.
+- Changing the generator's own allowances (the fits' millimetres, the roof,
+  the rim) from what printed pieces show. The records are kept for that;
+  nothing reads them into the tables, and none exists yet.
 - A rolled edge round the opening, toe spring, other printers and beds, a
   second shoe shape (a closed-heel sneaker).

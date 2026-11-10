@@ -137,9 +137,12 @@ the sole scan shows the foot wider than the standard shape (see
 printed shoe* button opens a page with the same preferences as a form, a 3-D preview
 of the shoe (whole, or cut open to show the footbed in its floor), and a box
 for a description that is read into the form's settings (on this computer by
-default; by Claude only with `footscan serve --describe-with-claude`).
-Walking and casual wear only, never sport; nothing from it has been printed
-or worn yet.
+default; by Claude only with `footscan serve --describe-with-claude`). The
+page also keeps what the shoe's print-trial pieces showed and suggests a
+cushioning or a fit from it by fixed rules (never a change to the footbed,
+and nothing once anything hurt), and shows the other foot's shoe so a pair
+is made alike. Walking and casual wear only, never sport; nothing from it
+has been printed or worn yet.
 
 JavaScript tests (frame quality, coverage, and camera position from the mat):
 

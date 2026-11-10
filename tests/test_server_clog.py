@@ -11,7 +11,7 @@ from concurrent.futures import ThreadPoolExecutor
 import pytest
 
 from footscan import footwear as fw
-from footscan import footwear_choices, server
+from footscan import footwear_choices, footwear_fit, server
 from footscan.server import WEB_DIR, StudioServer, make_handler
 from test_server import (KEY, _new_sole_capture, _object_capture_foot, _sole_up_obj, body, call,
                          servers)  # noqa: F401 - servers is a fixture
@@ -284,6 +284,100 @@ def test_making_an_insole_and_a_shoe_from_one_capture_keeps_both(servers):
 
 # ---- what a shoe can be set to, and a description read into those settings ------------------------------------
 
+def test_what_the_trial_pieces_showed_is_kept_about_the_shoe_they_were_cut_from_and_changes_no_choice(servers):
+    op, phone, data = servers
+    cid = _foot_capture(op)
+    meta = lambda: json.loads((data / "captures" / cid / "capture.json").read_text())  # noqa: E731
+    clog, url = f"{op}/api/captures/{cid}/clog", f"{op}/api/captures/{cid}/clog/fit"
+    # before there is a shoe there are no pieces to have printed
+    assert body(call(url)) == dict(shoes=[], stop=None, max_note=footwear_fit.MAX_NOTE)
+    st, raw, _ = call(url, "POST", {"made": "never", "answers": {"hurt": "no"}})
+    assert st == 400 and "say which shoe these trial pieces were cut from" in json.loads(raw)["error"]
+    # ... and a shoe made without its trial pieces has none to record about either
+    plain = body(call(clog, "POST", {"style": "stone", "fit": "snug"}))
+    assert "error" not in plain and plain["trials"] is None
+    assert body(call(url))["shoes"] == [] and "clog_trial_shoes" not in meta()
+    assert call(url, "POST", {"made": plain["made"], "answers": {"hurt": "no"}})[0] == 400
+
+    shoe = body(call(clog, "POST", {"style": "stone", "fit": "snug", "trials": True}))
+    assert "error" not in shoe, shoe
+    pieces = [p["piece"] for p in shoe["trials"]["pieces"]]
+    (first,) = body(call(url))["shoes"]
+    assert first == dict(made=shoe["made"], style="stone", choices=shoe["choices"], pieces=pieces, recordable=True,
+                         questions=footwear_fit.questions(pieces), records=[], suggestion=None)
+    assert "windows" not in [q["key"] for q in first["questions"]]   # Stone has no windows, so no swatch was cut
+    assert call(f"{phone}/api/captures/{cid}/clog/fit")[0] == 403                      # studio only, like the shoe
+    assert call(f"{phone}/api/captures/{cid}/clog/fit", "POST", {"made": shoe["made"], "answers": {"hurt": "no"}})[0] == 403
+
+    for sent, says in (({"made": shoe["made"], "answers": {"hurt": "no", "walls": "tight"}}, "walls must be one of"),
+                       ({"made": shoe["made"], "answers": {"walls": "press"}}, "say whether anything hurt"),
+                       ({"made": shoe["made"], "answers": {"hurt": "no", "windows": "bars"}}, "this shoe has no pattern swatch"),
+                       ({"made": shoe["made"], "answers": {"hurt": "no"}, "fit": "roomy"}, "not part of a trial record"),
+                       ({"answers": {"hurt": "no"}}, "say which shoe these trial pieces were cut from")):
+        st, raw, _ = call(url, "POST", sent)
+        assert st == 400 and says in json.loads(raw)["error"], raw
+    assert "clog_fit" not in meta()
+
+    said = body(call(url, "POST", {"made": shoe["made"], "answers": {"hurt": "no", "cushion": "firm"}, "note": "tight at the heel"}))
+    (about,) = said["shoes"]
+    assert [(c["setting"], c["was"], c["to"]) for c in about["suggestion"]["changes"]] == [("cushion", "medium", "firm")]
+    # a suggestion is only that: the shoe, its choices and its files are as they were
+    assert meta()["clog"] == {k: v for k, v in _listed(op, cid)["clog"].items() if k != "stale"} == shoe
+    (kept,) = meta()["clog_fit"]                                                       # the answers are what is kept
+    assert kept["about"] == dict(made=shoe["made"], style="stone", choices=shoe["choices"], pieces=pieces)
+    assert kept["answers"] == {"cushion": "firm", "hurt": "no"} and kept["note"] == "tight at the heel"
+    assert about["records"] == [dict(recorded=kept["recorded"], note="tight at the heel", said=footwear_fit.in_words(kept["answers"]))]
+    assert body(call(url)) == said
+
+    # The shoe made again to the cushioning suggested, before its other pieces were tried. Its back half, tried
+    # afterwards, is recorded about the shoe it was cut from, and read with that shoe's first record.
+    again = body(call(clog, "POST", {"style": "stone", "fit": "snug", "cushion": "firm", "trials": True}))
+    assert [s["made"] for s in meta()["clog_trial_shoes"]] == [shoe["made"], again["made"]]
+    said = body(call(url, "POST", {"made": shoe["made"], "answers": {"hurt": "no", "walls": "press"}}))
+    newest, first = said["shoes"]
+    assert newest["made"] == again["made"] and newest["records"] == [] and newest["suggestion"] is None
+    assert [(c["setting"], c["was"], c["to"]) for c in first["suggestion"]["changes"]] == \
+        [("cushion", "medium", "firm"), ("fit", "snug", "regular")]
+    assert len(first["records"]) == 2 and all(r["about"]["made"] == shoe["made"] for r in meta()["clog_fit"])
+
+    # a piece of the new shoe hurt: the stop rule, and nothing suggested for either shoe from then on
+    said = body(call(url, "POST", {"made": again["made"], "answers": {"hurt": "yes", "walls": "press"}}))
+    assert said["stop"]["words"] == footwear_fit.STOP and said["stop"]["nothing"] == footwear_fit.NOTHING_FOR_HURT
+    assert all(s["suggestion"]["changes"] == [] and s["suggestion"]["stop"] == footwear_fit.STOP for s in said["shoes"])
+    assert meta()["clog_fit_stop"] == dict(recorded=said["stop"]["recorded"], made=again["made"])
+    said = body(call(url, "POST", {"made": shoe["made"], "answers": {"hurt": "no", "toe_over": "presses"}}))   # later, painless
+    assert said["stop"]["made"] == again["made"] and all(s["suggestion"]["changes"] == [] for s in said["shoes"])
+    said = body(call(url, "POST", {"made": shoe["made"], "answers": {"hurt": "yes"}}))
+    assert meta()["clog_fit_stop"]["made"] == again["made"]                            # the first that hurt is what is kept
+    # the model replaced: the shoe goes; what was printed and tried is still on record, and can still be added to
+    assert call(f"{op}/api/captures/{cid}/mesh?ext=obj&up=y", "PUT", _object_capture_foot("right"), OBJ)[0] == 200
+    assert "clog" not in meta() and len(meta()["clog_fit"]) == 5
+    got = body(call(url))
+    assert [len(s["records"]) for s in got["shoes"]] == [1, 4] and got["stop"]["made"] == again["made"]
+    assert call(url, "POST", {"made": again["made"], "answers": {"hurt": "no"}})[0] == 200
+
+
+def test_only_the_newest_trial_records_and_shoes_are_kept_and_a_stop_outlives_its_record(servers, monkeypatch):
+    op, _, data = servers
+    cid = _foot_capture(op)
+    made = iter(f"2026-11-1{i}T10:00:00" for i in range(1, 9))
+    monkeypatch.setattr(server, "make_clog", lambda d, meta, choices, trials=False: dict(
+        made=next(made), style="stone", choices=choices, trials=dict(pieces=[dict(piece="sole-block")])))
+    monkeypatch.setattr(footwear_fit, "KEPT", 3)
+    monkeypatch.setattr(footwear_fit, "SHOES_KEPT", 2)
+    clog, url = f"{op}/api/captures/{cid}/clog", f"{op}/api/captures/{cid}/clog/fit"
+    shoes = [body(call(clog, "POST", {}))["made"] for _ in range(3)]
+    assert [s["made"] for s in body(call(url))["shoes"]] == [shoes[2], shoes[1]]       # the two newest, the newest first
+    assert call(url, "POST", {"made": shoes[0], "answers": {"hurt": "no"}})[0] == 400  # the oldest is no longer known here
+    said = body(call(url, "POST", {"made": shoes[1], "answers": {"hurt": "yes"}, "note": "try 0"}))
+    for i in range(1, 5):
+        said = body(call(url, "POST", {"made": shoes[2], "answers": {"hurt": "no", "cushion": "firm"}, "note": f"try {i}"}))
+    assert [r["note"] for s in said["shoes"] for r in s["records"]] == ["try 4", "try 3", "try 2"]
+    # the record that said something hurt has gone with the oldest; that it was said has not
+    assert said["stop"]["made"] == shoes[1] and said["shoes"][0]["suggestion"]["changes"] == []
+    assert said["shoes"][0]["suggestion"]["stop"] == footwear_fit.STOP
+
+
 def test_the_studio_says_what_a_shoe_can_be_set_to(servers):
     op, phone, _ = servers
     assert call(f"{phone}/api/footwear/options")[0] == 403
@@ -329,3 +423,36 @@ def test_a_studio_started_to_ask_claude_says_so_and_sends_the_description_there(
         assert sent == ["boxy at the front"] and r["read_by"] == "claude" and r["settings"] == {"toe": "square"}
     finally:
         httpd.shutdown()
+
+
+def test_a_sole_scan_the_studio_would_refuse_today_makes_no_shoe_and_keeps_none(servers, monkeypatch):
+    """A SYNTHETIC sole-up scan with its forefoot rolled onto one edge, in the library as scans were kept before
+    the studio checked them on arrival. Its footbed would carry a wedge across the shoe's floor, so no shoe is
+    made; and a shoe made from this same model before the rule (faked: the rule switched off) isn't kept, where
+    choices the generator refuses leave an earlier shoe standing."""
+    from test_insole import _rolled_forefoot_scan
+
+    op, _, data = servers
+    cid = _new_sole_capture(op, "right")
+    rolled = _rolled_forefoot_scan(15.0).export(file_type="obj").encode()
+    assert call(f"{op}/api/captures/{cid}/mesh?ext=obj&up=y", "PUT", rolled, OBJ)[0] == 422   # today: not kept
+    cid = _new_sole_capture(op, "right")
+    monkeypatch.setattr(server, "check_completeness", lambda *a, **k: None)                   # before it checked
+    assert call(f"{op}/api/captures/{cid}/mesh?ext=obj&up=y", "PUT", rolled, OBJ)[0] == 200
+    monkeypatch.undo()
+    monkeypatch.setattr(fw, "unfit_for_a_footbed", lambda prep, kind: [])                     # before this rule
+    made = body(call(f"{op}/api/captures/{cid}/clog", "POST", {"style": "stone"}))
+    assert "error" not in made and call(f"{op}/api/captures/{cid}/clog/clog.3mf")[0] == 200
+    monkeypatch.undo()
+
+    st, raw, _ = call(f"{op}/api/captures/{cid}/clog", "POST", {"style": "stone"})
+    r = json.loads(raw)
+    assert st == 200 and set(r) == {"error"}, raw
+    assert r["error"].startswith("no shoe is made from this sole scan") and "THE FOREFOOT WAS ROLLED" in r["error"]
+    assert "Scan again" in r["error"]
+    assert not (data / "captures" / cid / "clog").exists()
+    assert call(f"{op}/api/captures/{cid}/clog/clog.3mf")[0] == 409
+    assert _listed(op, cid)["clog"] == r
+    # and it can still make an insole, with the warning the insole generator has always given
+    st, raw, _ = call(f"{op}/api/captures/{cid}/insole", "POST", {})
+    assert st == 200 and any(w.startswith("THE FOREFOOT WAS ROLLED") for w in json.loads(raw)["warnings"]), raw

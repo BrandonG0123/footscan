@@ -1109,6 +1109,61 @@ def test_a_sole_up_phone_scan_makes_the_shoe_the_way_the_studio_makes_the_insole
     assert "Sole up" in fw.summary_html(shoe, "x")                                       # how the foot was captured
 
 
+WHOLE_SCAN = dict(completeness=dict(length_mm=244.1, width_mm=89.6, toe_end=0.23, heel_end=0.48),
+                  ball_sides_above_floor_mm=dict(minus_x=0.2, plus_x=1.4), open_edges_near_floor_mm=0.0,
+                  heel_back_above_floor_mm=1.3)
+
+
+def test_what_makes_a_sole_scan_unfit_for_a_footbed_is_what_the_studio_refuses_on_arrival():
+    """The measures are made up for the test (the whole one is close to the first real right sole scan's)."""
+    assert fw.unfit_for_a_footbed(WHOLE_SCAN, "sole_up") == [] and fw.unfit_for_a_footbed(WHOLE_SCAN, "sole_hanging") == []
+    for change, starts in ((dict(ball_sides_above_floor_mm=dict(minus_x=0.0, plus_x=8.6)), "THE FOREFOOT WAS ROLLED ONTO ONE EDGE"),
+                           (dict(open_edges_near_floor_mm=225.0), "PART OF THE FOOT IS MISSING"),
+                           (dict(heel_back_above_floor_mm=46.3), "THE HEEL IS MISSING"),
+                           (dict(completeness=dict(WHOLE_SCAN["completeness"], toe_end=0.9)), "THE TOES ARE MISSING"),
+                           (dict(completeness=dict(WHOLE_SCAN["completeness"], heel_end=0.9)), "THE HEEL IS CUT OFF"),
+                           (dict(toes_warning="THE TOES ARE BENT UP TOO STEEPLY: made up for the test."), "THE TOES ARE BENT")):
+        found = fw.unfit_for_a_footbed(dict(WHOLE_SCAN, **change), "sole_up")
+        assert len(found) == 1 and found[0].startswith(starts), change
+    # the ends couldn't be measured (the preparation says so in a warning): the rest still counts
+    unmeasured = {k: v for k, v in WHOLE_SCAN.items() if k != "completeness"}
+    assert fw.unfit_for_a_footbed(unmeasured, "sole_up") == []
+    assert len(fw.unfit_for_a_footbed(dict(unmeasured, open_edges_near_floor_mm=225.0), "sole_up")) == 1
+    # the kinds of scan the studio doesn't check on arrival: a foot standing on the floor, or a foam print cut
+    # out of its foam, is open near the floor by design
+    for kind in ("foot", "impression"):
+        assert fw.unfit_for_a_footbed(dict(WHOLE_SCAN, open_edges_near_floor_mm=225.0), kind) == []
+
+
+def test_a_sole_scan_with_a_rolled_forefoot_makes_no_shoe():
+    """SYNTHETIC sole-up scans. Under a forefoot rolled onto one edge the fill is higher on the raised side: a
+    wedge across the shoe's floor, which a first fit must not have. The insole generator warns and still writes
+    its insole; a shoe's footbed can't be taken out, so there is no shoe. A roll the floor levels (5 degrees)
+    makes one."""
+    from test_insole import _rolled_forefoot_scan
+
+    with pytest.raises(fw.UnfitScan) as refused:
+        fw.from_scan(_rolled_forefoot_scan(15.0), "right", fw.ShoeParams(style="stone"), kind="sole_up")
+    said = str(refused.value)
+    assert said.startswith("no shoe is made from this sole scan: its footbed is built into the shoe")
+    assert "THE FOREFOOT WAS ROLLED ONTO ONE EDGE" in said and "a wedge" in said and "Scan again" in said
+    shoe = fw.from_scan(_rolled_forefoot_scan(5.0), "right", fw.ShoeParams(style="stone"), kind="sole_up")
+    assert shoe.mesh.is_watertight and not any("ROLLED" in w for w in shoe.report["footbed"]["insole_warnings"])
+
+
+def test_a_sole_scan_missing_its_toes_makes_no_shoe_and_the_command_writes_nothing(tmp_path, capsys):
+    """SYNTHETIC sole-up scan cut off 200 mm from the heel, as the studio's arrival check is tested with."""
+    scan = tmp_path / "cut.obj"
+    synth.sole_up_capture(synth.cut_ends(synth.shaped_foot("right"), x_to=200.0)).export(scan)
+    out = tmp_path / "out"
+    assert cli.main(["footwear", "--foot", "right", "--scan", str(scan), "--kind", "sole_up", "--style", "stone",
+                     "--trials", "-o", str(out)]) == 1
+    said = capsys.readouterr()
+    assert f"{scan}: no shoe is made from this sole scan" in said.err and "THE TOES ARE MISSING" in said.err
+    assert "Traceback" not in said.err and "clog (stone)" not in said.out
+    assert not out.exists() or not list(out.iterdir())
+
+
 def test_the_command_writes_a_pair_from_one_scan_and_refuses_nonsense(tmp_path, capsys, monkeypatch):
     scan = tmp_path / "foot.ply"
     synth.curved_foot("right", leg=False).export(scan)

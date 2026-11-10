@@ -257,6 +257,11 @@ class FootwearError(ValueError):
     pass
 
 
+class UnfitScan(FootwearError):
+    """The sole scan itself can't be a shoe's footbed (``unfit_for_a_footbed``), whatever the choices: nothing made
+    from that scan stands, where a refused choice leaves an earlier shoe as it was."""
+
+
 @dataclass
 class Shoe:
     mesh: object                    # trimesh.Trimesh, output frame (mm)
@@ -1355,13 +1360,36 @@ def mirrored(shoe: Shoe) -> Shoe:
     return Shoe(mesh=mesh, foot=other, params=shoe.params, report=report)
 
 
+def unfit_for_a_footbed(prep: dict, kind: str) -> list[str]:
+    """Why a prepared sole scan can't be a shoe's footbed, in the words the studio refuses such a scan with when it
+    arrives (``completeness.refusals``): the toes or the heel missing, a tear near the floor, the forefoot rolled
+    onto one edge. Empty for a scan the studio would keep, and for the kinds of scan it doesn't check.
+
+    ``prep``: what the scan's preparation found (``insole.report["prep"]``, foot_prep.insole_from_object_capture).
+
+    The insole generator warns about these and still writes its insole ("Don't print this insole"): an insole is
+    a small print that is looked at on its own. A shoe's footbed can't be taken out of it. Under a rolled forefoot
+    the fill is higher on the raised side, a wedge across the shoe's floor, and a first fit has no posting
+    (docs/SAFETY.md); with part of the foot missing, the footbed and the walls let out to the scan follow a foot
+    that isn't all there. The studio refuses such a scan when it arrives, so this is for the scans it kept before
+    it checked, and for the command line. (Compared with the person's other scans, completeness.against_others,
+    is the studio's alone: one scan can't say that.)
+    """
+    from .recon import completeness
+
+    if kind not in completeness.CHECKED_KINDS:
+        return []
+    return completeness.refusals(prep.get("completeness"), prep)
+
+
 def from_scan(mesh, foot: str, params: ShoeParams | None = None, kind: str = "mat", up: str = "y", insole_params=None) -> Shoe:
     """A sole scan -> the foot's first-fit insole surface -> the shoe with that as its footbed.
 
     ``kind`` "mat": a scan already in the mat frame (mm, z up, the floor at z = 0), as ``footscan insole``
     takes. Any other kind is an iPhone Object Capture model as the studio imports them (``foot_prep.PREPARE``:
     sole_up, sole_hanging, impression, foot), with ``up`` its up axis. The insole is made exactly as the studio
-    makes it, warnings and all; the shoe's report carries them.
+    makes it, warnings and all; the shoe's report carries them. A sole scan the studio would not have kept
+    (``unfit_for_a_footbed``) makes no shoe: UnfitScan.
     """
     if kind == "mat":
         ins = insole_mod.from_scan(mesh, foot, insole_params)
@@ -1369,6 +1397,10 @@ def from_scan(mesh, foot: str, params: ShoeParams | None = None, kind: str = "ma
         from .recon import foot_prep
 
         ins, _ = foot_prep.insole_from_object_capture(mesh, foot, up=up, params=insole_params, kind=kind)
+        unfit = unfit_for_a_footbed(ins.report.get("prep") or {}, kind)
+        if unfit:
+            raise UnfitScan("no shoe is made from this sole scan: its footbed is built into the shoe and can't be "
+                            "taken out, and it would be shaped to this. " + " ".join(unfit))
     return build(foot, params, footbed=ins)
 
 
