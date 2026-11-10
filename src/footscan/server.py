@@ -63,8 +63,11 @@ import datetime as dt
 import hashlib
 import hmac
 import http.cookies
+import ipaddress
 import json
 import mimetypes
+import ntpath
+import os
 import re
 import secrets
 import shutil
@@ -72,12 +75,13 @@ import socket
 import ssl
 import subprocess
 import threading
+import urllib.parse
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+from . import atomic, recon_jobs
 from . import mat as mat_mod
-from . import recon_jobs
 from . import shoes as shoes_mod
 from . import survey as survey_mod
 from .filestamp import file_stamp
@@ -128,6 +132,13 @@ KEEPALIVE_TIMEOUT_S = 30
 TRANSFER_TIMEOUT_S = 120
 # How long a new HTTPS connection may take to finish its TLS handshake before it is dropped.
 TLS_HANDSHAKE_TIMEOUT_S = 10
+# When a request is refused before its body is read (too large, wrong place, bad input), the answer goes out and
+# the connection closes. Closing while the body is still arriving makes the computer reset the connection, and a
+# reset can throw away the answer before the phone reads it (seen on Windows). So the server first reads and drops
+# what is still coming, for up to this long and this much, as web servers do ("lingering close"). Past either
+# limit it closes anyway: a 150 MB model over slow Wi-Fi isn't worth holding the connection for.
+LINGER_S = 3.0
+LINGER_BYTES = 32 * 1024 * 1024
 SECURITY_HEADERS = {
     "X-Content-Type-Options": "nosniff",
     "Referrer-Policy": "no-referrer",  # studio keys and rescan tokens travel in URLs
@@ -192,13 +203,13 @@ def now_iso() -> str:
 
 
 def read_json(path: Path) -> dict:
-    return json.loads(path.read_text())
+    return json.loads(atomic.read_utf8(path))  # also while a write swaps it (Windows refuses the open then)
 
 
 def write_json(path: Path, obj: dict) -> None:
-    tmp = path.with_suffix(".tmp")
-    tmp.write_text(json.dumps(obj, indent=2))
-    tmp.replace(path)
+    """Written whole to this call's own temporary file, then swapped in (a reader sees the old file or the new),
+    tried again for a moment while a reader has the old one open (Windows refuses the swap meanwhile)."""
+    atomic.write_utf8(path, json.dumps(obj, indent=2))
 
 
 # ---- validation ------------------------------------------------------------
@@ -343,10 +354,10 @@ class RateLimiter:
 
 def load_studio_key(path: Path) -> str:
     """A persistent random key, so a phone stays signed in across restarts."""
-    if path.exists() and (key := path.read_text().strip()):
+    if path.exists() and (key := path.read_text(encoding="utf-8").strip()):
         return key
     key = secrets.token_urlsafe(18)
-    path.write_text(key)
+    path.write_text(key, encoding="utf-8")
     path.chmod(0o600)
     return key
 
@@ -362,11 +373,54 @@ def capture_lock(capture_id: str) -> threading.Lock:
         return _capture_locks.setdefault(capture_id, threading.Lock())
 
 
+# A public studio's code has no certificate fingerprint, and the App Store build of the app pairs only with a
+# studio on the person's own computer whose certificate the code pins (docs/PRIVACY.md).
+PUBLIC_PAIRING_NOTE = ("This code pairs only with a development build of the Footscan app. The App Store version "
+                       "connects only to a studio on your own computer, over your Wi-Fi or Tailscale.")
+
+
+OWN_NETWORK_NOTE = ("This address isn't on a home network or Tailscale, so the App Store version of the Footscan "
+                    "app won't take this code (development builds will). Connect this computer to your Wi-Fi, or "
+                    "turn on Tailscale, and show the code again.")
+
+
+def own_network(host: str) -> bool:
+    """The app's own-network rule (StudioStore.isOwnNetwork in ios/.../Studio.swift): a private or link-local
+    IP, Tailscale's 100.64/10, or a .local name. The App Store build pairs only with a studio at one."""
+    host = host.strip("[]").rstrip(".").lower()
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        return host.endswith(".local")
+    if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped:
+        ip = ip.ipv4_mapped
+    if ip.version == 4:
+        return any(ip in ipaddress.ip_network(n) for n in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16",
+                                                            "169.254.0.0/16", "100.64.0.0/10"))  # last: Tailscale
+    return ip in ipaddress.ip_network("fc00::/7") or ip in ipaddress.ip_network("fe80::/10")
+
+
 def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check=is_loopback,
                  studio_key: str | None = None, secure_cookie: bool = False,
                  submissions_per_hour: int = SUBMISSIONS_PER_HOUR, allow_indexing: bool = True,
                  public: bool = False, cert_fingerprint: str | None = None):
     runner = recon_jobs.ReconRunner()
+    # This computer's Tailscale address, asked of the tailscale command at most once a minute: a stuck
+    # tailscaled costs 3 s a try (on Windows up to 5 s more reading Tailscale's adapter), and each "Show the
+    # connect code" asks for it. No address is asked again
+    # sooner (TAILNET_RETRY_S): a service started at boot can ask before Tailscale is up. One asks at a time,
+    # and the rest wait for that answer instead of each running the command.
+    tailnet = dict(at=None, ip=None)
+    tailnet_lock = threading.Lock()
+
+    def tailnet_cached() -> str | None:
+        import time
+
+        with tailnet_lock:
+            keep = TAILNET_CACHE_S if tailnet["ip"] else TAILNET_RETRY_S
+            if tailnet["at"] is None or time.monotonic() - tailnet["at"] > keep:
+                tailnet.update(at=time.monotonic(), ip=tailnet_ip())
+            return tailnet["ip"]
     captures_dir = data_dir / "captures"
     shoes_dir = shoes_dir_of(captures_dir)
     submissions_dir = data_dir / "submissions"
@@ -446,6 +500,13 @@ def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check
             BaseHTTPRequestHandler.end_headers(self)
             return True
 
+        def finish(self):
+            """After the last request on this connection: if its body was left unread, take it in before the
+            connection closes (see linger), so the answer isn't lost to a reset. Plain and HTTPS alike."""
+            super().finish()
+            if self.body_left_unread():
+                linger(self.connection)
+
         def handle_one_request(self):
             self.connection.settimeout(KEEPALIVE_TIMEOUT_S)  # waiting for the next request: idle limit
             super().handle_one_request()
@@ -455,6 +516,7 @@ def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check
             # studio-key cookie in _extra_headers, which is only for the response that set it).
             self._body_read = False
             self._extra_headers = {}
+            self.__dict__.pop("headers", None)  # the request before's: a request line refused before its headers
             if not super().parse_request():
                 return False
             self.connection.settimeout(TRANSFER_TIMEOUT_S)
@@ -473,11 +535,16 @@ def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check
             return True
 
         def body_left_unread(self) -> bool:
-            """Did this request send a body that hasn't been read? Then the connection can't be reused."""
+            """Did this request send a body that hasn't been read? Then the connection can't be reused.
+            A chunked upload (Transfer-Encoding, refused in parse_request) is never read: its body is still coming
+            however long it is, so it's lingered on like any other."""
             if getattr(self, "_body_read", False) or not hasattr(self, "headers"):
                 return False
+            if self.headers.get_all("Transfer-Encoding") is not None:
+                return True
+            # every copy: a request refused for sending two (0 and then 5 MB) still has the 5 MB coming
             try:
-                return int(self.headers.get("Content-Length") or 0) > 0  # parse_request checked it's one whole number
+                return any(int(v) > 0 for v in self.headers.get_all("Content-Length") or [])
             except ValueError:
                 return True
 
@@ -602,6 +669,11 @@ def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check
                 self.send_json({"error": f"invalid input: {e}"}, HTTPStatus.BAD_REQUEST)
             except FileNotFoundError:
                 self.send_json({"error": "not found"}, HTTPStatus.NOT_FOUND)
+            except PermissionError:
+                # a file kept open past the retries (Windows: antivirus, a backup, another program): answer,
+                # so the phone shows a message and tries again, instead of a dropped connection
+                self.send_json({"error": "a file the studio needs is in use by another program; try again in a "
+                                         "moment"}, HTTPStatus.SERVICE_UNAVAILABLE)
             except (TypeError, OverflowError, AttributeError) as e:
                 # Input of the wrong shape (a list where a number was expected, ...):
                 # answer, rather than dropping the connection.
@@ -718,13 +790,44 @@ def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check
                 host = self.headers.get("Host", "")
                 if not host:
                     return dict(available=False, reason="Open the studio through its public address to pair.")
-                return dict(available=True, url=f"https://{host}", key=studio_key, fingerprint=None)
+                # said here, where the code is shown, not only on the phone after scanning it
+                return dict(available=True, url=f"https://{host}", key=studio_key, fingerprint=None,
+                            note=PUBLIC_PAIRING_NOTE)
             info = self.studio_info()
             if not info["phones_can_connect"] or not cert_fingerprint:
                 return dict(available=False,
                             reason="Phones can't reach this studio yet. Restart footscan with "
                                    "--host 0.0.0.0 --https, then open this page again.")
-            return dict(available=True, url=info["scan_url"].rstrip("/"), key=studio_key, fingerprint=cert_fingerprint)
+            if info["scan_url"] is None:  # no Wi-Fi address right now: the Tailscale one, if there is one
+                alt = self.other_addresses(None)
+                if not alt:
+                    return dict(available=False,
+                                reason="This computer has no network address a phone can reach right now (is its "
+                                       "Wi-Fi or network cable connected?). Open this page again once it has.")
+                url, alt_urls = alt[0], []
+            else:
+                url = info["scan_url"].rstrip("/")
+                alt_urls = self.other_addresses(url)
+            out = dict(available=True, url=url, key=studio_key, fingerprint=cert_fingerprint, alt_urls=alt_urls)
+            if not own_network(urllib.parse.urlsplit(url).hostname or ""):
+                out["note"] = OWN_NETWORK_NOTE  # the App Store build will refuse it: say so where it's shown
+            return out
+
+        def other_addresses(self, url: str | None) -> list[str]:
+            """This studio's other addresses for the phone, tried alongside the home-network one.
+
+            The home-network address (192.168.x.x) only answers on the same Wi-Fi. With Tailscale on this
+            computer and the phone, its tailnet address (100.x.x.x) answers from anywhere. It is given as the
+            bare IP, never the .ts.net name: the phone accepts this computer's self-made certificate only at
+            IP and local addresses (Apple's App Transport Security refuses it at a full domain name). The
+            phone pins the same certificate fingerprint at every address.
+            """
+            host, port = self.server.server_address[:2]
+            if host not in ("0.0.0.0", "::"):
+                return []  # bound to one address: no other address answers
+            ts = tailnet_cached()
+            alt = f"https://{ts}:{port}" if ts else None
+            return [alt] if alt and alt != url else []
 
         def insole_api(self, method: str, d: Path, rest: list[str]):
             """First-fit insole from a foot capture: POST makes it, GET <file> downloads it."""
@@ -1138,12 +1241,14 @@ def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check
                         # upload (nothing in it but its capture.json) is removed; any other keeps what it had.
                         check = check_completeness(captures_dir, staged, meta)
                         if check and check.get("problems"):
-                            if not [f for f in d.iterdir() if f.name != "capture.json" and f != staged]:
+                            if not [f for f in d.iterdir()
+                                    if f.name != "capture.json" and f != staged
+                                    and not atomic.is_temporary(f, left_behind=True)]:
                                 shutil.rmtree(d, ignore_errors=True)
                             raise IncompleteScan(check["problems"])
                         new = {f.name for f in staged.iterdir()}
                         for f in staged.iterdir():  # kept: the new model takes the old one's place
-                            f.replace(d / f.name)
+                            atomic.replace(f, d / f.name)  # while a download reads the old one, on Windows
                         for f in d.iterdir():
                             if f.is_file() and is_model_file(f.name) and f.name not in new:
                                 f.unlink()  # e.g. original.obj, replaced by an original.usdz
@@ -1194,6 +1299,7 @@ def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check
         def do_DELETE(self):
             self.route("DELETE")
 
+    Handler.tailnet_cached = staticmethod(tailnet_cached)  # serve() prints it at start, and fills the cache
     return Handler
 
 
@@ -1299,10 +1405,13 @@ def insole_stale_reason(folder: Path, meta: dict) -> str | None:
     ins = meta.get("insole") or {}
     if not ins or "error" in ins:
         return None
-    if ins.get("source") != source_stamp(insole_source(folder, meta)):
+    try:
+        if ins.get("source") != source_stamp(insole_source(folder, meta)):
+            return "model"
+        if _shoe_changed(folder, ins):
+            return "shoe"
+    except (ValueError, OSError):  # what it was made from can't be read (or is mid-rebuild): not current
         return "model"
-    if _shoe_changed(folder, ins):
-        return "shoe"
     if _prepared_another_way(meta, ins):
         return "prep"
     return None
@@ -1435,8 +1544,8 @@ def make_insole(folder: Path, meta: dict, length_mm: float | None = None, shoe: 
         (tmp / "insole-summary.html").rename(tmp / "summary.html")  # fixed names, so the studio can link them
         old = folder / f"insole.old-{secrets.token_hex(4)}"
         if out.exists():
-            out.rename(old)
-        tmp.rename(out)
+            atomic.replace(out, old)  # tried again while a download has a file in it open (Windows)
+        atomic.replace(tmp, out)
         shutil.rmtree(old, ignore_errors=True)
     except OSError as e:  # e.g. the disk filled while writing: a failed build, handled like any other
         return dict(error=f"couldn't save the insole files ({e})")
@@ -1617,9 +1726,10 @@ def list_submissions(submissions_dir: Path) -> list[dict]:
     out = []
     for f in submissions_dir.glob("*/submission.json") if submissions_dir.exists() else []:
         try:
-            out.append(public_meta(read_json(f)))
-        except json.JSONDecodeError:
+            meta = read_json(f)
+        except (ValueError, OSError):  # garbled or not UTF-8 (ValueErrors), or removed since the glob saw it
             continue
+        out.append(public_meta(meta))
     return sorted(out, key=lambda m: m.get("created", ""), reverse=True)
 
 
@@ -1628,7 +1738,7 @@ def list_captures(captures_dir: Path) -> list[dict]:
     for f in captures_dir.glob("*/capture.json") if captures_dir.exists() else []:
         try:
             meta = read_json(f)
-        except json.JSONDecodeError:
+        except (ValueError, OSError):  # garbled or not UTF-8, or removed since the glob saw it (a refused upload)
             continue
         meta.pop("frames", None)
         why = insole_stale_reason(f.parent, meta) if meta.get("insole") else None
@@ -1670,6 +1780,25 @@ class StudioServer(ThreadingHTTPServer):
                 pass
             tls.close()
 
+def linger(conn, seconds: float = LINGER_S, limit: int = LINGER_BYTES) -> None:
+    """Say we're done sending, then read and drop what the client is still sending (see LINGER_S)."""
+    import time
+
+    try:
+        conn.shutdown(socket.SHUT_WR)  # the answer is complete: the client sees the end of it
+    except OSError:
+        return
+    deadline, got = time.monotonic() + seconds, 0
+    while got < limit and (left := deadline - time.monotonic()) > 0:
+        try:
+            conn.settimeout(left)
+            chunk = conn.recv(65536)
+        except OSError:  # a timeout, or the client already gone
+            return
+        if not chunk:  # the client finished sending, or read the answer and closed
+            return
+        got += len(chunk)
+
 
 def ensure_cert(cert_dir: Path) -> tuple[Path, Path]:
     cert, key = cert_dir / "cert.pem", cert_dir / "key.pem"
@@ -1685,17 +1814,129 @@ def ensure_cert(cert_dir: Path) -> tuple[Path, Path]:
 
 def cert_fingerprint(cert_path: Path) -> str:
     """SHA-256 of the certificate (DER), hex: what the iPhone app pins."""
-    der = ssl.PEM_cert_to_DER_cert(cert_path.read_text())
+    der = ssl.PEM_cert_to_DER_cert(cert_path.read_text(encoding="utf-8"))
     return hashlib.sha256(der).hexdigest()
 
 
+TAILNET = ipaddress.ip_network("100.64.0.0/10")  # the addresses Tailscale gives its devices
+
+
+TAILNET_CACHE_S = 60.0
+TAILNET_RETRY_S = 10.0
+
+
+def tailnet_ip() -> str | None:
+    """This computer's Tailscale address (100.64.0.0/10), or None without Tailscale.
+
+    Asks the tailscale command first (`tailscale ip -4`). It is often not on the studio's PATH (a Windows service
+    started before Tailscale was installed; the Mac app, whose command sits inside the app), so the install
+    locations are tried too, each program once however many of those name it.
+
+    The tailscale command's answer counts, and on Windows so does Tailscale's own network adapter, unless the
+    command said Tailscale is stopped or logged out. A 100.64.0.0/10 address the computer has on any other
+    adapter (or with Tailscale not installed) belongs to something else (Cloudflare WARP, a carrier's NAT), and
+    handing it to the phone as "Tailscale, from anywhere" would send it to the wrong place.
+
+    The adapter is needed on Windows because the studio's service runs as Local Service, and there the command
+    gave the service no address (tank, 6 Nov 2026, also with Tailscale's "Run unattended" on), while the same
+    command run by the signed-in user gave 100.113.53.83. Reading the adapter doesn't ask tailscaled. Only
+    Tailscale's usual install folder (or the PATH) counts as "installed": one installed elsewhere and not on the
+    service's PATH isn't found.
+    """
+    candidates = [shutil.which("tailscale"), r"C:\Program Files\Tailscale\tailscale.exe",
+                  "/Applications/Tailscale.app/Contents/MacOS/Tailscale"]
+    tried = set()
+    for exe in filter(None, candidates):
+        if not Path(exe).is_file():
+            continue
+        try:
+            key = Path(exe).resolve()
+        except OSError:
+            key = Path(exe)
+        if key in tried:  # which() found one of the install locations: don't wait on it twice
+            continue
+        tried.add(key)
+        try:
+            run = subprocess.run([exe, "ip", "-4"], capture_output=True, text=True, encoding="utf-8",
+                                 errors="replace", timeout=3)
+        except subprocess.TimeoutExpired:
+            # tailscaled is stuck: every program asks the same one (the Mac's /usr/local/bin/tailscale is a
+            # script, not a link, so it isn't seen as the app's own program), and each would wait as long.
+            # Its adapter can still be read: that doesn't ask tailscaled.
+            break
+        except (OSError, subprocess.SubprocessError):
+            continue
+        if ip := first_tailnet_ip(run.stdout.split()):
+            return ip
+        if TAILSCALE_OFF.search(run.stdout + run.stderr):  # every program asks the same tailscaled
+            return None
+    if tried and ON_WINDOWS:  # Tailscale is installed, and didn't say its address
+        return windows_tailscale_adapter_ip()
+    return None
+
+
+# What `tailscale ip -4` says when Tailscale is off ("Tailscale is stopped.", "Logged out.", NeedsLogin): then
+# an address left on its adapter isn't one the phone can reach.
+TAILSCALE_OFF = re.compile(r"stopped|logged out|needslogin|not logged in", re.IGNORECASE)
+
+
+ON_WINDOWS = os.name == "nt"
+# Tailscale's adapter on Windows is called "Tailscale" (description "Tailscale Tunnel"). Its address counts only
+# while the adapter is up, so a disconnected Tailscale's leftover address isn't offered.
+WINDOWS_TAILSCALE_ADAPTER = ("$a = Get-NetAdapter -Name Tailscale -ErrorAction Stop; "
+                             "if ($a.Status -eq 'Up') { (Get-NetIPAddress -InterfaceIndex $a.ifIndex "
+                             "-AddressFamily IPv4 -ErrorAction Stop).IPAddress }")
+
+
+def windows_tailscale_adapter_ip() -> str | None:
+    """The 100.64.0.0/10 address on Windows' "Tailscale" network adapter, while that adapter is up, or None."""
+    root = os.environ.get("SystemRoot", "")
+    # Only a full path with a drive (C:\...) or a network share: a relative one, or "\Users\Public" (which
+    # Python before 3.13 counts as absolute), would run powershell.exe from a folder users can write to.
+    if not (ntpath.splitdrive(root)[0] and ntpath.isabs(root)):
+        root = r"C:\Windows"
+    powershell = ntpath.join(root, r"System32\WindowsPowerShell\v1.0\powershell.exe")
+    try:
+        out = subprocess.run([powershell, "-NoProfile", "-NonInteractive", "-Command", WINDOWS_TAILSCALE_ADAPTER],
+                             capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=5).stdout
+    except (OSError, subprocess.SubprocessError):  # no PowerShell, or it took too long (1-2 s on tank)
+        return None
+    return first_tailnet_ip(out.split())
+
+
+def first_tailnet_ip(texts) -> str | None:
+    """The first of these that is an IPv4 address inside Tailscale's range."""
+    for t in texts:
+        try:
+            if (ip := ipaddress.ip_address(t.strip())).version == 4 and ip in TAILNET:
+                return str(ip)
+        except ValueError:
+            continue
+    return None
+
+
 def lan_ip() -> str | None:
+    """This computer's address on its own network (192.168.x.x and the like), the one phones on the same Wi-Fi
+    reach: the address it would send from toward a private address (nothing is sent). With a Tailscale exit
+    node or a subnet route over 10/8, that is the Tailscale address instead; then a private address of this
+    computer's own is used, or None if it has none."""
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
             s.connect(("10.255.255.255", 1))
-            return s.getsockname()[0]
+            ip = s.getsockname()[0]
     except OSError:
         return None
+    if ipaddress.ip_address(ip) not in TAILNET:
+        return ip
+    try:
+        found = socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET)
+    except OSError:
+        return None
+    for *_rest, (addr, *_port) in found:
+        a = ipaddress.ip_address(addr)
+        if a.is_private and a not in TAILNET and not a.is_loopback and not a.is_link_local:
+            return addr
+    return None
 
 
 def serve(host: str = "127.0.0.1", port: int = 8765, https: bool = False, public: bool = False,
@@ -1703,12 +1944,29 @@ def serve(host: str = "127.0.0.1", port: int = 8765, https: bool = False, public
     """Run the site. ``public``: reachable from the internet through a tunnel or
     proxy, so nothing is trusted for being "local" and only the studio key
     opens the studio."""
-    studio_key = load_studio_key(ROOT / ".studio_key")
+    def read_only_checkout(what: Path) -> SystemExit:
+        return SystemExit(f"can't write {what}: this account may only read the checkout (the Windows service "
+                          f"runs as Local Service). Start footscan serve{' --https' if https else ''} once as "
+                          f"yourself to make it, then start the service.")
+
+    try:
+        studio_key = load_studio_key(ROOT / ".studio_key")
+    except PermissionError:
+        raise read_only_checkout(ROOT / ".studio_key") from None
     if allow_indexing is None:
         allow_indexing = not public  # on the internet, hidden from search engines unless asked otherwise
     cert_fp = None
     if https:
-        cert_path, key_path = ensure_cert(ROOT / ".certs")
+        try:
+            cert_path, key_path = ensure_cert(ROOT / ".certs")
+        except PermissionError:
+            raise read_only_checkout(ROOT / ".certs") from None
+        except subprocess.CalledProcessError as e:  # openssl failed: for any reason, so say what it said
+            said = (e.stderr or b"").decode("utf-8", "replace").strip().splitlines()
+            raise SystemExit(f"openssl couldn't make the certificate in {ROOT / '.certs'}"
+                             + (f": {said[-1]}" if said else "") + ". If this is the Windows service (Local "
+                             "Service may only read the checkout), start footscan serve --https once as yourself "
+                             "to make it.") from None
         cert_fp = cert_fingerprint(cert_path)
     handler = make_handler(data_dir=(data_dir or DATA_DIR).resolve(), studio_key=studio_key,
                            secure_cookie=https or public, local_check=never_local if public else is_loopback,
@@ -1729,6 +1987,9 @@ def serve(host: str = "127.0.0.1", port: int = 8765, https: bool = False, public
         print(f"studio on YOUR phone (keep this private): {scheme}://{ip}:{port}/studio/?key={studio_key}")
     else:
         print(f"scan page: {scheme}://localhost:{port}/")
+    # the same answer the connect code gives (and its cache), also with no Wi-Fi address
+    if https and host in ("0.0.0.0", "::") and (ts := handler.tailnet_cached()):
+        print(f"over Tailscale, from anywhere (the connect code includes it): {scheme}://{ts}:{port}/")
     print("", flush=True)
     try:
         httpd.serve_forever()

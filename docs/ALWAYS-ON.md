@@ -70,7 +70,21 @@ prints the start-up file for this computer, filled in with this checkout's
 paths, and the numbered steps to install it. It installs nothing itself.
 
 - **Windows** (tank): a service through NSSM, plus a firewall rule for Private
-  networks only. Keep the data folder's path free of spaces. **First check `nssm status Footscan`**: if a service by that name
+  networks only. The commands copy `nssm.exe` to `C:\Program Files\nssm` first:
+  it is the service's own program, and every `nssm` you type later runs it as
+  administrator, so it must not sit in your own folder, where winget puts it. (A service installed from winget's copy: copy `nssm.exe` there, then point the
+  service at it with
+  `Set-ItemProperty HKLM:\SYSTEM\CurrentControlSet\Services\Footscan ImagePath '"C:\Program Files\nssm\nssm.exe"'`
+  and `nssm restart Footscan`; its settings stay. The quotes inside the value
+  matter: unquoted, Windows may try to run `C:\Program.exe` instead. Check it
+  with `sc.exe qc Footscan`.) The commands also put `C:\Program Files\nssm`
+  first on the computer's own PATH, so a later `nssm` in an Administrator
+  PowerShell runs that copy and never winget's. The studio itself runs as
+  Windows' **Local Service** account, not LocalSystem: the checkout and its
+  `.venv` are yours to change (git pull, pip install), so whatever is in them
+  must not run with full control of the computer. Local Service gets read
+  access to the checkout and to the Python the `.venv` runs on, and write
+  access to the data folder only. Keep the data folder's path free of spaces. **First check `nssm status Footscan`**: if a service by that name
   already exists, it's the public deploy from DEPLOY-TANK.md on the same port.
   Stop and decide which one tank should run; two can't share port 8765.
 - **macOS**: a LaunchAgent. It runs while your account is logged in, so turn on
@@ -82,14 +96,46 @@ paths, and the numbered steps to install it. It installs nothing itself.
 Then **restart the computer** and check the studio comes back by itself. If it
 doesn't, the service isn't set up right. The log is `data/server.log`.
 
-### 5. Pair the phone with it
+### 5. Reach it away from home (Tailscale)
+
+Tailscale is a private network between your own devices: the phone reaches the
+studio from anywhere, and nothing is opened to the internet. On the computer and
+on the iPhone, install Tailscale and sign in with the same account. Then, on the
+computer:
+
+- In the Tailscale admin console, turn off **key expiry** for this computer, or
+  it drops off every few months until you sign in again.
+- Let Tailscale's addresses through the firewall (Windows, Administrator
+  PowerShell; the home Wi-Fi rule above is for Private networks only):
+
+  ```powershell
+  New-NetFirewallRule -DisplayName "footscan (Tailscale)" -Direction Inbound -Protocol TCP -LocalPort 8766 -RemoteAddress 100.64.0.0/10 -InterfaceAlias Tailscale -Action Allow
+  ```
+
+  (8766 is tank's port; use the studio's own.) `-InterfaceAlias Tailscale`
+  keeps it to the Tailscale adapter: some other networks (a phone hotspot,
+  carrier NAT, Cloudflare WARP) also hand out 100.64.0.0/10 addresses. A rule
+  made without it is narrowed with `Set-NetFirewallRule -DisplayName "footscan
+  (Tailscale)" -InterfaceAlias Tailscale`.
+- Windows: in Tailscale's settings turn on **Run unattended**, so Tailscale
+  keeps running after a restart when nobody has signed in yet.
+
+The studio then prints `over Tailscale, from anywhere (the connect code
+includes it): https://100.x.x.x:<port>/` when it starts, and the connect code
+carries that address as well as the home one. On Windows the service runs as
+Local Service, and Tailscale doesn't tell that account its address (tank, 6 Nov
+2026), so the studio reads it from the adapter called "Tailscale" instead
+(unless Tailscale says it is stopped or logged out). If the line is missing,
+check the adapter is there and up: `Get-NetAdapter Tailscale`.
+
+### 6. Pair the phone with it
 
 A different computer has a different studio key and certificate, so the
 iPhone app has to connect again: in the studio open **Import a 3D scan**, press
 **Show the connect code**, and scan it from the app. Then send one scan and check it
 arrives.
 
-### 6. Let project threads work on this computer (Remote Control)
+### 7. Let project threads work on this computer (Remote Control)
 
 So Claude in the project can run things there (builds, the accuracy run,
 reviews):
@@ -105,7 +151,7 @@ reviews):
 3. Tell the project when it's on: the computer then shows up next to the
    MacBook and threads can use it.
 
-### 7. Review insoles
+### 8. Review insoles
 
 Open Claude Code in the footscan folder. When a session starts, it lists any
 packet nobody has answered yet. Type:
@@ -170,6 +216,36 @@ cd ~/footscan && git pull
 Then restart the service: `nssm restart Footscan` (Windows),
 `launchctl kickstart -k gui/$(id -u)/dev.footscan.server` (macOS),
 `systemctl --user restart footscan` (Linux).
+
+**A Windows service installed before it ran as Local Service** (tank's, until
+this is done): in an Administrator PowerShell, paste the PATH lines and the
+three `icacls` lines from `footscan service --system windows`, then
+`nssm set Footscan ObjectName "NT AUTHORITY\LocalService"` and
+`nssm restart Footscan`. `sc.exe qc Footscan` should then show
+`SERVICE_START_NAME : NT AUTHORITY\LocalService`. Open the studio and make an
+insole to check it still works; if `server.log` says *Access is denied*, a
+folder it needs wasn't granted (not yet tried on tank).
+
+Local Service can only read the checkout, so the studio can't make a new
+`.studio_key` or certificate there. To change the key (or the certificate),
+`nssm stop Footscan`, delete `.studio_key` (or `.certs`), start `footscan serve
+--host 0.0.0.0 --https` once as yourself to make new ones, stop it, then `nssm
+start Footscan` and pair the phone again. If the service can't write the key,
+`server.log` says so.
+
+**On Windows, use these steps instead: they stop the service first.** The running
+service holds `.venv\Scripts\footscan.exe` open, so `pip install -e .` can't
+replace it, and pip's rollback leaves footscan half uninstalled: the next start
+can't find it. In an Administrator PowerShell:
+
+```powershell
+cd C:\srv\footscan; git pull
+nssm stop Footscan
+.venv\Scripts\python -m pip install -e ".[recon]"    # only if dependencies changed
+nssm start Footscan
+```
+
+Installing other packages (pytest, for example) is fine while it runs.
 
 ## Good to know
 
