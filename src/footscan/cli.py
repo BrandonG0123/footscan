@@ -262,6 +262,59 @@ def cmd_insole(args) -> int:
     return 0
 
 
+def cmd_footwear(args) -> int:
+    from . import footwear as fw
+    from .insole import InsoleError
+    from .recon.imported import load_geometry, to_millimetres
+
+    params = fw.ShoeParams(foot_length_mm=args.length, foot_width_mm=args.width, fit=args.fit, sock_mm=args.sock,
+                           toe=args.toe, style=args.style, openness=args.openness, sole_mm=args.sole, cushion=args.cushion)
+    try:
+        if args.scan:
+            mesh = load_geometry(args.scan)
+            if args.kind == "mat":
+                mesh, _, _ = to_millimetres(mesh)
+            shoe = fw.from_scan(mesh, args.foot, params, kind=args.kind, up=args.up)
+            label = f"{args.scan} ({args.kind} scan)"
+        else:
+            shoe = fw.build(args.foot, params)
+            label = "ruler measurements only (no sole scan)"
+    except (InsoleError, ValueError) as err:  # (a FootwearError or a FootPrepError is a ValueError)
+        print(f"{args.scan or 'footwear'}: {err}", file=sys.stderr)
+        return 1
+    made = [shoe] + ([fw.mirrored(shoe)] if args.pair else [])
+    for s in made:
+        r = s.report
+        files = fw.write_outputs(s, Path(args.output), f"{s.foot}-clog", label)
+        print(f"{s.foot} clog ({r['style']}): {r['length_mm']} x {r['width_mm']} x {r['height_mm']} mm, {r['volume_cm3']} cm3; "
+              f"inside {r['inside']['length_mm']} x {r['inside']['width_mm']} mm for a foot {r['made_for']['foot_length_mm']} x "
+              f"{r['made_for']['foot_width_mm']} mm")
+        if r["footbed"]:
+            print(f"  footbed: highest fill {r['footbed']['max_fill_mm']} mm, from the sole scan")
+        print(f"  bed: {r['bed_fit']['how'] if r['bed_fit']['fits'] else 'does not fit'}")
+        for w in r["warnings"] + ((r["footbed"] or {}).get("insole_warnings") or []):
+            print(f"  warning: {w}", file=sys.stderr)
+        for k, v in files.items():
+            print(f"  {k}: {v}")
+        # trial pieces written here earlier were cut from the shoe these files replace
+        fw.clear_trials(Path(args.output), f"{s.foot}-clog")
+    status = 0
+    if args.trials:   # of the shoe made from this foot, not of its mirror image
+        try:
+            files, left_out = fw.write_trials(shoe, Path(args.output), f"{shoe.foot}-clog", label)
+        except fw.FootwearError as err:   # the shoe's own files are written and stand; only its pieces are missing
+            print(f"{shoe.foot} clog's trial pieces: {err} (The shoe's own files above are written.)", file=sys.stderr)
+            status = 1
+        else:
+            print(f"{shoe.foot} clog's trial pieces, to print before the whole shoe ({fw.TRIAL_WARNING})")
+            for line in left_out:
+                print(f"  warning: {line}", file=sys.stderr)
+            for k, v in files.items():
+                print(f"  {k}: {v}")
+    print("NOT A MEDICAL DEVICE. Untested design. Walking and casual wear only, not sport; break-in as on the summary sheet.")
+    return status
+
+
 def cmd_shoe(args) -> int:
     from . import shoes
     from .recon import shoe
@@ -327,7 +380,7 @@ def cmd_serve(args) -> int:
         threading.Thread(target=review.watch, args=(data,), kwargs=dict(log=lambda m: print(m, flush=True)),
                          daemon=True, name="review-packets").start()
     serve(args.host, args.port, args.https, args.public, data_dir=Path(args.data) if args.data else None,
-          allow_indexing=True if args.allow_indexing else None)
+          allow_indexing=True if args.allow_indexing else None, describe_with_claude=args.describe_with_claude)
     return 0
 
 
@@ -458,6 +511,32 @@ def main(argv=None) -> int:
     shoes_folder(ins)
     ins.set_defaults(func=cmd_insole)
 
+    fw = sub.add_parser("footwear", help="a printable clog for one foot, its first-fit footbed built in (3MF + STL + "
+                                         "summary sheet + pictures), sized by ruler or by the sole scan")
+    fw.add_argument("--foot", choices=["left", "right"], required=True)
+    fw.add_argument("-o", "--output", required=True, help="folder for the files")
+    fw.add_argument("--scan", help="the foot's sole scan: its first-fit insole surface becomes the footbed. Without "
+                                   "one the footbed is flat, and --length and --width are needed")
+    fw.add_argument("--kind", default="mat", choices=["mat", "sole_up", "sole_hanging", "impression", "foot"],
+                    help="what the scan is: 'mat' (default) is a scan in the mat frame, as `footscan insole` takes; "
+                         "the others are iPhone Object Capture models, as the studio imports them")
+    fw.add_argument("--up", default="y", choices=["y", "z"], help="an Object Capture model's up axis (default y)")
+    fw.add_argument("--length", type=float, help="foot length by ruler, mm, standing (default: the scan's)")
+    fw.add_argument("--width", type=float, help="foot width across the ball by ruler, mm, standing (default: the scan's)")
+    fw.add_argument("--style", default="vent", choices=["vent", "stream", "stone"])
+    fw.add_argument("--fit", default="regular", choices=["snug", "regular", "roomy"])
+    fw.add_argument("--toe", default="round", choices=["round", "square", "tapered"])
+    fw.add_argument("--cushion", default="medium", choices=["soft", "medium", "firm"], help="the sole's suggested infill")
+    fw.add_argument("--sole", type=float, help="sole thickness under the ball of the foot, mm (default: the style's)")
+    fw.add_argument("--openness", type=float, help="share of the patterned area cut away, 0 to 0.5 (default: the style's)")
+    fw.add_argument("--sock", type=float, default=0.0, help="extra room for a sock thicker than the one measured in, mm")
+    fw.add_argument("--pair", action="store_true", help="also write the other foot's shoe as this one's mirror image "
+                                                        "(not made from that foot's scan; its sheet says so)")
+    fw.add_argument("--trials", action="store_true", help="also write the print-trial pieces cut from this shoe (a block "
+                                                          "of its sole, a swatch of its pattern, its toe cap, its back "
+                                                          "half), to print before the whole of it")
+    fw.set_defaults(func=cmd_footwear)
+
     sh = sub.add_parser("shoe", help="saved shoes: one fixed insole outline per shoe model and size")
     shs = sh.add_subparsers(dest="action", required=True)
     sa = shs.add_parser("add", help="save a shoe from a scan of its own stock insole lying flat")
@@ -499,6 +578,10 @@ def main(argv=None) -> int:
                     help="let search engines index the site (with --public it is hidden from them by default)")
     sv.add_argument("--review", action="store_true",
                     help="also write a review packet (checks + pictures) for each new insole: footscan review")
+    sv.add_argument("--describe-with-claude", action="store_true",
+                    help="Make shoe: send a typed description of a shoe to Anthropic's API to be read into settings "
+                         "(the typed words only; needs `pip install anthropic` and ANTHROPIC_API_KEY). Without "
+                         "this it is read on this computer, by looking for known words")
     sv.set_defaults(func=cmd_serve)
 
     rv = sub.add_parser("review", help="review packets for new insoles: plain checks + pictures, for a person or "

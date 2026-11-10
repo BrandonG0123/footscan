@@ -129,6 +129,21 @@ foot scan into a 3MF for the slicer plus a clinician summary sheet (see
 posting or stiffness zones, which wait for the Phase 0 repeatability gate
 and the Phase 5 material tests.
 
+**Printed clog (first shape, untested):** `footscan footwear` makes a one-piece
+slip-on clog for one foot, sized by ruler or by the sole scan, with that
+foot's first-fit footbed built into its floor, and its walls let out where
+the sole scan shows the foot wider than the standard shape (see
+[docs/footwear.md](docs/footwear.md)). In the studio, a foot capture's *Make
+printed shoe* button opens a page with the same preferences as a form, a 3-D preview
+of the shoe (whole, or cut open to show the footbed in its floor), and a box
+for a description that is read into the form's settings (on this computer by
+default; by Claude only with `footscan serve --describe-with-claude`). The
+page also keeps what the shoe's print-trial pieces showed and suggests a
+cushioning or a fit from it by fixed rules (never a change to the footbed,
+and nothing once anything hurt), and shows the other foot's shoe so a pair
+is made alike. Walking and casual wear only, never sport; nothing from it
+has been printed or worn yet.
+
 JavaScript tests (frame quality, coverage, and camera position from the mat):
 
 ```bash

@@ -135,8 +135,10 @@
             ? `${shoePicker(c)}<span class="shoe-len"><input type="number" inputmode="decimal" min="150" max="360" step="1"
                  placeholder="shoe insole, mm" aria-label="Shoe insole length in mm (optional)" data-length-for="${esc(c.capture_id)}"
                  value="${c.insole?.shoe_length_mm ?? ""}" style="width:9.5em" ${outlineChoice(c) !== "foot" ? "disabled" : ""}></span>
-               <button class="btn secondary" type="button" data-insole="${esc(c.capture_id)}">${c.insole && !c.insole.error ? "Remake insole" : "Make insole"}</button>` : ""}</p>
+               <button class="btn secondary" type="button" data-insole="${esc(c.capture_id)}">${c.insole && !c.insole.error ? "Remake insole" : "Make insole"}</button>
+               <a class="btn secondary" href="/studio/clog.html?capture=${encodeURIComponent(c.capture_id)}">${c.clog && !c.clog.error ? "Printed shoe" : "Make printed shoe"}</a>` : ""}</p>
         <div class="insole-out" id="insole-${esc(c.capture_id)}">${c.insole ? insoleHtml(c.capture_id, c.insole) : ""}</div>
+        ${clogHtml(c)}
         ${compareHtml(c)}
       </div></article>`;
     }).join("");
@@ -238,6 +240,19 @@
       btn.disabled = false;
     }
   });
+
+  // The printed shoe (a clog) made from this capture (its own page makes it and shows it): one line here, so the
+  // library says there is one and whether it still matches the scan. "Printed", because a shoe on this page is
+  // otherwise a bought shoe an insole is cut to fit. Not a medical device; walking and casual wear only.
+  function clogHtml(c) {
+    const r = c.clog;
+    if (!r || r.error) return "";
+    const page = `/studio/clog.html?capture=${encodeURIComponent(c.capture_id)}`;
+    if (r.stale) return `<p class="hint" style="color:var(--warn);margin:8px 0 0">The 3D model has changed since this capture's printed
+      shoe was made, so it no longer matches. <a href="${page}">Make it again</a>.</p>`;
+    return `<p class="hint" style="margin:8px 0 0"><strong>Printed shoe</strong> (clog, ${esc(r.style)}, ${esc(r.length_mm)} × ${esc(r.width_mm)} mm,
+      untested design, walking and casual wear only): <a href="${page}">open it</a>.</p>`;
+  }
 
   // First-fit insole: not a medical device; no posting; walking-only until a clinician signs the sheet.
   function insoleHtml(id, r) {

@@ -200,6 +200,14 @@ def from_prep(info: dict) -> list[str]:
     return out
 
 
+def refusals(measures: dict | None, info: dict) -> list[str]:
+    """Everything one sole scan is refused for by itself: its ends (``problems``, where they could be measured)
+    and what its preparation found (``from_prep``). The studio's arrival check asks this, and so does the shoe
+    generator, which makes no shoe from such a scan (footwear.unfit_for_a_footbed): one list, so the two can't
+    drift apart. (Compared with the person's other scans, ``against_others``, is the studio's alone.)"""
+    return (problems(measures) if measures else []) + from_prep(info)
+
+
 # What to change on the next scan, for each refusal above (and the preparation's, from_prep): its headline (the
 # capitalised start of the line, which every refusal of that kind shares), a short name for it, a title the phone
 # can show in a sentence, and the steps, in the order to do them. The refusal itself says what was found and

@@ -343,7 +343,8 @@ def make_capture(out_dir: Path, *, scene: Scene | None = None, cameras: list[Cam
     return truth
 
 
-def block_foot(yaw_deg: float = 0.0, foot: str = "right", origin=(100.0, 150.0), floor_cut: bool = True):
+def block_foot(yaw_deg: float = 0.0, foot: str = "right", origin=(100.0, 150.0), floor_cut: bool = True,
+               inner_bulge: float = 0.0, heel_bulge: float = 0.0):
     """SYNTHETIC 'foot' for tests: exact, simple geometry with known answers.
 
     In its own coordinates (x forward, y toward the foot's left, z up), mm:
@@ -353,6 +354,12 @@ def block_foot(yaw_deg: float = 0.0, foot: str = "right", origin=(100.0, 150.0),
     over the heel at (45, 45). Then turned by ``yaw_deg`` and placed at
     ``origin`` on the mat. ``floor_cut`` removes the bottom faces, as a
     standing scan has none.
+
+    ``inner_bulge``: a block standing that many mm out of the inner side
+    above the floor (x 95-135, from 14 to 25 mm up, over the tunnel's mouth),
+    as a flat foot's inner side stands out over its own footprint. ``heel_bulge``: the same out of
+    the back of the heel (30 mm wide), as a heel reaches further back above
+    the floor than on it. Neither changes what stands on the floor.
     """
     import manifold3d as m3
     import trimesh
@@ -363,6 +370,10 @@ def block_foot(yaw_deg: float = 0.0, foot: str = "right", origin=(100.0, 150.0),
     tunnel = M.cube((80.0, 36.0, 12.0)).translate((70.0, medial_y0, 0.0))
     leg = M.cylinder(120.0, 30.0, 30.0, 96).translate((45.0, 45.0, 20.0))
     solid = (body - tunnel) + leg
+    if inner_bulge:
+        solid += M.cube((40.0, inner_bulge + 5.0, 11.0)).translate((95.0, 85.0 if foot == "right" else -inner_bulge, 14.0))
+    if heel_bulge:
+        solid += M.cube((heel_bulge + 20.0, 30.0, 11.0)).translate((-heel_bulge, 30.0, 14.0))
     mm = solid.to_mesh()
     m = trimesh.Trimesh(np.asarray(mm.vert_properties)[:, :3], np.asarray(mm.tri_verts), process=True)
     v, f = trimesh.remesh.subdivide_to_size(m.vertices, m.faces, max_edge=2.0)
