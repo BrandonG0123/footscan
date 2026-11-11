@@ -659,7 +659,10 @@ def bend_toes(mesh, deg: float, x_from: float = 185.0, z_at: float = 0.0, blend:
     """SYNTHETIC toes bent off the line of the sole, as a relaxed foot's toes hang in a sole scan: ``mesh``
     (foot coordinates, x from heel to toes, z up) with everything past ``x_from`` turned ``deg`` degrees
     about the line across the foot at x = ``x_from``, height ``z_at`` (positive: the tips up, off the
-    floor). The turn grows over ``blend`` mm round that line, so the surface bends without tearing."""
+    floor). The turn grows over ``blend`` mm round that line, so the surface bends without tearing.
+    Only the points move, so split a coarse mesh first (``refined``): unsplit, ``shaped_foot``'s long sole
+    triangles cut straight across the bend, and with its toes bent 30-45 degrees its floor came out tipped
+    4-6 degrees, a fault of the test shape, not of the preparation (30 Oct)."""
     import trimesh
 
     V = np.array(mesh.vertices, dtype=float)
