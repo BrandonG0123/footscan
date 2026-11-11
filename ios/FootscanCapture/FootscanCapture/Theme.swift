@@ -31,6 +31,16 @@ extension Color {
     static let fsStop = Color(light: 0xb0271f, dark: 0xff8177)
 }
 
+// MARK: - Width
+
+extension View {
+    /// Keeps a column of text and buttons to a comfortable reading width on an iPad (and in a wide window),
+    /// centred; on an iPhone it changes nothing, as the screen is narrower than this.
+    func readableWidth(_ width: CGFloat = 680) -> some View {
+        frame(maxWidth: width).frame(maxWidth: .infinity)
+    }
+}
+
 // MARK: - Buttons
 
 /// The main action on a screen: full width, brand colour, gives under the finger.

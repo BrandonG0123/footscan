@@ -39,8 +39,8 @@ final class AppSettings {
     }
 }
 
-/// Two ways to scan. LiDAR (Apple's 3D capture) on phones that support it;
-/// photos on the printed mat on any iPhone (needs the studio, which builds
+/// Two ways to scan. LiDAR (Apple's 3D capture) on an iPhone or iPad that supports it;
+/// photos on the printed mat on any of them (needs the studio, which builds
 /// the model).
 enum CaptureMethod: String, CaseIterable, Identifiable {
     case lidar, photos
@@ -48,10 +48,32 @@ enum CaptureMethod: String, CaseIterable, Identifiable {
     var label: String { self == .lidar ? "3D capture" : "Photos + mat" }
     var detail: String {
         self == .lidar
-            ? "LiDAR measures as it goes; the phone builds the model."
-            : "Any iPhone. Uses the printed mat; your Footscan studio builds the model."
+            ? "LiDAR measures as it goes; the \(DeviceKind.current.noun) builds the model."
+            : "Any iPhone or iPad. Uses the printed mat; your Footscan studio builds the model."
     }
 
-    /// Can this phone do Apple's 3D capture (Object Capture)?
+    /// Can this phone or iPad do Apple's 3D capture (Object Capture)?
     @MainActor static var lidarAvailable: Bool { ObjectCaptureSession.isSupported }
+}
+
+/// iPhone or iPad, for the words on screen: "this iPad", not "this phone", when that's what's in their hands.
+///
+/// Apple's 3D capture (Object Capture) runs on the iPhones and iPads that have LiDAR and an A14 chip or later:
+/// iPhone 12 Pro onwards (Pro models), and iPad Pro from 2021 (M1) onwards. The 2020 iPad Pro has LiDAR but
+/// an A12Z, so it can't; no iPad Air, mini or plain iPad has LiDAR. The app never decides from that list: it
+/// asks `ObjectCaptureSession.isSupported` and offers Photos + mat everywhere else.
+enum DeviceKind {
+    case phone, pad
+
+    /// What this device is. Read once: an app can't move between an iPhone and an iPad.
+    static let current: DeviceKind = UIDevice.current.userInterfaceIdiom == .pad ? .pad : .phone
+
+    /// In a sentence: "this phone", "the iPad builds the model".
+    var noun: String { self == .pad ? "iPad" : "phone" }
+    /// The product: "This iPhone scans with photos", "Finder > iPad > Files".
+    var model: String { self == .pad ? "iPad" : "iPhone" }
+    /// The 3D capture needs: what to say where it can't run.
+    var needsLiDAR: String {
+        self == .pad ? "an iPad Pro with LiDAR (2021 or later)" : "an iPhone with LiDAR (a Pro model, 12 Pro or later)"
+    }
 }

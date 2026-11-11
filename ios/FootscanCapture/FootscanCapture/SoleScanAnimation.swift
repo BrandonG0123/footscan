@@ -69,7 +69,7 @@ struct SoleScanClock: Sendable {
             (0.0, "Lie face down on a bed or sofa"),
             (1.2, "Bend this knee: sole up to the ceiling"),
             (3.0, "Let the foot relax and keep it still"),
-            (3.6, "Your helper circles slowly, phone pointing down at the sole"),
+            (3.6, "Your helper circles slowly, \(DeviceKind.current.noun) pointing down at the sole"),
             (8.6, "Ring full all the way round: tap Finish"),
         ]
         case .legsFlat: [

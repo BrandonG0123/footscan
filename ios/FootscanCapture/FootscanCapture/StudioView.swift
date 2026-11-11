@@ -44,7 +44,7 @@ final class StudioConnection {
             return false
         }
         guard StudioStore.save(reached.link, key: parsed.key) else {
-            status = "The studio answered, but this phone couldn't keep its key (the iPhone's Keychain refused it). Try again; if it keeps happening, restart the phone."
+            status = "The studio answered, but this \(DeviceKind.current.noun) couldn't keep its key (the \(DeviceKind.current.model)'s Keychain refused it). Try again; if it keeps happening, restart the \(DeviceKind.current.noun)."
             return false
         }
         link = reached.link
@@ -92,12 +92,12 @@ final class StudioConnection {
 
     func disconnect() {
         guard StudioStore.clear() else {
-            status = "Couldn't remove the studio's key from this phone. Try Disconnect again."
+            status = "Couldn't remove the studio's key from this \(DeviceKind.current.noun). Try Disconnect again."
             return
         }
         link = nil
         key = nil
-        status = "Disconnected. Scans stay on this phone."
+        status = "Disconnected. Scans stay on this \(DeviceKind.current.noun)."
     }
 }
 
@@ -117,7 +117,7 @@ struct StudioView: View {
                     VStack(alignment: .leading, spacing: 6) {
                         Text(studio.link == nil ? "Connect to your studio" : "Your studio")
                             .font(.system(.title, design: .rounded, weight: .bold))
-                        Text("Scans go straight from this phone to the Footscan studio on your computer: over your Wi-Fi at home, or over Tailscale from anywhere if the studio has it.")
+                        Text("Scans go straight from this \(DeviceKind.current.noun) to the Footscan studio on your computer: over your Wi-Fi at home, or over Tailscale from anywhere if the studio has it.")
                             .foregroundStyle(Color.fsMuted)
                     }
                     if let link = studio.link { connected(link) } else { howTo }
@@ -128,6 +128,7 @@ struct StudioView: View {
                     }
                 }
                 .padding(20)
+                .readableWidth()
                 .animation(.smooth, value: studio.status)
                 .animation(.smooth, value: studio.link)
             }
@@ -144,6 +145,7 @@ struct StudioView: View {
                 }
                 .disabled(!canScan)
                 .padding(.horizontal, 20).padding(.vertical, 10)
+                .readableWidth()
                 .background(.bar)
             }
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
@@ -157,7 +159,7 @@ struct StudioView: View {
             .confirmationDialog("Disconnect from this studio?", isPresented: $confirmDisconnect, titleVisibility: .visible) {
                 Button("Disconnect", role: .destructive) { studio.disconnect() }
             } message: {
-                Text("Scans stay on this phone. You can connect again with the code.")
+                Text("Scans stay on this \(DeviceKind.current.noun). You can connect again with the code.")
             }
         }
         .tint(.fsBrand)
@@ -170,7 +172,7 @@ struct StudioView: View {
             step(2, "Go to Import 3D and tap Show the connect code")
             step(3, "Tap the button below and point this camera at it")
             if !canScan {
-                Text("This device can't read codes with its camera. Point the iPhone's Camera app at the code instead; it opens this app.")
+                Text("This device can't read codes with its camera. Point the \(DeviceKind.current.model)'s Camera app at the code instead; it opens this app.")
                     .font(.footnote).foregroundStyle(Color.fsWarn)
             }
         }

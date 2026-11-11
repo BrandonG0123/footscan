@@ -89,6 +89,7 @@ struct HomeView: View {
                 }
                 .padding(.horizontal, 20)
                 .padding(.bottom, 40)
+                .readableWidth(720)
             }
             .scrollIndicators(.hidden)
             .background(Color.fsBackground.ignoresSafeArea())
@@ -346,7 +347,7 @@ struct HomeView: View {
     @ViewBuilder private var methodPicker: some View {
         @Bindable var settings = settings
         if subject.needs3DCapture {
-            Label("Uses 3D capture: the phone builds the model, then sends it to your studio for the insole.",
+            Label("Uses 3D capture: the \(DeviceKind.current.noun) builds the model, then sends it to your studio for the insole.",
                   systemImage: "cube.transparent")
                 .font(.footnote).foregroundStyle(Color.fsMuted)
         } else if CaptureMethod.lidarAvailable {
@@ -360,7 +361,7 @@ struct HomeView: View {
             }
             .sensoryFeedback(.selection, trigger: settings.method)
         } else {
-            Label("This iPhone scans with photos on the printed mat (it can't run Apple's 3D capture). Your Footscan studio builds the model.",
+            Label("This \(DeviceKind.current.model) scans with photos on the printed mat (it can't run Apple's 3D capture). Your Footscan studio builds the model.",
                   systemImage: "camera.on.rectangle")
                 .font(.footnote).foregroundStyle(Color.fsMuted)
         }
@@ -561,11 +562,11 @@ private struct InsolePath: View {
         switch step {
         case 0: CaptureMethod.lidarAvailable
             ? "Sole up or a foam print: it's the shape the insole is made from."
-            : "Sole and foam-print scans need an iPhone with LiDAR (a Pro model)."
+            : "Sole and foam-print scans need \(DeviceKind.current.needsLiDAR)."
         case 1:
             if !studioConnected { autoSend ? "Connect to the studio on your computer; then it goes by itself."
                                            : "Connect to the studio on your computer, then open the scan and tap Send." }
-            else if autoSend { "It goes by itself whenever the phone can reach the studio (same Wi-Fi, or Tailscale)." }
+            else if autoSend { "It goes by itself whenever the \(DeviceKind.current.noun) can reach the studio (same Wi-Fi, or Tailscale)." }
             else { "Sending automatically is off: tap here to open the scan, then Send." }
         default: "Research library, then Make insole. A podiatrist or athletic trainer signs the summary sheet before you play in it."
         }

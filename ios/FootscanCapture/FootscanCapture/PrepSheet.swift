@@ -37,7 +37,7 @@ extension Subject {
             ("arrow.up", "Bend this knee, sole up", "Lower leg straight up, sole to the ceiling, ankle relaxed. Don't point the foot or pull the toes back; let the toes lie straight, not curled."),
             ("ruler.fill", "The ball of the foot level", "Your helper lays a book (anything flat and stiff) across the ball of the foot: the big-toe side and the little-toe side should both touch it. If one doesn't, turn the foot gently until it does, then take the book away."),
             ("shoeprints.fill", "Bare foot or a thin sock", "Nothing loose or thick."),
-            ("person.2.fill", "A helper scans, two laps", "They circle the foot slowly, phone pointing down at the sole, until the ring is full; then a second lap, closer, over the toes and the back of the heel. You keep still."),
+            ("person.2.fill", "A helper scans, two laps", "They circle the foot slowly, \(DeviceKind.current.noun) pointing down at the sole, until the ring is full; then a second lap, closer, over the toes and the back of the heel. You keep still."),
         ]
         case .rightSoleFlat, .leftSoleFlat: [
             ("bed.double.fill", "Lie face down, legs straight", "Feet just past the end of the bed: ankles at the edge, feet hanging relaxed."),
@@ -50,7 +50,7 @@ extension Subject {
         case .rightPrint, .leftPrint: [
             ("shippingbox.fill", "A foam impression box", "Sold for orthotic casting. One block per foot; a clinician or athletic trainer may have them."),
             ("figure.seated.side.right", "Seated, press straight down", "Knee over the ankle. Push the foot down until the heel and toes are sunk in, then lift it straight up without rocking."),
-            ("table.furniture.fill", "Box on a table, in even light", "With room to walk all the way round. The phone must see into the print from every side."),
+            ("table.furniture.fill", "Box on a table, in even light", "With room to walk all the way round. The \(DeviceKind.current.noun) must see into the print from every side."),
             ("ruler.fill", "Calipers ready (optional)", "Measure how deep the heel print is; the studio reports the scan's depth, so you can compare."),
         ]
         case .shoeInsole: [
@@ -67,7 +67,7 @@ extension Subject {
             ("doc.on.doc.fill", "The paper mat is taped flat", "On a hard floor, with sheet 1 (the heel end) toward the chair."),
             ("figure.seated.side.right", "Sitting, foot bare and flat on the mat", "Trousers rolled past the ankle, lower leg straight down. The foot stays completely still."),
             ("scalemass.fill", "A bathroom scale under the foot", "You'll type in its reading afterwards: the studio needs it for a seated scan."),
-            ("person.2.fill", "Someone else holds the phone", "It's much easier for them to walk round you."),
+            ("person.2.fill", "Someone else holds the \(DeviceKind.current.noun)", "It's much easier for them to walk round you."),
         ]
         case .other: [
             ("cube.fill", "Something matte with some texture", "A shoe, a patterned mug, a book. Shiny or plain white things come out patchy."),
@@ -122,6 +122,7 @@ struct PrepSheet: View {
                     }
                 }
                 .padding(20)
+                .readableWidth()
             }
             .background(Color.fsBackground)
             .safeAreaInset(edge: .bottom) {
@@ -132,6 +133,7 @@ struct PrepSheet: View {
                 .buttonStyle(PrimaryButtonStyle())
                 .disabled(mustTick && ticked.count < subject.checklist.count)
                 .padding(.horizontal, 20).padding(.vertical, 10)
+                .readableWidth()
                 .background(.bar)
             }
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } } }

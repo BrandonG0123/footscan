@@ -219,7 +219,7 @@ private struct StudioWebView: UIViewRepresentable {
         func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
             parent.loading = false
             parent.failure = "Couldn't reach the studio at \(StudioConnection.describe(parent.link.url)). Check Footscan is running "
-                + "on the studio computer and this phone can reach it (same Wi-Fi, or Tailscale on); if its address changed, reconnect with its code."
+                + "on the studio computer and this \(DeviceKind.current.noun) can reach it (same Wi-Fi, or Tailscale on); if its address changed, reconnect with its code."
         }
     }
 }

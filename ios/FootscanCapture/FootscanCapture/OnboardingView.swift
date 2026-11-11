@@ -19,13 +19,14 @@ struct OnboardingView: View {
         ("This is not a medical device.", "It's homemade. A doctor didn't prescribe it, and it doesn't treat any illness or injury."),
         ("Before sport, a clinician checks it.", "A foot doctor (podiatrist), physical therapist, sports doctor or athletic trainer looks at it first. The wrong shape under a foot can hurt knees, hips or back."),
         ("I'll wear it a little at a time.", "One hour on day one, a bit more each day for two weeks. If anything starts to hurt, I stop."),
-        ("Scans I send are kept.", "Scans stay on this phone until I send them; the studio keeps the ones I send, so an insole can be made."),
+        ("Scans I send are kept.", "Scans stay on this \(DeviceKind.current.noun) until I send them; the studio keeps the ones I send, so an insole can be made."),
     ]
 
     var body: some View {
         VStack(spacing: 0) {
             progress
                 .padding(.horizontal, 24).padding(.top, 12)
+                .readableWidth()
             ZStack {
                 content(page)
                     .id(page)
@@ -40,6 +41,7 @@ struct OnboardingView: View {
             })
             controls
                 .padding(.horizontal, 24).padding(.bottom, 16)
+                .readableWidth()
         }
         .background(Color.fsBackground.ignoresSafeArea())
         .sensoryFeedback(.selection, trigger: page)
@@ -73,6 +75,7 @@ struct OnboardingView: View {
                 }
             }
             .padding(.horizontal, 24).padding(.vertical, 20)
+            .readableWidth()
         }
         .scrollBounceBehavior(.basedOnSize)
     }
@@ -80,12 +83,13 @@ struct OnboardingView: View {
     private var welcome: some View {
         VStack(alignment: .leading, spacing: 16) {
             OrbitScene()
+                .frame(maxWidth: 520) // on an iPad, small enough that the words below stay on screen
                 .frame(maxWidth: .infinity)
                 .padding(.horizontal, 8)
             Text("Scan it.\nMeasure it.")
                 .font(.system(size: 40, weight: .bold, design: .rounded))
                 .foregroundStyle(Color.fsInk)
-            Text("Footscan turns a walk round your foot with your iPhone into a 3D model in real millimetres. Try it: drag the phone round the foot above.")
+            Text("Footscan turns a walk round your foot with your \(DeviceKind.current.model) into a 3D model in real millimetres. Try it: drag the phone in the picture round the foot.")
                 .font(.body).foregroundStyle(Color.fsMuted)
             SafetyStrip()
         }
@@ -131,16 +135,16 @@ struct OnboardingView: View {
 
     private var howTo: some View {
         VStack(alignment: .leading, spacing: 14) {
-            header("Three things make a good scan", "The phone does the measuring. Your part is easy.", symbol: "sparkles")
+            header("Three things make a good scan", "The \(DeviceKind.current.noun) does the measuring. Your part is easy.", symbol: "sparkles")
             tip("sun.max.fill", "Bright, even light", "No harsh shadows. Matte things scan best; shiny or plain white ones come out patchy.", 0)
             tip("arrow.trianglehead.2.clockwise.rotate.90", "Walk all the way round", "Slowly, keeping it in the middle of the screen. Then a lap higher up, looking down. 2 or 3 laps in all.", 1)
-            tip("figure.stand", "Keep it still", "For a foot: sit, foot bare and flat on the mat, and let someone else hold the phone.", 2)
+            tip("figure.stand", "Keep it still", "For a foot: sit, foot bare and flat on the mat, and let someone else hold the \(DeviceKind.current.noun).", 2)
         }
     }
 
     private var cameraPage: some View {
         VStack(alignment: .leading, spacing: 16) {
-            header("The camera", "Scanning uses the camera (and, on iPhones that have one, the LiDAR sensor next to it). Nothing leaves this phone unless you send it.", symbol: "camera.aperture")
+            header("The camera", "Scanning uses the camera (and, where it has one, the LiDAR sensor next to it). Nothing leaves this \(DeviceKind.current.noun) unless you send it.", symbol: "camera.aperture")
             HStack(spacing: 14) {
                 Image(systemName: cameraSymbol)
                     .font(.system(size: 30, weight: .semibold))

@@ -369,7 +369,7 @@ struct StudioClient {
             case .refused(let why): "The studio said no: \(why)"
             case .incomplete(let why, _): "Scan again: the studio didn't keep this scan. \(why.joined(separator: " "))"
             case .unreachable(let misses, let pinned): Self.explain(misses, pinned: pinned)
-            case .dropped(let host): "The connection to the studio at \(host) dropped partway through sending. Try again; the scan is still on this phone."
+            case .dropped(let host): "The connection to the studio at \(host) dropped partway through sending. Try again; the scan is still on this \(DeviceKind.current.noun)."
             }
         }
         /// Worth sending again once the studio is back (waiting scans go then).
@@ -389,7 +389,8 @@ struct StudioClient {
 
         /// What each address needs, in plain words: away from home the home-network address can't answer,
         /// the Tailscale one needs Tailscale on, and a different certificate means a different server.
-        static func explain(_ misses: [Missed], pinned: Bool) -> String {
+        /// `device`: whose connection it is, for the words ("this iPad" on an iPad).
+        static func explain(_ misses: [Missed], pinned: Bool, device: DeviceKind = .current) -> String {
             guard !misses.isEmpty else { // no address was tried: still say something to do
                 return "The studio isn't answering. Check Footscan is running on the studio computer, then show its connect code and scan it again."
             }
@@ -400,19 +401,19 @@ struct StudioClient {
                 case (.wrongCertificate, .homeNetwork) where pinned:
                     // another Wi-Fi (a café's, a friend's) often uses the same private addresses: something
                     // else there answers at the studio's home address
-                    lines.append("Something else answered at \(host), the studio's \(StudioAddressKind.homeNetwork.label!) address: this phone is probably on another Wi-Fi that uses the same addresses. The studio only answers there on the same Wi-Fi as the studio computer. If this phone is on that Wi-Fi, the studio was set up again: show its connect code and scan it again.")
+                    lines.append("Something else answered at \(host), the studio's \(StudioAddressKind.homeNetwork.label!) address: this \(device.noun) is probably on another Wi-Fi that uses the same addresses. The studio only answers there on the same Wi-Fi as the studio computer. If this \(device.noun) is on that Wi-Fi, the studio was set up again: show its connect code and scan it again.")
                 case (.wrongCertificate, _):
                     lines.append(pinned
-                        ? "Something answered at \(host), but it isn't the studio this phone connected to (its certificate is different). If the studio was set up again, show its connect code and scan it again."
-                        : "\(host) answered, but its certificate isn't one this phone trusts.")
+                        ? "Something answered at \(host), but it isn't the studio this \(device.noun) connected to (its certificate is different). If the studio was set up again, show its connect code and scan it again."
+                        : "\(host) answered, but its certificate isn't one this \(device.noun) trusts.")
                 case (_, .homeNetwork):
-                    lines.append("\(host) is the studio's \(StudioAddressKind.homeNetwork.label!) address: it only answers while this phone is on the same Wi-Fi as the studio computer.")
+                    lines.append("\(host) is the studio's \(StudioAddressKind.homeNetwork.label!) address: it only answers while this \(device.noun) is on the same Wi-Fi as the studio computer.")
                 case (.noRoute, .tailscale):
-                    lines.append("\(host) is the studio's \(StudioAddressKind.tailscale.label!) address, but this phone has no connection to reach it right now.")
+                    lines.append("\(host) is the studio's \(StudioAddressKind.tailscale.label!) address, but this \(device.noun) has no connection to reach it right now.")
                 case (_, .tailscale):
-                    lines.append("\(host) is the studio's \(StudioAddressKind.tailscale.label!) address: it answers from anywhere while Tailscale is on, on this phone and on the studio computer.")
+                    lines.append("\(host) is the studio's \(StudioAddressKind.tailscale.label!) address: it answers from anywhere while Tailscale is on, on this \(device.noun) and on the studio computer.")
                 case (.noRoute, .other):
-                    lines.append("This phone has no connection to reach \(host) right now.")
+                    lines.append("This \(device.noun) has no connection to reach \(host) right now.")
                 case (_, .other):
                     lines.append("Nothing answered at \(host).")
                 }
@@ -422,13 +423,13 @@ struct StudioClient {
                 // the phone's own connection: every address fails this way abroad with Data Roaming off, in
                 // Airplane Mode, or with Mobile Data switched off for this app. (Only the home address failing
                 // so may be Local Network access, below.)
-                lines.append("Check this phone's own connection: Airplane Mode off, Wi-Fi or mobile data on, Data Roaming on if you're abroad, and mobile data allowed for Footscan (Settings > Cellular).")
+                lines.append("Check this \(device.noun)'s own connection: Airplane Mode off, Wi-Fi or mobile data on, Data Roaming on if you're abroad, and mobile data allowed for Footscan (Settings > Cellular).")
             }
             // Local Network access stops only the home address. When an address elsewhere had no route either,
             // it's the phone's own connection, and asking about Local Network would send them the wrong way.
             let elsewhereNoRoute = misses.contains(where: { $0.miss == .noRoute && StudioAddressKind(host: StudioLink.host(of: $0.address)) != .homeNetwork })
             if !elsewhereNoRoute && misses.contains(where: { $0.miss == .noRoute && StudioAddressKind(host: StudioLink.host(of: $0.address)) == .homeNetwork }) {
-                lines.append("If the phone just asked to find devices on your local network, tap Allow and test again (Settings > Privacy & Security > Local Network).")
+                lines.append("If the \(device.noun) just asked to find devices on your local network, tap Allow and test again (Settings > Privacy & Security > Local Network).")
             }
             if misses.contains(where: { $0.miss == .noAnswer && StudioAddressKind(host: StudioLink.host(of: $0.address)) == .homeNetwork }) {
                 // routers hand out new addresses: the code the phone scanned may name the studio's old one
@@ -580,8 +581,8 @@ struct StudioClient {
         var setup: [String: Any] = [
             "condition": condition, "session": "LIDAR", "method": "imported_mesh",
             "device": "\(record.device), iOS \(record.systemVersion)",
-            "notes": "Footscan iPhone app \(record.appVersion), Apple Object Capture, \(record.shotsTaken ?? 0) photos, "
-                + "\(record.scanPasses ?? 1) lap(s), model built on the phone",
+            "notes": "Footscan \(DeviceKind.current.model) app \(record.appVersion), Apple Object Capture, \(record.shotsTaken ?? 0) photos, "
+                + "\(record.scanPasses ?? 1) lap(s), model built on the \(DeviceKind.current.noun)",
         ]
         if let foot { setup["foot"] = foot }
         if let kind = record.subject.scanKind { setup["scan_kind"] = kind }
