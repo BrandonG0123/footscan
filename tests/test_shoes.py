@@ -365,3 +365,82 @@ def test_the_sheet_says_a_lengthened_outline_was_lengthened(tmp_path):
     sheet = (tmp_path / "out" / "right-insole-summary.html").read_text(encoding="utf-8")
     assert "lengthened to the shoe&#x27;s 280 mm" in sheet or "lengthened to the shoe's 280 mm" in sheet
     assert "no shoe chosen" not in sheet
+
+
+def test_the_sheet_says_nothing_was_added_when_the_foot_already_reaches_the_shoes_length(tmp_path):
+    from footscan import cli
+
+    foot = _foot_file(tmp_path)
+    assert cli.main(["insole", str(foot), "--foot", "right", "-o", str(tmp_path / "own"),
+                     "--shoes", str(tmp_path / "shoes"), "--foot-outline"]) == 0
+    import json
+
+    own = json.loads((tmp_path / "own" / "right-insole.json").read_text(encoding="utf-8"))["length_mm"]
+    # a shoe length within the outline's 0.5 mm leeway: nothing is added, and the sheet must not say it was
+    assert cli.main(["insole", str(foot), "--foot", "right", "-o", str(tmp_path / "out"),
+                     "--shoes", str(tmp_path / "shoes"), "--length", f"{own - 0.3:.1f}"]) == 0
+    sheet = (tmp_path / "out" / "right-insole-summary.html").read_text(encoding="utf-8")
+    assert "nothing added" in sheet and "its front lengthened" not in sheet
+
+
+@pytest.mark.parametrize("bad", ["NaN", "Infinity", "true"])
+def test_a_saved_shoe_with_a_coordinate_that_isnt_a_length_cant_be_read(tmp_path, bad):
+    import json
+
+    from footscan import shoes
+
+    outline, read = _shoe_outline()
+    s = shoes.save(tmp_path, outline, "Test Trainer", "9.5", "synthetic", read)
+    path = tmp_path / f"{s['id']}.json"
+    text = json.dumps(dict(json.loads(path.read_text(encoding="utf-8")), outline="RING"))
+    ring = s["outline"][:-1] + [[bad, 1]]
+    path.write_text(text.replace('"RING"', json.dumps(ring).replace(f'"{bad}"', bad)), encoding="utf-8")
+    with pytest.raises(shoes.ShoeLibraryError, match="can't be read"):
+        shoes.load(tmp_path, s["id"])
+
+
+def test_a_saved_shoe_whose_outline_crosses_itself_cant_be_read(tmp_path):
+    import json
+
+    from footscan import shoes
+
+    outline, read = _shoe_outline()
+    s = shoes.save(tmp_path, outline, "Test Trainer", "9.5", "synthetic", read)
+    path = tmp_path / f"{s['id']}.json"
+    bowtie = [[0, 0], [270, 90], [270, 0], [0, 90]]
+    path.write_text(json.dumps(dict(json.loads(path.read_text(encoding="utf-8")), outline=bowtie)), encoding="utf-8")
+    with pytest.raises(shoes.ShoeLibraryError, match="can't be read"):
+        shoes.load(tmp_path, s["id"])
+
+
+def test_a_saved_shoes_hand_is_the_one_fitting_reads_from_its_kept_outline(tmp_path):
+    import shapely
+
+    from footscan import shoes
+    from footscan.recon import shoe as shoe_mod
+
+    outline, read = _shoe_outline()
+    s = shoes.save(tmp_path, outline, "Test Trainer", "9.5", "synthetic", read)
+    kept = shapely.Polygon(shoes.outline_param(shoes.load(tmp_path, s["id"])))
+    assert s["shoe"] == shoe_mod.handedness(kept)[0]
+
+
+def test_saving_a_shoe_and_choosing_the_default_wait_out_a_reader_on_windows(tmp_path, monkeypatch):
+    import os
+
+    from footscan import atomic, shoes
+
+    outline, read = _shoe_outline()
+    calls = {"n": 0}
+    real = os.replace
+
+    def busy_once(a, b):  # Windows refuses the first swap while a reader has the old file open
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise PermissionError("Access is denied")
+        return real(a, b)
+
+    monkeypatch.setattr(atomic, "RETRIES", True)
+    monkeypatch.setattr(atomic.os, "replace", busy_once)
+    s = shoes.save(tmp_path, outline, "Test Trainer", "9.5", "synthetic", read, default=True)
+    assert shoes.default_id(tmp_path, strict=True) == s["id"] and calls["n"] >= 3
