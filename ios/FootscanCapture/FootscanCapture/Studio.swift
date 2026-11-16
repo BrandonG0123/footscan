@@ -234,6 +234,14 @@ enum StudioStore {
         return (link, key)
     }
 
+    /// Is `other` the studio `current` already is? With a pinned certificate, the certificate decides (the
+    /// same computer, whatever addresses its code lists today); without one, its address does. A code for the
+    /// same studio (its key made again, a new Wi-Fi address) needs no question before it replaces the saved one.
+    static func isSameStudio(_ current: StudioLink, _ other: StudioLink) -> Bool {
+        if let pin = current.fingerprint { return other.fingerprint == pin }
+        return other.fingerprint == nil && sameAddress(current.url, other.url)
+    }
+
     /// Same host (any case) and port: the same address of the studio, however the URL is written.
     static func sameAddress(_ a: URL, _ b: URL) -> Bool {
         a.host()?.lowercased() == b.host()?.lowercased() && (a.port ?? 443) == (b.port ?? 443)

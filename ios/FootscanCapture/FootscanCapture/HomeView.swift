@@ -25,10 +25,11 @@ struct RootView: View {
         }
         .animation(.smooth(duration: 0.5), value: settings.onboarded)
         // The studio's code, read by the iPhone's own Camera app, opens here,
-        // whatever is on screen (even the intro, on a brand-new install).
+        // whatever is on screen (even the intro, on a brand-new install). A code for a different studio from
+        // the saved one asks before replacing it (any web page or message can carry such a link).
         .onOpenURL { url in
             showStudio = true
-            Task { await studio.connect(url.absoluteString) }
+            Task { await studio.open(url.absoluteString) }
         }
         .sheet(isPresented: $showStudio) { StudioView() }
         // Scans that couldn't go before go now: when a studio is connected

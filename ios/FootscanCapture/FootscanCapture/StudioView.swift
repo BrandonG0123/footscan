@@ -11,6 +11,10 @@ final class StudioConnection {
     /// Goes up by one on every successful connect, including reconnecting to
     /// the same studio, so waiting scans can be sent then.
     private(set) var connections = 0
+    /// A connect code that came from outside the app (the Camera app, a link in Safari or Messages) naming a
+    /// different studio from the one saved. It waits for the person to say yes: connecting replaces the saved
+    /// studio, and with "send automatically" on, every scan not yet sent would go to the new one at once.
+    var pendingCode: String?
 
     init() {
         StudioStore.removeLeftoverKey() // a key an earlier install left behind (docs/PRIVACY.md)
@@ -20,6 +24,18 @@ final class StudioConnection {
     var client: StudioClient? {
         guard let link, let key else { return nil }
         return StudioClient(link: link, key: key)
+    }
+
+    /// A code opened from outside the app: connect straight away unless it would replace a different saved
+    /// studio, which is asked first (``pendingCode``). Codes scanned with the app's own button connect at
+    /// once: tapping "Connect to a different studio" already said yes.
+    func open(_ text: String) async {
+        if let current = link, let parsed = StudioStore.parse(text), !StudioStore.isSameStudio(current, parsed.link) {
+            pendingCode = text
+            status = nil
+            return
+        }
+        _ = await connect(text)
     }
 
     /// Try a connect code; save it only if the studio answers to it (at any of its addresses).
@@ -153,6 +169,19 @@ struct StudioView: View {
                     Task { await studio.connect(text) }
                 }
                 .ignoresSafeArea()
+            }
+            .confirmationDialog("Switch to a different studio?", isPresented: Binding(
+                get: { studio.pendingCode != nil }, set: { if !$0 { studio.pendingCode = nil } }),
+                                titleVisibility: .visible) {
+                Button("Switch studio") {
+                    if let code = studio.pendingCode { Task { await studio.connect(code) } }
+                    studio.pendingCode = nil
+                }
+                Button("Keep the studio I have", role: .cancel) {
+                    studio.pendingCode = nil
+                }
+            } message: {
+                Text("A link opened Footscan with the code of another studio. Switch only if it's your own studio's code: scans not sent yet will go to it.")
             }
             .confirmationDialog("Disconnect from this studio?", isPresented: $confirmDisconnect, titleVisibility: .visible) {
                 Button("Disconnect", role: .destructive) { studio.disconnect() }
