@@ -6,7 +6,8 @@
   "target_length_source": "size-chart insole length for US men's 9.5, not a ruler measurement of this shoe's insole",
   "length_tolerance_mm": 1.0,
   "pair_tolerance_mm": 1.0,
-  "tolerances_source": "a judgment, not measured: a file that misses the target by more than this was built without the shoe length or scaled",
+  "shoe_length_tolerance_mm": 5.0,
+  "tolerances_source": "a judgment, not measured: a file that misses the target by more than this was built without the shoe length or scaled; a shoe's outline more than shoe_length_tolerance_mm off its chart length was scanned at the wrong scale or is another size",
   "slicer": "Bambu Studio",
   "slicer_scale_percent": 100,
   "bed_mm": 256.0

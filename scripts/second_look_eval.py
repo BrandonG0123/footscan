@@ -208,7 +208,7 @@ def main() -> int:
         rows.append(row)
         print(f"{name:48s} faulty={faulty!s:5s} footscan={row['footscan_flagged']!s:5s}"
               + ("" if a.dry_run else f" claude={row['claude']['verdict']}"), flush=True)
-    (out / "results.json").write_text(json.dumps(rows, indent=2, default=str))
+    (out / "results.json").write_text(json.dumps(rows, indent=2, default=str), encoding="utf-8")
 
     def score(key):
         ok = [r for r in rows if key in r]

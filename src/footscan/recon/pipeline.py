@@ -68,14 +68,14 @@ def clear_outputs(out: Path) -> None:
 
 def write_json_atomic(path: Path, obj) -> None:
     """Write to a temporary file, then rename over the target: a reader sees the old or the new file, never half."""
-    tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
-    tmp.write_text(json.dumps(obj, indent=1, default=_json_default))
-    os.replace(tmp, path)
+    from .. import atomic
+
+    atomic.write_utf8(path, json.dumps(obj, indent=1, default=_json_default))  # retried while a reader has it open
 
 
 def frame_names(capture_dir: Path) -> tuple[list[str], dict]:
     meta_path = capture_dir / "capture.json"
-    meta = json.loads(meta_path.read_text()) if meta_path.exists() else {}
+    meta = json.loads(meta_path.read_text(encoding="utf-8")) if meta_path.exists() else {}
     frames = meta.get("frames")
     if frames:
         names = [f["file"] for f in frames if not f.get("excluded") and (capture_dir / f["file"]).exists()]
@@ -276,7 +276,7 @@ def reconstruct(capture_dir, *, calibration_object: bool = False, calipers: dict
             res["foot_mesh"].export(out / "mesh_foot.ply")
             res["plantar"].export(out / "plantar.ply")
             (out / "plantar.json").write_text(json.dumps(
-                dict(**res["summary"], outline_mm=res["outline"].round(2).tolist()), indent=1))
+                dict(**res["summary"], outline_mm=res["outline"].round(2).tolist()), indent=1), encoding="utf-8")
             report["plantar"] = {k: v for k, v in res["summary"].items() if k != "medial_profile"}
             report["warnings"].extend(res["summary"]["notes"])
         elif foot in ("left", "right"):
@@ -328,7 +328,7 @@ def recompute_accuracy(capture_dir, calipers: dict | None, log=print) -> dict:
 
     status("accuracy", "running")
     try:
-        report = json.loads((out / "report.json").read_text())
+        report = json.loads((out / "report.json").read_text(encoding="utf-8"))
         if report.get("error") or not (out / "mesh.ply").exists():
             raise RuntimeError("the last build didn't finish; rebuild the model first")
         acc = _accuracy(out, calipers, bool(report.get("synthetic")))
@@ -388,7 +388,8 @@ def in_clean_process(fn, *args):
         arg_file, res_file = Path(tmp) / "args.pkl", Path(tmp) / "result.pkl"
         arg_file.write_bytes(pickle.dumps((fn.__module__, fn.__name__, args)))
         proc = subprocess.run([sys.executable, "-m", "footscan.recon.pipeline", str(arg_file), str(res_file)],
-                              stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+                              stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+                              encoding="utf-8", errors="replace")  # native libraries print in any encoding
         if proc.returncode != 0 or not res_file.exists():
             tail = (proc.stdout or "")[-1500:]
             raise RuntimeError(f"the surface step stopped (exit {proc.returncode}):\n{tail}")

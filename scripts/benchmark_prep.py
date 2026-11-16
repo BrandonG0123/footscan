@@ -345,7 +345,7 @@ def main(argv=None) -> int:
         lines += [f"Cases: {len(results)}, failed: {len(results) - len(ok)}. Largest p95 error: {worst['p95']:.2f} mm "
                   f"({worst['kind']}, {worst['name']}, {worst['foot']}).", ""]
     Path(args.output).parent.mkdir(parents=True, exist_ok=True)
-    Path(args.output).write_text("\n".join(lines))
+    Path(args.output).write_text("\n".join(lines), encoding="utf-8")
     print(f"written: {args.output}")
     return 0 if len(ok) == len(results) else 1
 
