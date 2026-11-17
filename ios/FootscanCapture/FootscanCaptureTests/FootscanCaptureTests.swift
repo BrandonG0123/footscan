@@ -535,3 +535,30 @@ struct Ring {
         #expect(model.lit == [0, 11])
     }
 }
+
+@Suite("Connect codes from outside the app")
+struct OutsideCodes {
+    let pin = String(repeating: "ab", count: 32)
+    let other = String(repeating: "cd", count: 32)
+
+    @Test func aCodeWithAnotherCertificateIsAnotherStudio() throws {
+        let saved = try #require(StudioStore.parse("footscan-capture://connect?url=https://192.168.1.20:8765&key=k&fp=\(pin)"))
+        let stranger = try #require(StudioStore.parse("footscan-capture://connect?url=https://192.168.1.20:8765&key=k2&fp=\(other)"))
+        #expect(!StudioStore.isSameStudio(saved.link, stranger.link))
+    }
+
+    @Test func theSameStudioAtANewAddressOrWithANewKeyIsTheSameStudio() throws {
+        let saved = try #require(StudioStore.parse("footscan-capture://connect?url=https://192.168.1.20:8765&key=k&fp=\(pin)"))
+        let moved = try #require(StudioStore.parse(
+            "footscan-capture://connect?url=https://192.168.1.44:8765&key=new&fp=\(pin)&alt=https://100.113.53.83:8765"))
+        #expect(StudioStore.isSameStudio(saved.link, moved.link))
+    }
+
+    @Test func withoutAPinTheAddressDecides() {
+        let a = StudioLink(url: URL(string: "https://footscan.example.dev")!, fingerprint: nil)
+        let b = StudioLink(url: URL(string: "https://FOOTSCAN.example.dev:443/")!, fingerprint: nil)
+        let c = StudioLink(url: URL(string: "https://elsewhere.example.com")!, fingerprint: nil)
+        #expect(StudioStore.isSameStudio(a, b) && !StudioStore.isSameStudio(a, c))
+        #expect(!StudioStore.isSameStudio(a, StudioLink(url: a.url, fingerprint: pin)))
+    }
+}
