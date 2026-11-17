@@ -335,23 +335,42 @@ def never_local(handler) -> bool:
 
 
 class RateLimiter:
+    """New submissions per client per hour. Request threads share it, so it takes a lock."""
+
     def __init__(self, per_hour: int):
         self.per_hour = per_hour
         self.hits: dict[str, list[float]] = {}
+        self.lock = threading.Lock()
 
     def allow(self, client: str) -> bool:
         import time
 
-        now = time.monotonic()
-        if len(self.hits) > RATE_LIMIT_CLIENTS_KEPT:  # forget clients with nothing in the last hour
-            self.hits = {c: ts for c, ts in self.hits.items() if ts and now - ts[-1] < 3600}
-        recent = [t for t in self.hits.get(client, []) if now - t < 3600]
-        if len(recent) >= self.per_hour:
+        client = rate_key(client)
+        with self.lock:
+            now = time.monotonic()
+            if len(self.hits) > RATE_LIMIT_CLIENTS_KEPT:  # forget clients with nothing in the last hour
+                self.hits = {c: ts for c, ts in self.hits.items() if ts and now - ts[-1] < 3600}
+            recent = [t for t in self.hits.get(client, []) if now - t < 3600]
+            if len(recent) >= self.per_hour:
+                self.hits[client] = recent
+                return False
+            recent.append(now)
             self.hits[client] = recent
-            return False
-        recent.append(now)
-        self.hits[client] = recent
-        return True
+            return True
+
+
+def rate_key(client: str) -> str:
+    """Whom the rate limit counts: an IPv4 address as it is, an IPv6 address by its /64 (one home or phone
+    network is given a whole /64, and can take a new address from it for every request)."""
+    try:
+        ip = ipaddress.ip_address(client.strip("[]"))
+    except ValueError:
+        return client
+    if isinstance(ip, ipaddress.IPv6Address):
+        if ip.ipv4_mapped:
+            return str(ip.ipv4_mapped)
+        return str(ipaddress.ip_network(f"{ip}/64", strict=False))
+    return str(ip)
 
 
 # A customer's submission holds at most this much (photos): a real one is about 60 photos of under 1 MB per

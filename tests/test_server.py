@@ -2274,3 +2274,38 @@ def test_a_slow_request_doesnt_undo_another_scans_finishing(servers):
     s.close()
     scans = json.loads((data / "submissions" / sub["id"] / "submission.json").read_text())["scans"]
     assert [scans[k]["status"] for k in keys] == ["complete", "complete"]
+
+
+def test_rate_limit_counts_an_ipv6_client_by_its_slash_64():
+    from footscan.server import RateLimiter
+
+    limiter = RateLimiter(per_hour=2)
+    assert limiter.allow("2001:db8:1:2::1") and limiter.allow("2001:db8:1:2::abcd")
+    assert not limiter.allow("2001:db8:1:2:ffff::9")      # a new address in the same /64
+    assert limiter.allow("2001:db8:1:3::1")                # another network
+    assert limiter.allow("::ffff:198.51.100.7") and limiter.allow("198.51.100.7")
+    assert not limiter.allow("198.51.100.7")               # the same IPv4 client, written either way
+
+
+def test_rate_limiter_is_safe_to_use_from_many_threads_while_it_forgets(monkeypatch):
+    import threading
+
+    from footscan import server
+
+    monkeypatch.setattr(server, "RATE_LIMIT_CLIENTS_KEPT", 5)
+    limiter = server.RateLimiter(per_hour=1000)
+    errors = []
+
+    def hammer(k):
+        try:
+            for i in range(3000):
+                limiter.allow(f"10.{k}.{i // 250}.{i % 250}")
+        except Exception as e:  # noqa: BLE001
+            errors.append(e)
+
+    threads = [threading.Thread(target=hammer, args=(k,)) for k in range(8)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert errors == []
