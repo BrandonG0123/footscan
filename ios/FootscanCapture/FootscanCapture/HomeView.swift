@@ -155,7 +155,7 @@ struct HomeView: View {
             case 0:  // pick the sole scan
                 withAnimation(.spring(duration: 0.35, bounce: 0.35)) { subjectRaw = subjects.first(where: \.needs3DCapture)?.rawValue ?? subjectRaw }
             case 1:  // open the scan that's waiting to go, where Send is
-                if let waiting = soleScans.first(where: { $0.record?.studioCaptureID == nil && $0.record?.retake == nil }) { path.append(waiting) }
+                if let waiting = soleScans.first(where: { $0.record.map { $0.studioCaptureID == nil && $0.retake == nil && !$0.heldByPhoneCheck } ?? false }) { path.append(waiting) }
             default:
                 break
             }
@@ -172,8 +172,8 @@ struct HomeView: View {
     private var insoleStep: Int {
         let soles = soleScans
         if soles.contains(where: { $0.record?.studioCaptureID != nil }) { return 2 }
-        // only scans the studio refused (part of the foot missing): back to scanning
-        return soles.allSatisfy { $0.record?.retake != nil } ? 0 : 1
+        // only scans the studio refused (part of the foot missing), or the phone's check held back: back to scanning
+        return soles.allSatisfy { $0.record?.retake != nil || $0.record?.heldByPhoneCheck == true } ? 0 : 1
     }
 
     private var newScan: some View {
@@ -285,7 +285,7 @@ struct HomeView: View {
         for s in library.scans where library.work[s.folder] == nil {
             guard let r = s.record else { continue }
             if let p = library.problems[s.folder] { return (s, "\(r.subject.label) needs a look", p) }
-            if r.retake != nil, !library.scans.contains(where: { newer in
+            if r.retake != nil || r.heldByPhoneCheck, !library.scans.contains(where: { newer in
                 newer.record.map { $0.subject == r.subject && $0.created > r.created } ?? false
             }) {
                 // what went wrong, in short; the steps to fix it are on the scan's page, with Scan again
@@ -490,11 +490,12 @@ struct ScanStatus: View {
             switch library.work[scan.folder] {
             case .building(let f): Chip(text: "Building model \(Int(f * 100))%", symbol: "gearshape.2.fill")
             case .converting: Chip(text: "Finishing model", symbol: "gearshape.2.fill")
+            case .checking: Chip(text: "Checking model", symbol: "checklist")
             case .sending: Chip(text: "Sending", symbol: "paperplane.fill")
             case nil:
                 if library.problems[scan.folder] != nil {
                     Chip(text: "Needs a look", symbol: "exclamationmark.triangle.fill", tint: .fsWarn, soft: .fsWarnSoft)
-                } else if rec?.retake != nil {
+                } else if rec?.retake != nil || rec?.heldByPhoneCheck == true {
                     Chip(text: "Scan again", symbol: "exclamationmark.triangle.fill", tint: .fsWarn, soft: .fsWarnSoft)
                 } else if rec?.studioCaptureID != nil {
                     Chip(text: "Sent to studio", symbol: "checkmark.circle.fill", tint: .fsOK, soft: .fsOKSoft)

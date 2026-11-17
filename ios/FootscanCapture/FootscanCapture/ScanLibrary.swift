@@ -1,8 +1,10 @@
 // Every scan on the phone, and what's happening to each one.
 //
 // One place runs the steps after a capture, so they carry on whichever
-// screen is showing: build the 3D model, make a thumbnail, and (with a
-// studio connected and "send automatically" on) send it. Home cards and the
+// screen is showing: build the 3D model, make a thumbnail, check the model
+// (ScanCheck: a scan the phone can already tell is no good says "scan
+// again" there and then), and (with a studio connected and "send
+// automatically" on) send it. Home cards and the
 // scan's own page both read the progress from here.
 import Foundation
 import SwiftUI
@@ -12,7 +14,7 @@ import UIKit
 @Observable
 final class ScanLibrary {
     enum Work: Equatable {
-        case building(Double), converting, sending
+        case building(Double), converting, checking, sending
     }
 
     private(set) var scans: [Scan] = []
@@ -55,12 +57,19 @@ final class ScanLibrary {
 
     // MARK: after a capture
 
-    /// Build the model, then send it if that's what the settings say.
+    /// Build the model, check it, then send it if that's what the settings say and the check found nothing
+    /// that means scanning again.
     func finish(_ scan: Scan, settings: AppSettings, studio: StudioConnection) async {
         if !scan.hasModel { await build(scan) } else if !scan.hasOBJ { await convert(scan) }
-        guard scan.hasOBJ, settings.autoSend, studio.client != nil, let rec = scan.record,
-              rec.studioCaptureID == nil, rec.retake == nil, !rec.subject.needsScale || rec.loadKg != nil else { return }
+        await check(scan)
+        guard scan.hasOBJ, settings.autoSend, studio.client != nil, let rec = scan.record, readyToSend(rec) else { return }
         await send(scan, studio: studio)
+    }
+
+    /// Not sent yet, not refused by the studio, not held back by the phone's check, and with its scale reading
+    /// if it needs one.
+    private func readyToSend(_ rec: ScanRecord) -> Bool {
+        rec.studioCaptureID == nil && rec.retake == nil && !rec.heldByPhoneCheck && (!rec.subject.needsScale || rec.loadKg != nil)
     }
 
     /// With "send automatically" on and a studio connected: send every
@@ -74,8 +83,10 @@ final class ScanLibrary {
         for scan in scans.reversed() {
             // checked before every upload: switching "send automatically" off stops the queue
             guard settings.autoSend else { break }
-            guard studio.client != nil, work[scan.folder] == nil, scan.hasOBJ, let rec = scan.record,
-                  rec.studioCaptureID == nil, rec.retake == nil, !rec.subject.needsScale || rec.loadKg != nil else { continue }
+            guard studio.client != nil, work[scan.folder] == nil, scan.hasOBJ else { continue }
+            // a scan made before the phone checked models is checked before it goes
+            await check(scan)
+            guard let rec = scan.record, readyToSend(rec) else { continue }
             await send(scan, studio: studio)
             // the studio isn't answering: don't try every other scan against it too
             if unreachable.contains(scan.folder) { break }
@@ -129,9 +140,44 @@ final class ScanLibrary {
         reload()
     }
 
+    /// Look at the model the phone built (ScanCheck), once per version of the check, and keep what it found in
+    /// the scan's record. Only scans not sent yet, of the kinds the phone checks.
+    func check(_ scan: Scan) async {
+        guard work[scan.folder] == nil, scan.hasOBJ, let rec = scan.record, rec.studioCaptureID == nil, rec.retake == nil,
+              let kind = rec.subject.checkKind, rec.phoneCheck?.version != ScanCheck.version else { return }
+        work[scan.folder] = .checking
+        let obj = scan.obj
+        let found = await Task.detached(priority: .userInitiated) { () -> PhoneCheck in
+            do {
+                let report = try ScanCheck.run(obj: obj, kind: kind)
+                return PhoneCheck(version: ScanCheck.version, findings: report.findings, measures: report.measures)
+            } catch {
+                return PhoneCheck(version: ScanCheck.version, findings: [], measures: [:], error: error.localizedDescription)
+            }
+        }.value
+        work[scan.folder] = nil
+        // read again: the record may have changed while the check ran (a scale reading typed in)
+        if var latest = scan.record {
+            latest.phoneCheck = found
+            scan.save(latest)
+            if latest.heldByPhoneCheck { UINotificationFeedbackGenerator().notificationOccurred(.error) }
+        }
+        reload()
+    }
+
+    /// The phone's check said scan again, and the person chose to send it anyway: the studio still checks it.
+    func sendAnyway(_ scan: Scan, studio: StudioConnection, loadKg: Double? = nil) async {
+        guard var rec = scan.record, rec.phoneCheck != nil, work[scan.folder] == nil else { return }
+        rec.phoneCheck?.sentAnyway = Date()
+        scan.save(rec)
+        await send(scan, studio: studio, loadKg: loadKg)
+    }
+
     func send(_ scan: Scan, studio: StudioConnection, loadKg: Double? = nil) async {
-        // a scan the studio found incomplete would only be refused again
-        guard let client = studio.client, var record = scan.record, record.retake == nil, work[scan.folder] == nil else { return }
+        // a scan the studio found incomplete would only be refused again; one the phone's check held back goes
+        // only through Send anyway
+        guard let client = studio.client, var record = scan.record, record.retake == nil, !record.heldByPhoneCheck,
+              work[scan.folder] == nil else { return }
         if let loadKg { record.loadKg = loadKg; scan.save(record) }
         problems[scan.folder] = nil
         unreachable.remove(scan.folder)
