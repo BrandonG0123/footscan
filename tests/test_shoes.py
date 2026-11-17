@@ -474,3 +474,13 @@ def test_two_different_shoes_with_one_id_saved_at_the_same_moment_never_replace_
     for t in threads:
         t.join()
     assert sum(isinstance(r, shoes.ShoeLibraryError) for r in results) == 1  # the second is refused, not lost
+
+
+def test_a_shoe_whose_outline_cant_be_read_back_is_never_saved(tmp_path):
+    import shapely
+
+    from footscan import shoes
+
+    with pytest.raises(shoes.ShoeLibraryError, match="unusable"):
+        shoes.save(tmp_path, shapely.box(0, 0, 0.8, 0.8), "Test Trainer", "9.5", "synthetic", {})
+    assert list(tmp_path.glob("*.json")) == []

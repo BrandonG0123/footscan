@@ -1040,3 +1040,13 @@ def test_a_lengthened_insoles_preview_lifts_the_sole_by_the_base_the_insole_was_
         assert band.any() and obands.any()
         lift = sole[band, 2].min() - orig[obands, 2][orig[obands, 2] < 35].min()
         assert lift == pytest.approx(built_base(x), abs=0.05), share
+
+
+def test_a_shoe_a_few_hundredths_of_a_mm_longer_adds_nothing_so_the_sheet_and_warnings_agree():
+    import shapely
+
+    outline = shapely.box(0, 0, 250, 90)
+    same, added = insole._to_length(outline, 175.0, 250.03)
+    assert added == 0.0 and same.equals(outline)
+    _, added = insole._to_length(outline, 175.0, 251.0)
+    assert added == pytest.approx(1.0)

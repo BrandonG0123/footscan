@@ -214,7 +214,7 @@ def _to_length(outline, x_from: float, target: float):
     now = ox1 - ox0
     if target < now - 0.5:
         raise InsoleError(f"the shoe's insole ({target:.0f} mm) is shorter than this foot's outline ({now:.0f} mm)")
-    if target <= now:
+    if target - now < 0.05:  # nothing worth adding (and nothing the sheet's and warning's 0.1 mm could show)
         return outline, 0.0
     k = (target - (x_from - ox0)) / (ox1 - x_from)
 

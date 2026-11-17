@@ -94,6 +94,9 @@ def save(folder: Path, outline, name: str, size: str, source: str, read: dict, d
     import shapely
 
     ring = shoe_mod.as_param(outline)
+    if not _usable_ring(ring):  # what load() checks: never keep a shoe that can't be read back
+        raise ShoeLibraryError("the shoe's outline came out unusable (it crosses itself or has no area): "
+                               "scan its insole again, lying flat")
     # which shoe, read from the ring as it is kept, not the scan's finer outline: fit_to_foot reads the kept ring
     # again when it decides whether to mirror it, and near HAND_MIN_MM the two could disagree
     hand, _ = shoe_mod.handedness(shapely.Polygon(ring))
