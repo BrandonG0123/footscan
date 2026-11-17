@@ -2167,3 +2167,110 @@ def test_rate_limiter_forgets_clients_with_nothing_in_the_last_hour(monkeypatch)
     now[0] += 3601
     assert limiter.allow("e") and set(limiter.hits) == {"e"}
     assert not limiter.allow("e")  # the limit itself still holds
+
+
+# ---- uploads that end early, a full disk, the log, and two requests at once (Codex review, 2026-11-17) -----
+
+def _raw_request(url: str, head: str, body: bytes, close_early: bool = False):
+    """Send a request by hand (for a body shorter than it says) -> the answer's status code."""
+    import socket
+    from urllib.parse import urlsplit
+
+    u = urlsplit(url)
+    s = socket.create_connection((u.hostname, u.port))
+    s.sendall(head.encode() + body)
+    if close_early:
+        s.shutdown(socket.SHUT_WR)
+    answer = s.recv(65536).decode("latin-1")
+    s.close()
+    return int(answer.split()[1])
+
+
+def _new_scan(phone):
+    sub = body(call(f"{phone}/api/submissions", "POST", PERSON))
+    tok = {"X-Upload-Token": sub["upload_token"]}
+    key = sub["plan"][0]["key"]
+    base = f"{phone}/api/submissions/{sub['id']}/scans/{key}"
+    assert call(f"{base}/start", "POST", {}, tok)[0] == 200
+    return sub, tok, key, base
+
+
+def test_a_photo_upload_that_ends_early_is_refused_and_keeps_the_photo_that_was_there(servers):
+    _, phone, data = servers
+    sub, tok, key, base = _new_scan(phone)
+    good = JPEG + b"good"
+    assert call(f"{base}/frames/1", "PUT", good, {**tok, "Content-Type": "image/jpeg"})[0] == 200
+    path = urlsplit_path(f"{base}/frames/1")
+    head = (f"PUT {path} HTTP/1.1\r\nHost: x\r\nX-Upload-Token: {sub['upload_token']}\r\n"
+            f"Content-Type: image/jpeg\r\nContent-Length: 1000\r\n\r\n")
+    assert _raw_request(base, head, JPEG[:10], close_early=True) == 400
+    frame = data / "submissions" / sub["id"] / key / "frame_0001.jpg"
+    assert frame.read_bytes() == good
+    assert [f.name for f in frame.parent.iterdir()] == ["frame_0001.jpg"]  # no part-file left behind
+
+
+def urlsplit_path(url):
+    from urllib.parse import urlsplit
+
+    return urlsplit(url).path
+
+
+def test_a_submission_takes_no_more_photos_than_its_quota(servers, monkeypatch):
+    from footscan import server
+
+    _, phone, data = servers
+    sub, tok, key, base = _new_scan(phone)
+    room = server.folder_bytes(data / "submissions" / sub["id"]) + 2 * len(JPEG)  # its submission.json + 2 photos
+    monkeypatch.setattr(server, "MAX_SUBMISSION_BYTES", room)
+    for n in (1, 2):
+        assert call(f"{base}/frames/{n}", "PUT", JPEG, {**tok, "Content-Type": "image/jpeg"})[0] == 200
+    status, raw, _ = call(f"{base}/frames/3", "PUT", JPEG, {**tok, "Content-Type": "image/jpeg"})
+    assert status == 400 and b"as many photos" in raw
+
+
+def test_no_photo_is_kept_when_the_disk_is_nearly_full(servers, monkeypatch):
+    from footscan import server
+
+    _, phone, data = servers
+    sub, tok, key, base = _new_scan(phone)
+    monkeypatch.setattr(server, "MIN_FREE_BYTES", 10 ** 18)
+    assert call(f"{base}/frames/1", "PUT", JPEG, {**tok, "Content-Type": "image/jpeg"})[0] == 507
+    assert not (data / "submissions" / sub["id"] / key / "frame_0001.jpg").exists()
+
+
+def test_the_studio_key_and_upload_tokens_in_a_url_never_reach_the_log(servers, capfd):
+    op, _, _ = servers
+    call(f"{op}/api/studio?key={KEY}")
+    call(f"{op}/api/submissions/sub-x/rescan?t=secret-token")
+    err = capfd.readouterr().err
+    assert "/api/studio?key=…" in err and KEY not in err and "secret-token" not in err
+
+
+def test_a_slow_request_doesnt_undo_another_scans_finishing(servers):
+    """Two scans of one submission finished at once, the first one's body arriving slowly: both stay
+    finished (the slow one reads submission.json only once its body is in, under the submission's lock)."""
+    import socket
+    import time
+    from urllib.parse import urlsplit
+
+    _, phone, data = servers
+    sub = body(call(f"{phone}/api/submissions", "POST", PERSON))
+    tok = {"X-Upload-Token": sub["upload_token"]}
+    keys = [p["key"] for p in sub["plan"]][:2]
+    for key in keys:
+        base = f"{phone}/api/submissions/{sub['id']}/scans/{key}"
+        assert call(f"{base}/start", "POST", {}, tok)[0] == 200
+        assert call(f"{base}/frames/1", "PUT", JPEG, {**tok, "Content-Type": "image/jpeg"})[0] == 200
+    slow = json.dumps({"frames": []}).encode()
+    u = urlsplit(phone)
+    s = socket.create_connection((u.hostname, u.port))
+    s.sendall((f"POST /api/submissions/{sub['id']}/scans/{keys[0]}/complete HTTP/1.1\r\nHost: x\r\n"
+               f"X-Upload-Token: {sub['upload_token']}\r\nContent-Type: application/json\r\n"
+               f"Content-Length: {len(slow)}\r\n\r\n").encode() + slow[:3])
+    time.sleep(0.5)  # the slow request has started
+    assert call(f"{phone}/api/submissions/{sub['id']}/scans/{keys[1]}/complete", "POST", {"frames": []}, tok)[0] == 200
+    s.sendall(slow[3:])
+    assert int(s.recv(65536).decode().split()[1]) == 200
+    s.close()
+    scans = json.loads((data / "submissions" / sub["id"] / "submission.json").read_text())["scans"]
+    assert [scans[k]["status"] for k in keys] == ["complete", "complete"]
