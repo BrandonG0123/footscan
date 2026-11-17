@@ -395,6 +395,7 @@ def build(foot_mesh, foot: str, params: InsoleParams | None = None) -> Insole:
         max_fill_at_mm=dict(x=round(float(X[peak]), 1), y=round(float(Y[peak]), 1)),
         bed_fit=bed_fit_shape(np.asarray(mesh.vertices)[:, :2], p.bed_mm),
         shoe_fit=shoe_fit,
+        lengthened_mm=round(float(extended), 1),  # added to the front to reach the shoe's length (0: none needed)
         # where the outline came from: a shoe's insole (the same for every foot in that shoe), or this foot's own
         outline_from="shoe" if shoe_fit is not None else "foot",
         shoe_name=p.shoe_name if shoe_fit is not None else None,
@@ -587,11 +588,16 @@ def capture_html(prep: dict | None) -> str:
     return "<h2>How the foot was captured</h2>\n<table>\n" + "\n".join(rows) + "\n</table>"
 
 
-def shoe_row(fit: dict | None, name: str | None = None, lengthened_to: float | None = None) -> str:
+def shoe_row(fit: dict | None, name: str | None = None, lengthened_to: float | None = None,
+             added_mm: float | None = None) -> str:
     """The summary sheet's line on the outline: the foot's own (lengthened to a shoe's length or not), or fitted
-    to a shoe's insole."""
+    to a shoe's insole. ``added_mm``: how much the front was lengthened (None: not recorded, an older insole)."""
     from html import escape
 
+    if not fit and lengthened_to and added_mm is not None and added_mm <= 0:
+        return (f'<tr><th>Outline</th><td colspan="3">the foot\'s own, already the shoe\'s {lengthened_to:g} mm long '
+                f'(nothing added; no shoe\'s outline): check it against the shoe\'s stock insole and trim to '
+                f'it</td></tr>')
     if not fit and lengthened_to:
         return (f'<tr><th>Outline</th><td colspan="3">the foot\'s own, its front lengthened to the shoe\'s '
                 f'{lengthened_to:g} mm (no shoe\'s outline): check it against the shoe\'s stock insole and trim to '
@@ -656,7 +662,7 @@ anything and is not equivalent to, or a substitute for, a prescribed orthotic. N
 <tr><th>Stiffness</th><td colspan="3">Uniform (no lattice zones). Material and infill as printed: record below.</td></tr>
 <tr><th>Size</th><td colspan="3">{r['length_mm']} &times; {r['width_mm']} mm, {r['height_mm']} mm tall</td></tr>
 {f'<tr><th>Under the toes</th><td colspan="3">no fill from {p.toes_flat_from:.0%} of the length (the toes lie flat when standing)</td></tr>' if p.toes_flat_from is not None else ''}
-{shoe_row(r.get('shoe_fit'), r.get('shoe_name'), p.target_length_mm)}
+{shoe_row(r.get('shoe_fit'), r.get('shoe_name'), p.target_length_mm, r.get('lengthened_mm'))}
 </table>
 
 {capture}

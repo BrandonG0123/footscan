@@ -343,6 +343,8 @@ class RateLimiter:
         import time
 
         now = time.monotonic()
+        if len(self.hits) > RATE_LIMIT_CLIENTS_KEPT:  # forget clients with nothing in the last hour
+            self.hits = {c: ts for c, ts in self.hits.items() if ts and now - ts[-1] < 3600}
         recent = [t for t in self.hits.get(client, []) if now - t < 3600]
         if len(recent) >= self.per_hour:
             self.hits[client] = recent
@@ -350,6 +352,59 @@ class RateLimiter:
         recent.append(now)
         self.hits[client] = recent
         return True
+
+
+# The rate limiter's memory: past this many clients, the ones with nothing in the last hour are forgotten.
+RATE_LIMIT_CLIENTS_KEPT = 10_000
+
+
+def client_of(peer: str, headers) -> str:
+    """Who a request is from, for the rate limit on new submissions.
+
+    A tunnel or proxy on this computer (cloudflared for the public site) connects from loopback and names the real
+    client in its header, so the header is believed only then. A request straight from the network (Wi-Fi,
+    Tailscale) is counted by its own address: otherwise it could name a new "client" in every request and never
+    reach the limit.
+    """
+    if peer in LOOPBACK:
+        for h in ("CF-Connecting-IP", "X-Real-IP"):
+            if v := headers.get(h):
+                return v.strip()
+        if v := headers.get("X-Forwarded-For"):
+            return v.split(",")[0].strip()
+    return peer
+
+
+SUMMARY_TEXT_MAX = 40
+
+
+def clean_summary(summary) -> dict:
+    """A scan's summary as the phone sent it (scanner.js summary()), kept only as numbers and short words.
+
+    The customer's scan page sends it without the studio key, and the studio shows it, so nothing else in it is
+    kept: a number, true/false, empty, a short word (mat_paper "a4"), a list of short words (two mat papers), or a
+    table of words to numbers (view_sources). Anything else is dropped, key and all.
+    """
+    if not isinstance(summary, dict):
+        return {}
+
+    def word(v):
+        return isinstance(v, str) and len(v) <= SUMMARY_TEXT_MAX
+
+    def number(v):
+        return v is None or isinstance(v, bool) or (isinstance(v, (int, float)) and v == v and abs(v) < 1e12)
+
+    out = {}
+    for k, v in list(summary.items())[:50]:
+        if not word(k):
+            continue
+        if number(v) or word(v):
+            out[k] = v
+        elif isinstance(v, list) and len(v) <= 10 and all(word(x) for x in v):
+            out[k] = v
+        elif isinstance(v, dict) and len(v) <= 20 and all(word(a) and number(b) for a, b in v.items()):
+            out[k] = v
+    return out
 
 
 def load_studio_key(path: Path) -> str:
@@ -453,12 +508,7 @@ def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check
             super().end_headers()
 
         def client_id(self) -> str:
-            for h in ("CF-Connecting-IP", "X-Real-IP"):
-                if v := self.headers.get(h):
-                    return v.strip()
-            if v := self.headers.get("X-Forwarded-For"):
-                return v.split(",")[0].strip()
-            return self.client_address[0]
+            return client_of(self.client_address[0], self.headers)
 
         # -- helpers --------------------------------------------------------
         def send_json(self, obj, status=HTTPStatus.OK):
@@ -1193,7 +1243,7 @@ def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check
                         raise BadRequest("no frames uploaded")
                     meta["scans"][key] = dict(
                         **ident, status="complete", completed=now_iso(), frame_files=files, frames=frames,
-                        summary=body.get("summary", {}), load_kg=parse_load(body.get("load_kg")),
+                        summary=clean_summary(body.get("summary")), load_kg=parse_load(body.get("load_kg")),
                     )
                     write_json(d / "submission.json", meta)
                     return self.send_json({"ok": True, "frames_on_disk": len(files)})
@@ -1410,7 +1460,7 @@ def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check
                     raise BadRequest("frames must be a list")
                 meta = read_json(d / "capture.json")
                 files = sorted(x.name for x in d.glob("frame_*.jpg"))
-                meta.update(status="complete", frames=frames, frame_files=files, summary=body.get("summary", {}))
+                meta.update(status="complete", frames=frames, frame_files=files, summary=clean_summary(body.get("summary")))
                 write_json(d / "capture.json", meta)
                 return self.send_json({"ok": True, "frames_on_disk": len(files)})
             raise FileNotFoundError
