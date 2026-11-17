@@ -19,6 +19,12 @@ accuracy study can run, three things are worked out from the model itself:
    surface, as with footscan's scans). If the app cut the table away (Object Capture usually
    does), the object's lowest scanned points are where it stood; the report
    says which was used, because heights are measured from it.
+4. **Whether the bottom is real.** The phone can't see under an object on a
+   table, so Object Capture closes the model with a guess, and the guess can
+   hang far below the object (a 33 mm wedge under the printed block on
+   17 Nov 2026). When the lowest points are well below where the base slab's
+   flat top says the bottom must be, the model is stood on that top instead
+   and the guessed part cut away (``evaluate_imported``).
 
 Then :func:`accuracy.evaluate` runs unchanged. Its alignment still only turns
 and shifts, never scales: LiDAR's sense of size is exactly what is being
@@ -51,6 +57,17 @@ class NotTheObject(ValueError):
     """The model can't be the calibration object: comparing would be meaningless."""
 FLOOR_FACING = 0.97         # cos of the most a "flat" bit may tilt (about 14 degrees)
 TABLE_CUT_MM = 0.5          # triangles entirely below this, once levelled, are table
+# With no table in the scan, the phone never saw the object's underside and
+# Object Capture closes the model with a guess. If the lowest points sit more
+# than this below where the base slab's top says the bottom must be, the
+# guess is not a flat bottom and heights can't be measured from it. A real
+# flat bottom, rounded a little at its edges, sits within a millimetre or so.
+UNDERSIDE_TOL_MM = 3.0
+# The base slab's top is the object's biggest flat upward surface (about
+# 2,900 mm2 in the design; the terraces are 1,710 and 1,440). A scan whose
+# biggest flat top is under a third of that hasn't caught the slab's top.
+DECK_MIN_AREA_MM2 = 1000.0
+DECK_BIN_MM = 0.5
 
 
 def load_geometry(path):
@@ -203,17 +220,124 @@ def to_floor_frame(mesh_mm, up: str = "y", n_samples: int = 60_000, seed: int = 
     return m, floor_pts, info
 
 
+def _deck(mesh_z_up):
+    """The base slab's flat top in a Z-up millimetre model: (point, unit normal, area mm2), or None.
+
+    Every upward-facing triangle is put in a 0.5 mm band by its height, the
+    bands are weighed by area, and the heaviest band is the slab's top (the
+    biggest flat surface facing up). A plane is then fitted to the triangles
+    within a millimetre of that band, so a slightly tilted model still gives
+    the slab's true slope.
+    """
+    n = mesh_z_up.face_normals
+    a = mesh_z_up.area_faces
+    c = mesh_z_up.triangles_center
+    flat = n[:, 2] > FLOOR_FACING
+    if not flat.any():
+        return None
+    h, w = c[flat, 2], a[flat]
+    bins = np.arange(h.min(), h.max() + 2 * DECK_BIN_MM, DECK_BIN_MM)
+    weight, edges = np.histogram(h, bins, weights=w)
+    k = int(np.argmax(weight))
+    level = 0.5 * (edges[k] + edges[k + 1])
+    on = np.abs(h - level) < PLANE_TOL_MM
+    if w[on].sum() < DECK_MIN_AREA_MM2:
+        return None
+    pts = c[flat][on]
+    for _ in range(3):  # refit on the triangles near the fitted plane, not near the band
+        p, nn = accuracy.fit_plane(pts)
+        if nn[2] < 0:
+            nn = -nn
+        near = np.abs((c[flat] - p) @ nn) < PLANE_TOL_MM
+        pts = c[flat][near]
+    p, nn = accuracy.fit_plane(pts)
+    if nn[2] < 0:
+        nn = -nn
+    return p, nn, float(w[near].sum())
+
+
+def _stand_on_deck(placed, base_mm: float):
+    """If the model's bottom was made up, stand it on where its real bottom is.
+
+    Returns (mesh, info) with the mesh turned so the base slab's top is level
+    and ``base_mm`` above z = 0, and everything below z = 0 (the made-up
+    underside) cut away; or (None, None) when the bottom looks real or the
+    slab's top can't be found.
+    """
+    deck = _deck(placed)
+    if deck is None:
+        return None, None
+    c, n, area = deck
+    # How far the lowest of the surface (the same 0.5th percentile of even
+    # surface samples that to_floor_frame used, so a stray flap doesn't count)
+    # reaches below where the slab's top says the bottom is.
+    import trimesh
+
+    P, _ = trimesh.sample.sample_surface(placed, 60_000, seed=np.random.default_rng(0))
+    below = -float(np.percentile((P - c) @ n, 0.5)) - base_mm
+    if below <= UNDERSIDE_TOL_MM:
+        return None, None
+    R = _level(n)
+    L = np.eye(4)
+    L[:3, :3] = R
+    L[:3, 3] = -R @ c + np.array([0.0, 0.0, base_mm])
+    m = placed.copy()
+    m.apply_transform(L)
+    keep = m.vertices[:, 2][m.faces].max(axis=1) > 0.0
+    m.update_faces(keep)
+    m.remove_unreferenced_vertices()
+    tilt = float(np.degrees(np.arccos(np.clip(n[2], -1, 1))))
+    return m, dict(
+        floor=f"no table in the scan, and the phone made up the underside (it reaches {below:.0f} mm below the "
+              f"object): heights are measured from the base slab's top, less its {base_mm:g} mm thickness, and the "
+              "made-up part is cut away",
+        underside_made_up_mm=round(below, 1), deck_tilt_corrected_deg=round(tilt, 3),
+        deck_area_mm2=round(area), deck_transform=L.tolist())
+
+
 def evaluate_imported(mesh, up: str = "y", calipers: dict | None = None) -> dict:
-    """The accuracy study for a model made by another app (e.g. Object Capture)."""
+    """The accuracy study for a model made by another app (e.g. Object Capture).
+
+    With no table in the scan, heights are normally measured from the
+    object's lowest points. Object Capture can't see under an object on a
+    table, so it invents a bottom; when that invented bottom hangs well below
+    where the base slab's top puts the real one (17 Nov 2026: a wedge 33 mm
+    deep under the printed block), measuring from it makes every height wrong
+    by that much. Then the base slab's flat top is used instead: the model is
+    levelled on it and stood with the top ``base`` mm up (the calipers'
+    reading if given, else the design's 10 mm). The base thickness is then
+    assumed rather than measured, and is reported as not measured; the other
+    heights still test the steps between the flat tops, and length and width
+    are measured on the real sides as usual.
+    """
     mm, units, factor = to_millimetres(mesh)
     placed, floor_pts, info = to_floor_frame(mm, up)
+    base_mm = float((calipers or {}).get("base") or calib.BASE)
+    deck_info = None
+    if floor_pts is None:
+        stood, deck_info = _stand_on_deck(placed, base_mm)
+        if stood is not None:
+            placed = stood
+            info["transform"] = (np.array(deck_info.pop("deck_transform")) @ np.array(info["transform"])).tolist()
+            info.update(deck_info)
     across = float(np.max(placed.extents))
     if not (SIZE_RANGE[0] * calib.LENGTH <= across <= SIZE_RANGE[1] * calib.LENGTH):
         raise NotTheObject(
             f"once the table is taken off, the model is {across:.0f} mm across; the calibration object is "
             f"{calib.LENGTH:.0f} mm. Wrong file, wrong units, or the scan includes other things: crop it to the "
             "object (Object Capture's box does this) and try again.")
-    report = accuracy.evaluate(placed, floor_pts, calipers)
+    report = accuracy.evaluate(placed, floor_pts, calipers, walls_clear_of_bottom=deck_info is not None)
+    if deck_info is not None:
+        for row in report["dimensions"]:
+            if row["key"] == "base":
+                row.update(scan_mm=None, scan_minus_reference_mm=None,
+                           note="not measured: the scan's underside was made up, so the base slab's thickness is "
+                                "taken as known and heights are measured from its top")
+        report["warnings"].append(
+            f"the phone never saw under the object and made up a bottom reaching {deck_info['underside_made_up_mm']:.0f}"
+            f" mm below it; heights are measured from the base slab's top less {base_mm:g} mm instead, and the "
+            "base thickness is not measured. Scale is still tested by the length, the width and the steps "
+            "between the flat tops.")
     report["imported"] = dict(units_detected=units, scale_to_mm=factor,
                               extents_mm=[round(float(v), 1) for v in sorted(mm.extents, reverse=True)], **info)
     return report

@@ -17,9 +17,9 @@ def _rot(axis, deg):
     return trimesh.transformations.rotation_matrix(np.radians(deg), axis)[:3, :3]
 
 
-def _as_exported(scale=1.0, table=True, tilt_deg=1.5, yaw_deg=38.0):
+def _as_exported(scale=1.0, table=True, tilt_deg=1.5, yaw_deg=38.0, obj=None):
     """The object (mm, Z up) as Object Capture would hand it over: metres, Y up."""
-    parts = [calib.build()]
+    parts = [calib.build() if obj is None else obj]
     if table:
         # just the tabletop's upper surface: a scan only ever sees that side
         x0, x1, y0, y1 = calib.LENGTH / 2 - 200, calib.LENGTH / 2 + 200, calib.WIDTH / 2 - 150, calib.WIDTH / 2 + 150
@@ -56,6 +56,57 @@ def test_a_model_one_percent_too_big_reports_one_percent_too_big():
     assert dims["length"]["scan_minus_reference_mm"] == pytest.approx(1.5, abs=0.1)
     assert dims["terrace_high"]["scan_minus_reference_mm"] == pytest.approx(0.35, abs=0.06)
     assert a["surface_deviation"]["median_mm"] > 0.1
+
+
+def _with_made_up_underside(depth=30.0, extra=None):
+    """The object with what Object Capture invented under a real scan of it (17 Nov 2026): a solid wedge,
+    ``depth`` mm deep under the dome end and nothing under the terrace end. ``extra`` is cut from the object
+    first (a manifold3d solid). Synthetic."""
+    import manifold3d as m3
+
+    M = m3.Manifold
+    ref = calib.build()
+    solid = M(m3.Mesh(vert_properties=np.ascontiguousarray(ref.vertices, np.float32),
+                      tri_verts=np.ascontiguousarray(ref.faces, np.uint32)))
+    if extra is not None:
+        solid = solid - extra
+    profile = m3.CrossSection([[(0.0, 0.0), (0.0, -depth), (calib.LENGTH, 0.0)]])  # counter-clockwise
+    wedge = profile.extrude(calib.WIDTH).rotate((90.0, 0.0, 0.0)).translate((0.0, calib.WIDTH, 0.0))
+    out = (solid + wedge).to_mesh()
+    return trimesh.Trimesh(np.asarray(out.vert_properties, float)[:, :3], np.asarray(out.tri_verts, np.int64))
+
+
+def test_a_made_up_wedge_under_the_object_is_cut_away_and_heights_are_measured_from_the_base_slab():
+    a = imported.evaluate_imported(_as_exported(table=False, tilt_deg=0.0, obj=_with_made_up_underside()), up="y")
+    assert "made up the underside" in a["imported"]["floor"]
+    assert a["imported"]["underside_made_up_mm"] > 20
+    dims = {r["key"]: r for r in a["dimensions"]}
+    assert dims["base"]["scan_mm"] is None and "not measured" in dims["base"]["note"]
+    for k in ("length", "width", "terrace_high", "terrace_low", "dome_apex"):
+        assert abs(dims[k]["scan_minus_reference_mm"]) < 0.06, k
+    assert a["surface_deviation"]["median_mm"] < 0.01
+    assert any("made up a bottom" in w for w in a["warnings"])
+
+
+def test_next_to_a_made_up_bottom_the_terrace_end_is_measured_above_where_it_bends_in():
+    # The terrace end's lowest 10 mm leans in, 7 mm at the bottom, as the end wall of the
+    # 17 Nov 2026 scan did where it met the made-up wedge.
+    import manifold3d as m3
+
+    lean = m3.CrossSection([[(calib.LENGTH - 7.0, -1.0), (calib.LENGTH + 1.0, -1.0), (calib.LENGTH + 1.0, 10.0),
+                             (calib.LENGTH, 10.0)]])
+    lean = lean.extrude(calib.WIDTH + 2).rotate((90.0, 0.0, 0.0)).translate((0.0, calib.WIDTH + 1, 0.0))
+    a = imported.evaluate_imported(_as_exported(table=False, tilt_deg=0.0, obj=_with_made_up_underside(extra=lean)),
+                                   up="y")
+    dims = {r["key"]: r for r in a["dimensions"]}
+    assert abs(dims["length"]["scan_minus_reference_mm"]) < 0.3
+
+
+def test_a_flat_bottom_where_the_base_slab_puts_it_is_used_and_the_base_is_measured():
+    a = imported.evaluate_imported(_as_exported(table=False, tilt_deg=0.0), up="y")
+    assert "lowest scanned points" in a["imported"]["floor"]
+    dims = {r["key"]: r for r in a["dimensions"]}
+    assert abs(dims["base"]["scan_minus_reference_mm"]) < 0.06
 
 
 def test_millimetres_and_z_up_are_left_alone():
