@@ -2126,6 +2126,7 @@ def test_a_customers_scan_summary_keeps_only_numbers_and_short_words(servers):
     bad = "<img src=x onerror=alert(1)>" + "x" * 40
     summary = {"frames_kept": 1, "duration_s": bad, "rejected_blur": 0, "mat_paper": "a4",
                "view_sources": {"sensor": 1}, "focal_px_median": None, "orientation_source": {"no": [bad]},
+               "short_tag": "<b onclick=x>", "quoted": 'a"b', "papers": ["a4", "<i>"],
                bad: 1, "coverage_completeness": 0.5}
     assert call(f"{base}/complete", "POST", {"frames": [], "summary": summary}, tok)[0] == 200
     kept = body(call(f"{op}/api/submissions/{sub['id']}"))["scans"][key]["summary"]

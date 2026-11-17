@@ -376,6 +376,7 @@ def client_of(peer: str, headers) -> str:
 
 
 SUMMARY_TEXT_MAX = 40
+SUMMARY_MARKUP = re.compile(r"[<>\"'&]")
 
 
 def clean_summary(summary) -> dict:
@@ -388,8 +389,8 @@ def clean_summary(summary) -> dict:
     if not isinstance(summary, dict):
         return {}
 
-    def word(v):
-        return isinstance(v, str) and len(v) <= SUMMARY_TEXT_MAX
+    def word(v):  # and never markup: the page escapes it too, but a word needs none of < > " ' &
+        return isinstance(v, str) and len(v) <= SUMMARY_TEXT_MAX and not SUMMARY_MARKUP.search(v)
 
     def number(v):
         return v is None or isinstance(v, bool) or (isinstance(v, (int, float)) and v == v and abs(v) < 1e12)
