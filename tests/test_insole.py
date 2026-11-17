@@ -1011,3 +1011,32 @@ def test_a_scan_torn_near_the_floor_is_flagged():
     assert not foot_prep.plausibility(dict(info, open_edges_near_floor_mm=0.0), report, "right")
     warned = foot_prep.plausibility(dict(info, open_edges_near_floor_mm=208.0), report, "right")
     assert len(warned) == 1 and warned[0].startswith("THE SCAN IS TORN NEAR THE FLOOR: 208 mm")
+
+
+def test_a_lengthened_insoles_preview_lifts_the_sole_by_the_base_the_insole_was_built_with():
+    """The base tapers along the foot's own length. A lengthened outline (or a shoe's) is longer than the
+    foot, and the preview must taper along the foot too, or it shows the sole at the wrong height."""
+    from footscan.recon import viewer_data
+
+    ins = insole.from_scan(synth.block_foot(0.0, "right"), "right", insole.InsoleParams(target_length_mm=290.0))
+    p = ins.params
+    fx0, fx1 = ins.report["base_taper_x_mm"]
+    assert ins.mesh.bounds[1, 0] - ins.mesh.bounds[0, 0] > fx1 - fx0 + 30  # the outline overruns the foot
+
+    def built_base(x):  # build()'s taper
+        t = np.clip((x - (fx0 + p.taper_from * (fx1 - fx0))) / ((1 - p.taper_from) * (fx1 - fx0)), 0, 1)
+        return p.base_mm + (p.toe_base_mm - p.base_mm) * t
+
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as d:
+        files = insole.write_preview(ins, Path(d))
+        sole = viewer_data.read(files["sole"])["vertices"]
+    orig = np.asarray(ins.sole.vertices)
+    for share in (0.75, 0.85, 0.95):
+        x = fx0 + share * (fx1 - fx0)
+        band = np.abs(sole[:, 0] - x) < 1.5
+        obands = np.abs(orig[:, 0] - x) < 1.5
+        assert band.any() and obands.any()
+        lift = sole[band, 2].min() - orig[obands, 2][orig[obands, 2] < 35].min()
+        assert lift == pytest.approx(built_base(x), abs=0.05), share

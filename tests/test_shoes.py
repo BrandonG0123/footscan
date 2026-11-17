@@ -444,3 +444,33 @@ def test_saving_a_shoe_and_choosing_the_default_wait_out_a_reader_on_windows(tmp
     monkeypatch.setattr(atomic.os, "replace", busy_once)
     s = shoes.save(tmp_path, outline, "Test Trainer", "9.5", "synthetic", read, default=True)
     assert shoes.default_id(tmp_path, strict=True) == s["id"] and calls["n"] >= 3
+
+
+def test_two_different_shoes_with_one_id_saved_at_the_same_moment_never_replace_each_other(tmp_path, monkeypatch):
+    import threading
+    import time
+
+    from footscan import atomic, shoes
+
+    outline, read = _shoe_outline()
+    real = atomic.write_utf8
+
+    def slow_write(path, text):  # widen the moment between the check and the write
+        time.sleep(0.3)
+        real(path, text)
+
+    monkeypatch.setattr(atomic, "write_utf8", slow_write)
+    results = []
+
+    def save(name, size):
+        try:
+            results.append(shoes.save(tmp_path, outline, name, size, "synthetic", read)["name"])
+        except shoes.ShoeLibraryError as e:
+            results.append(e)
+
+    threads = [threading.Thread(target=save, args=a) for a in (("Nike Pegasus 40", "US 9"), ("Nike Pegasus", "40 US 9"))]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert sum(isinstance(r, shoes.ShoeLibraryError) for r in results) == 1  # the second is refused, not lost
