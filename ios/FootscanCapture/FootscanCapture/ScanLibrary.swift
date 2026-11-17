@@ -61,15 +61,19 @@ final class ScanLibrary {
     /// that means scanning again.
     func finish(_ scan: Scan, settings: AppSettings, studio: StudioConnection) async {
         if !scan.hasModel { await build(scan) } else if !scan.hasOBJ { await convert(scan) }
+        // the scan's page may have started the check already: wait for it rather than skip it
+        while work[scan.folder] == .checking { try? await Task.sleep(for: .milliseconds(100)) }
         await check(scan)
         guard scan.hasOBJ, settings.autoSend, studio.client != nil, let rec = scan.record, readyToSend(rec) else { return }
         await send(scan, studio: studio)
     }
 
-    /// Not sent yet, not refused by the studio, not held back by the phone's check, and with its scale reading
-    /// if it needs one.
+    /// Not sent yet, not refused by the studio, checked by the phone (if it's a kind the phone checks) and not
+    /// held back by it, and with its scale reading if it needs one.
     private func readyToSend(_ rec: ScanRecord) -> Bool {
-        rec.studioCaptureID == nil && rec.retake == nil && !rec.heldByPhoneCheck && (!rec.subject.needsScale || rec.loadKg != nil)
+        let checked = rec.subject.checkKind == nil || rec.phoneCheck?.version == ScanCheck.version
+        return rec.studioCaptureID == nil && rec.retake == nil && checked && !rec.heldByPhoneCheck
+            && (!rec.subject.needsScale || rec.loadKg != nil)
     }
 
     /// With "send automatically" on and a studio connected: send every
@@ -158,6 +162,9 @@ final class ScanLibrary {
         work[scan.folder] = nil
         // read again: the record may have changed while the check ran (a scale reading typed in)
         if var latest = scan.record {
+            var found = found
+            // someone already chose Send anyway: a newer check doesn't take that back
+            found.sentAnyway = latest.phoneCheck?.sentAnyway
             latest.phoneCheck = found
             scan.save(latest)
             if latest.heldByPhoneCheck { UINotificationFeedbackGenerator().notificationOccurred(.error) }

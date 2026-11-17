@@ -98,12 +98,12 @@ extension ScanCheck {
             var points: [Vec] = []
             var faces: [(Int, Int, Int)] = []
             for line in text.split(whereSeparator: \.isNewline) {
-                if line.hasPrefix("v ") {
-                    let p = line.split(separator: " ", omittingEmptySubsequences: true)
+                let p = line.split(whereSeparator: { $0 == " " || $0 == "\t" })
+                if p.first == "v" {
                     guard p.count >= 4, let x = Double(p[1]), let y = Double(p[2]), let z = Double(p[3]) else { continue }
                     points.append(Vec(x, y, z))
-                } else if line.hasPrefix("f ") {
-                    let corners: [Int] = line.split(separator: " ", omittingEmptySubsequences: true).dropFirst().compactMap { token in
+                } else if p.first == "f" {
+                    let corners: [Int] = p.dropFirst().compactMap { token in
                         guard let first = token.split(separator: "/", omittingEmptySubsequences: false).first,
                               let i = Int(first) else { return nil }
                         return i > 0 ? i - 1 : points.count + i  // OBJ counts from 1; negative counts back from the end
@@ -240,6 +240,8 @@ extension ScanCheck {
             /// How far the floor had to be tipped to rest the sole flat, and that split into toes-down (pitch, normal
             /// for a relaxed foot) and sideways (the sole turned to one side).
             var tipDeg, pitchDeg, sidewaysDeg: Double
+            /// The best tilt was at the edge of those tried: the sole may be further over than that.
+            var atTiltLimit = false
             var lengthMM, widthMM: Double
             /// The outline's width 4-6 mm in from the toes, as a share of its widest; and from the heel, as a share
             /// of the heel's widest (the back 30%). Near 1: that end is square, cut off.
@@ -259,10 +261,11 @@ extension ScanCheck {
 
         static func measure(_ model: Mesh) -> Measure? {
             // Turned over, as the studio does: Y up becomes Z up, then half a turn about x, so the sole is down.
-            var pts = model.points.map { Vec($0.x, $0.z, -$0.y) }
-            let bottom = pts.map(\.z).min() ?? 0
-            pts = pts.map { Vec($0.x, $0.y, $0.z - bottom) }
-            let m = Mesh(points: pts, faces: model.faces).welded().keeping { $0.z < keepMM }.largestPiece()
+            // The bottom is the main piece's lowest corner, so a speck floating off to one side doesn't move the cut.
+            let whole = Mesh(points: model.points.map { Vec($0.x, $0.z, -$0.y) }, faces: model.faces).welded().largestPiece()
+            let bottom = whole.faces.flatMap { [whole.points[$0.0].z, whole.points[$0.1].z, whole.points[$0.2].z] }.min() ?? 0
+            let m = Mesh(points: whole.points.map { Vec($0.x, $0.y, $0.z - bottom) }, faces: whole.faces)
+                .keeping { $0.z < keepMM }.largestPiece()
             guard m.faces.count >= 100 else { return nil }
 
             let geometry = m.faces.map { f -> (centre: Vec, normal: Vec, area: Double) in
@@ -296,6 +299,7 @@ extension ScanCheck {
                 }
             }
             let u = up(at.0, at.1)
+            let atLimit = (at.0 * at.0 + at.1 * at.1).squareRoot() > maxTipDeg - 1
             let e1 = unit3(cross3(Vec(0, 1, 0), u)), e2 = cross3(u, e1)
             let lo = lowest(u)
 
@@ -373,19 +377,22 @@ extension ScanCheck {
             let deg = 180 / Double.pi
             return Measure(tipDeg: acos(min(1, max(-1, u.z))) * deg,
                            pitchDeg: atan2(dot3(vertical, along3), dot3(vertical, u)) * deg,
-                           sidewaysDeg: atan2(dot3(vertical, across3), dot3(vertical, u)) * deg,
+                           sidewaysDeg: atan2(dot3(vertical, across3), dot3(vertical, u)) * deg, atTiltLimit: atLimit,
                            lengthMM: length, widthMM: width, toeEnd: toeEnd, heelEnd: heelEnd, ballRollMM: roll)
         }
 
         /// What's wrong, worst first. A sole that faced the side comes alone: the rest is measured from a floor
         /// that can't be trusted then.
         static func findings(_ m: Measure) -> [Finding] {
-            if abs(m.sidewaysDeg) > sidewaysDeg || m.tipDeg > maxTipDeg - 1 {
+            if abs(m.sidewaysDeg) > sidewaysDeg || m.atTiltLimit {
+                let found = abs(m.sidewaysDeg) > sidewaysDeg
+                    ? String(format: "The sole faced %.0f degrees to one side instead of up at the ceiling, so the model "
+                             + "can't be turned into a foot standing flat. ", abs(m.sidewaysDeg))
+                    : String(format: "Resting the sole flat took tipping the model %.0f degrees, as far as the phone tries, "
+                             + "so the sole was facing well away from the ceiling. ", m.tipDeg)
                 return [Finding(
                     code: "sole_not_up", title: "The sole wasn't facing the ceiling",
-                    detail: String(format: "The sole faced %.0f degrees to one side instead of up at the ceiling, so the "
-                                   + "model can't be turned into a foot standing flat. ", abs(m.sidewaysDeg))
-                        + "Scan again with the sole facing straight up.",
+                    detail: found + "Scan again with the sole facing straight up.",
                     steps: ["Lie face down and bend this knee so the shin points straight up at the ceiling.",
                             "Let the ankle relax. Turn the foot until the sole faces the ceiling, not turned in or out.",
                             "Before you tap Start, lay a book (anything flat and stiff) across the ball of the foot. The "
