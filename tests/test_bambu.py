@@ -358,6 +358,21 @@ def test_only_a_plain_insole_3mf_is_read_as_an_insole(tmp_path, profiles):
         bambu.tpu_project([mirrored], tmp_path / "m.3mf", profiles, bed_type="High Temp Plate", **X1C)
 
 
+def test_a_3mf_in_another_unit_is_refused_rather_than_read_as_millimetres(tmp_path, profiles):
+    """Its vertices would go into the project as millimetres, changing the insole's size."""
+    left = _plain_3mf(tmp_path, "left-insole.3mf")
+    inches = tmp_path / "inches.3mf"
+    with zipfile.ZipFile(left) as z, zipfile.ZipFile(inches, "w") as w:
+        for n in z.namelist():
+            data = z.read(n)
+            if n == "3D/3dmodel.model":
+                data = data.replace(b'unit="millimeter"', b'unit="inch"')
+                assert b'unit="inch"' in data
+            w.writestr(n, data)
+    with pytest.raises(ValueError, match="not millimetres"):
+        bambu.tpu_project([inches], tmp_path / "i.3mf", profiles, bed_type="High Temp Plate", **X1C)
+
+
 def test_a_misspelt_preset_is_a_one_line_error_not_a_traceback(tmp_path, profiles, capsys):
     src = _plain_3mf(tmp_path, "right-insole.3mf")
     with pytest.raises(SystemExit):

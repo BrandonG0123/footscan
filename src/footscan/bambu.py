@@ -437,6 +437,9 @@ def _load_insole(mesh_path: Path):
             raise refuse("not a 3MF file this can read") from None
         if not r["single"]:
             raise refuse("it isn't one insole (a Bambu project, or several objects)")
+        if (r["unit"] or "millimeter") != "millimeter":  # 3MF's own default is millimetres
+            # its numbers would be read as millimetres: an insole in inches would come out 25.4 times too small
+            raise refuse(f"its sizes are in {r['unit']} units, not millimetres")
         M = np.asarray(r["transform"] or [1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0], float).reshape(4, 3)[:3]
         if not (np.allclose(M @ M.T, np.eye(3), atol=1e-4) and np.linalg.det(M) > 0 and abs(M[2, 2] - 1) < 1e-4):
             raise refuse("its placement mirrors, scales or tilts it")
