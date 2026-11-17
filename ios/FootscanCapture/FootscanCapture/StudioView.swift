@@ -11,14 +11,42 @@ final class StudioConnection {
     /// Goes up by one on every successful connect, including reconnecting to
     /// the same studio, so waiting scans can be sent then.
     private(set) var connections = 0
-    /// A connect code that came from outside the app (the Camera app, a link in Safari or Messages) naming a
-    /// different studio from the one saved. It waits for the person to say yes: connecting replaces the saved
+    /// A studio waiting for the person's yes: a connect code that came from outside the app (the Camera app, a
+    /// link in Safari or Messages) naming a different studio from the one saved. Connecting replaces the saved
     /// studio, and with "send automatically" on, every scan not yet sent would go to the new one at once.
-    var pendingCode: String?
+    /// Each has its own `id`: a yes counts only for the one the question named (``confirm(_:)``).
+    struct Pending: Identifiable, Equatable {
+        let id = UUID()
+        let code: String
+        let link: StudioLink
+        /// The studio's address in the question, so the person knows which one they're saying yes to.
+        var address: String { StudioConnection.describe(link.url) }
+    }
+    var pending: Pending?
+
+    /// Each connect attempt's number: only the newest may save. One that finishes after a later one started
+    /// (two links opened close together, a slow reconnect after a yes to another studio) changes nothing.
+    private var attempt = 0
+
+    /// The network check and the Keychain save, replaceable in tests (which mustn't touch either).
+    private let reachStudio: (StudioLink, String) async throws -> StudioLink
+    private let saveStudio: (StudioLink, String) -> Bool
 
     init() {
+        reachStudio = { link, key in try await StudioClient(link: link, key: key).reach().link }
+        saveStudio = { link, key in StudioStore.save(link, key: key) }
         StudioStore.removeLeftoverKey() // a key an earlier install left behind (docs/PRIVACY.md)
         if let saved = StudioStore.load() { link = saved.link; key = saved.key }
+    }
+
+    /// For tests: a connection that starts with `saved` and never touches the network, Keychain or settings.
+    init(saved: (link: StudioLink, key: String)?,
+         reach: @escaping (StudioLink, String) async throws -> StudioLink,
+         save: @escaping (StudioLink, String) -> Bool = { _, _ in true }) {
+        reachStudio = reach
+        saveStudio = save
+        link = saved?.link
+        key = saved?.key
     }
 
     var client: StudioClient? {
@@ -26,20 +54,40 @@ final class StudioConnection {
         return StudioClient(link: link, key: key)
     }
 
-    /// A code opened from outside the app: connect straight away unless it would replace a different saved
-    /// studio, which is asked first (``pendingCode``). Codes scanned with the app's own button connect at
-    /// once: tapping "Connect to a different studio" already said yes.
+    /// A code opened from outside the app. Connects without asking only when it can't take scans anywhere new:
+    /// no studio is saved, or it is the saved studio (its key made again, a new Wi-Fi address). A different
+    /// studio is asked first (``pending``); a newer link replaces the question, which then names the newer one.
+    /// Codes scanned with the app's own button use ``connect(_:confirmed:)`` with `confirmed` true: tapping
+    /// "Connect to a different studio" already said yes.
     func open(_ text: String) async {
         if let current = link, let parsed = StudioStore.parse(text), !StudioStore.isSameStudio(current, parsed.link) {
-            pendingCode = text
+            attempt += 1 // a connect still running for an earlier link mustn't save under this question
+            pending = Pending(code: text, link: parsed.link)
             status = nil
             return
         }
-        _ = await connect(text)
+        _ = await connect(text, confirmed: false)
     }
 
-    /// Try a connect code; save it only if the studio answers to it (at any of its addresses).
-    func connect(_ text: String) async -> Bool {
+    /// The person said yes to the question naming `asked`. Ignored unless that is still the question showing:
+    /// a yes is never carried over to a link that arrived after it was asked.
+    func confirm(_ asked: Pending) async {
+        guard pending == asked else { return }
+        pending = nil
+        _ = await connect(asked.code, confirmed: true)
+    }
+
+    /// The person said no (or the question was dismissed): only that question goes.
+    func decline(_ asked: Pending) {
+        if pending == asked { pending = nil }
+    }
+
+    /// Try a connect code; save it only if the studio answers to it (at any of its addresses), this is still the
+    /// newest attempt, and (`confirmed` false) it doesn't replace a different studio saved meanwhile: that is
+    /// asked first, as in ``open(_:)``.
+    func connect(_ text: String, confirmed: Bool) async -> Bool {
+        attempt += 1
+        let mine = attempt
         guard let parsed = StudioStore.parse(text) else {
             if let other = StudioStore.parse(text, allowPublic: true) {
                 status = other.link.fingerprint != nil
@@ -52,21 +100,29 @@ final class StudioConnection {
             return false
         }
         status = "Checking \(parsed.link.addresses.map(StudioLink.host(of:)).joined(separator: " and "))…"
-        let reached: StudioClient
+        let reached: StudioLink
         do {
-            reached = try await StudioClient(link: parsed.link, key: parsed.key).reach()
+            reached = try await reachStudio(parsed.link, parsed.key)
         } catch {
-            status = error.localizedDescription
+            if mine == attempt { status = error.localizedDescription }
             return false
         }
-        guard StudioStore.save(reached.link, key: parsed.key) else {
+        guard mine == attempt else { return false } // a newer link or a yes came meanwhile: that one decides
+        if !confirmed, let current = link, !StudioStore.isSameStudio(current, reached) {
+            // another studio was saved while this one was being checked: ask, as for a link that arrives then
+            attempt += 1
+            pending = Pending(code: text, link: parsed.link)
+            status = nil
+            return false
+        }
+        guard saveStudio(reached, parsed.key) else {
             status = "The studio answered, but this phone couldn't keep its key (the iPhone's Keychain refused it). Try again; if it keeps happening, restart the phone."
             return false
         }
-        link = reached.link
+        link = reached
         key = parsed.key
         connections += 1
-        status = "Connected to \(Self.describe(reached.link.url))."
+        status = "Connected to \(Self.describe(reached.url))."
         return true
     }
 
@@ -166,22 +222,17 @@ struct StudioView: View {
             .sheet(isPresented: $scanning) {
                 CodeScanner { text in
                     scanning = false
-                    Task { await studio.connect(text) }
+                    Task { _ = await studio.connect(text, confirmed: true) } // the person chose to scan a code
                 }
                 .ignoresSafeArea()
             }
             .confirmationDialog("Switch to a different studio?", isPresented: Binding(
-                get: { studio.pendingCode != nil }, set: { if !$0 { studio.pendingCode = nil } }),
-                                titleVisibility: .visible) {
-                Button("Switch studio") {
-                    if let code = studio.pendingCode { Task { await studio.connect(code) } }
-                    studio.pendingCode = nil
-                }
-                Button("Keep the studio I have", role: .cancel) {
-                    studio.pendingCode = nil
-                }
-            } message: {
-                Text("A link opened Footscan with the code of another studio. Switch only if it's your own studio's code: scans not sent yet will go to it.")
+                get: { studio.pending != nil }, set: { if !$0, let asked = studio.pending { studio.decline(asked) } }),
+                                titleVisibility: .visible, presenting: studio.pending) { asked in
+                Button("Switch to \(asked.address)") { Task { await studio.confirm(asked) } }
+                Button("Keep the studio I have", role: .cancel) { studio.decline(asked) }
+            } message: { asked in
+                Text("A link opened Footscan with the code of the studio at \(asked.address). Switch only if that's your own studio: scans not sent yet will go to it.")
             }
             .confirmationDialog("Disconnect from this studio?", isPresented: $confirmDisconnect, titleVisibility: .visible) {
                 Button("Disconnect", role: .destructive) { studio.disconnect() }

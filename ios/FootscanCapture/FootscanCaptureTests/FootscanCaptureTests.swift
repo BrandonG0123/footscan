@@ -561,4 +561,73 @@ struct OutsideCodes {
         #expect(StudioStore.isSameStudio(a, b) && !StudioStore.isSameStudio(a, c))
         #expect(!StudioStore.isSameStudio(a, StudioLink(url: a.url, fingerprint: pin)))
     }
+
+    // A connection that never touches the network or Keychain: every studio "answers" at the first address.
+    @MainActor private func connection(saved: String?, slow: Set<String> = [], tried: @escaping (String) -> Void = { _ in })
+        throws -> StudioConnection {
+        let s = try saved.map { try #require(StudioStore.parse($0)) }
+        return StudioConnection(saved: s, reach: { link, _ in
+            let host = StudioLink.host(of: link.url)
+            tried(host)
+            if slow.contains(host) { try await Task.sleep(for: .milliseconds(300)) }
+            return link
+        })
+    }
+    private func code(_ host: String, _ fp: String, key: String = "k") -> String {
+        "footscan-capture://connect?url=https://\(host):8765&key=\(key)&fp=\(fp)"
+    }
+    private var third: String { String(repeating: "ef", count: 32) }
+
+    @MainActor @Test func aLinkForADifferentStudioWaitsForAYesAndChangesNothing() async throws {
+        var tried: [String] = []
+        let studio = try connection(saved: code("192.168.1.20", pin), tried: { tried.append($0) })
+        await studio.open(code("192.168.1.30", other))
+        #expect(studio.pending?.address == "192.168.1.30 (home Wi-Fi)")
+        #expect(studio.link?.fingerprint == pin && tried.isEmpty && studio.connections == 0)
+    }
+
+    @MainActor @Test func aYesCountsOnlyForTheStudioTheQuestionNamed() async throws {
+        let studio = try connection(saved: code("192.168.1.20", pin))
+        await studio.open(code("192.168.1.30", other))
+        let askedFirst = try #require(studio.pending)
+        await studio.open(code("192.168.1.40", third)) // another link before the tap
+        #expect(studio.pending?.address == "192.168.1.40 (home Wi-Fi)")
+        await studio.confirm(askedFirst) // a yes to the question that was replaced
+        #expect(studio.link?.fingerprint == pin && studio.pending != nil)
+        await studio.confirm(try #require(studio.pending))
+        #expect(studio.link?.fingerprint == third && studio.pending == nil && studio.connections == 1)
+    }
+
+    @MainActor @Test func aNoKeepsTheSavedStudio() async throws {
+        let studio = try connection(saved: code("192.168.1.20", pin))
+        await studio.open(code("192.168.1.30", other))
+        studio.decline(try #require(studio.pending))
+        #expect(studio.pending == nil && studio.link?.fingerprint == pin && studio.key == "k")
+    }
+
+    @MainActor @Test func theSavedStudioWithANewKeyReconnectsWithoutAQuestion() async throws {
+        let studio = try connection(saved: code("192.168.1.20", pin))
+        await studio.open(code("192.168.1.44", pin, key: "new"))
+        #expect(studio.pending == nil && studio.key == "new" && studio.link?.host == "192.168.1.44")
+    }
+
+    @MainActor @Test func aSlowCheckOvertakenByANewerLinkSavesNothing() async throws {
+        // no studio saved: two links close together, the first slower to answer. Only the newer one is saved.
+        let studio = try connection(saved: nil, slow: ["192.168.1.30"])
+        let first = Task { await studio.open(code("192.168.1.30", other)) }
+        try await Task.sleep(for: .milliseconds(50))
+        await studio.open(code("192.168.1.40", third))
+        await first.value
+        #expect(studio.link?.fingerprint == third && studio.connections == 1)
+    }
+
+    @MainActor @Test func aSlowReconnectFinishingAfterAYesDoesntUndoIt() async throws {
+        let studio = try connection(saved: code("192.168.1.20", pin), slow: ["192.168.1.21"])
+        let reconnect = Task { await studio.open(code("192.168.1.21", pin, key: "k2")) } // the saved studio, slow
+        try await Task.sleep(for: .milliseconds(50))
+        await studio.open(code("192.168.1.30", other))
+        await studio.confirm(try #require(studio.pending))
+        await reconnect.value
+        #expect(studio.link?.fingerprint == other && studio.key == "k")
+    }
 }
