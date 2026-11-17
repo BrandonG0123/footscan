@@ -76,8 +76,11 @@ def _with_made_up_underside(depth=30.0, extra=None):
     return trimesh.Trimesh(np.asarray(out.vert_properties, float)[:, :3], np.asarray(out.tri_verts, np.int64))
 
 
-def test_a_made_up_wedge_under_the_object_is_cut_away_and_heights_are_measured_from_the_base_slab():
-    a = imported.evaluate_imported(_as_exported(table=False, tilt_deg=0.0, obj=_with_made_up_underside()), up="y")
+@pytest.mark.parametrize("tilt_deg", [0.0, 1.5, 3.0])
+def test_a_made_up_wedge_under_the_object_is_cut_away_and_heights_are_measured_from_the_base_slab(tilt_deg):
+    # tilt: the phone's sense of gravity a little out, as it often is
+    a = imported.evaluate_imported(_as_exported(table=False, tilt_deg=tilt_deg, obj=_with_made_up_underside()),
+                                   up="y")
     assert "made up the underside" in a["imported"]["floor"]
     assert a["imported"]["underside_made_up_mm"] > 20
     dims = {r["key"]: r for r in a["dimensions"]}
@@ -107,6 +110,29 @@ def test_a_flat_bottom_where_the_base_slab_puts_it_is_used_and_the_base_is_measu
     assert "lowest scanned points" in a["imported"]["floor"]
     dims = {r["key"]: r for r in a["dimensions"]}
     assert abs(dims["base"]["scan_minus_reference_mm"]) < 0.06
+
+
+@pytest.mark.parametrize("tilt_deg", [1.0, 3.0])
+def test_a_finely_meshed_flat_bottomed_model_a_little_tilted_is_not_taken_for_a_made_up_bottom(tilt_deg):
+    fine = calib.build().subdivide_to_size(3.0)  # a phone's mesh is finer than the design's big flat triangles
+    a = imported.evaluate_imported(_as_exported(table=False, tilt_deg=tilt_deg, obj=fine), up="y")
+    assert "lowest scanned points" in a["imported"]["floor"]
+    assert abs(a["imported"]["underside_below_expected_mm"]) < 1.0
+    assert not any("made up a bottom" in w for w in a["warnings"])
+
+
+def test_a_flat_bottomed_model_that_is_simply_too_big_is_not_taken_for_a_made_up_bottom():
+    a = imported.evaluate_imported(_as_exported(table=False, tilt_deg=0.0, scale=1.35), up="y")
+    assert "lowest scanned points" in a["imported"]["floor"]
+    dims = {r["key"]: r for r in a["dimensions"]}
+    assert dims["dome_apex"]["scan_minus_reference_mm"] == pytest.approx(10.5, abs=0.1)  # the scale error shows
+
+
+def test_when_the_base_slab_cant_be_found_the_report_says_the_bottom_wasnt_checked():
+    turned = calib.build()  # turned 30 degrees: no flat top faces up any more
+    turned.apply_transform(np.block([[_rot([1, 0, 0], 30.0), np.zeros((3, 1))], [np.zeros((1, 3)), np.ones((1, 1))]]))
+    a = imported.evaluate_imported(turned, up="z")
+    assert any("couldn't be checked" in w for w in a["warnings"])
 
 
 def test_millimetres_and_z_up_are_left_alone():

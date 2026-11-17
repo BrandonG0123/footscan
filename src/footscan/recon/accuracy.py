@@ -236,12 +236,14 @@ def measure_dimensions(scan_ref: np.ndarray, floor_plane: tuple[np.ndarray, np.n
     # it (17 Nov 2026 Object Capture scan of the print: the terrace end sat
     # 7 mm in at 2-5 mm up and within a millimetre of the design from 14 mm
     # up). So then the walls that are tall enough (the terrace end, and both
-    # sides beside the terraces) are read 12-20 mm up: above the base slab's
-    # top, below the low terrace's, so still straight wall on the design.
-    # The dome end is only the base's 10 mm tall and stays at 2-8 mm.
+    # sides beside the terraces) are read 14-20 mm up: above where that bend
+    # ended, below the low terrace's top, so still straight wall on the design.
+    # The dome end is only the base's 10 mm tall and stays at 2-8 mm; on that
+    # scan it sat within a millimetre of the design all the way up (it did not
+    # bend in), but a scan where it does would read the length wrong.
     h_all = height(scan_ref)
     low_band = (h_all > 2) & (h_all < 8)
-    high_band = (h_all > 12) & (h_all < 20) if walls_clear_of_bottom else low_band
+    high_band = (h_all > 14) & (h_all < 20) if walls_clear_of_bottom else low_band
     x = scan_ref[:, 0]
     y = scan_ref[:, 1]
     beside_terraces = (x > calib.RAMP_X[1] + 6) & (x < calib.LENGTH - 6)
