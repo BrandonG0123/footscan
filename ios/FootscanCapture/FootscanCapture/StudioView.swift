@@ -13,6 +13,7 @@ final class StudioConnection {
     private(set) var connections = 0
 
     init() {
+        StudioStore.removeLeftoverKey() // a key an earlier install left behind (docs/PRIVACY.md)
         if let saved = StudioStore.load() { link = saved.link; key = saved.key }
     }
 
@@ -24,7 +25,14 @@ final class StudioConnection {
     /// Try a connect code; save it only if the studio answers to it (at any of its addresses).
     func connect(_ text: String) async -> Bool {
         guard let parsed = StudioStore.parse(text) else {
-            status = "That isn't a Footscan studio code. In the studio, open Import 3D and tap Show the connect code."
+            if let other = StudioStore.parse(text, allowPublic: true) {
+                status = other.link.fingerprint != nil
+                    // the person's own computer, at an address that isn't its home-network or Tailscale one
+                    ? "This code names \(other.link.host), which isn't an address on your home network or Tailscale. This app connects to your studio only at one of those: start Footscan on that computer on your Wi-Fi (or with Tailscale on), show the connect code again and scan it."
+                    : "This app connects only to a studio on your own computer, over your Wi-Fi or Tailscale, not to one at a public internet address. Show the connect code in the studio on that computer and scan it."
+            } else {
+                status = "That isn't a Footscan studio code. In the studio, open Import 3D and tap Show the connect code."
+            }
             return false
         }
         status = "Checking \(parsed.link.addresses.map(StudioLink.host(of:)).joined(separator: " and "))…"
@@ -83,7 +91,10 @@ final class StudioConnection {
     }
 
     func disconnect() {
-        StudioStore.clear()
+        guard StudioStore.clear() else {
+            status = "Couldn't remove the studio's key from this phone. Try Disconnect again."
+            return
+        }
         link = nil
         key = nil
         status = "Disconnected. Scans stay on this phone."
@@ -185,7 +196,7 @@ struct StudioView: View {
                     }
                 }
             }
-            Label(link.fingerprint == nil ? "Public address, checked the normal way" : "Talks only to this studio's computer (its certificate is pinned)",
+            Label(link.fingerprint == nil ? "Public address, checked the normal way (development builds only)" : "Talks only to this studio's computer (its certificate is pinned)",
                   systemImage: "lock.fill")
                 .font(.footnote).foregroundStyle(Color.fsMuted)
             HStack {

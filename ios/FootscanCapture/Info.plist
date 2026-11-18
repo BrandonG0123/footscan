@@ -10,6 +10,10 @@
     rules. The studio's addresses are IPs (home network, Tailscale), which
     App Transport Security doesn't cover; a full domain name with a self-made
     certificate would be refused, so the studio never offers one.
+  - ITSAppUsesNonExemptEncryption false: the app's only encryption is Apple's own
+    HTTPS (URLSession, WebKit), plus a SHA-256 hash of the studio's certificate,
+    both exempt from export rules. Saying so here means App Store Connect doesn't
+    ask on every upload.
 -->
 <plist version="1.0">
 <dict>
@@ -24,6 +28,8 @@
 			</array>
 		</dict>
 	</array>
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
 	<key>NSAppTransportSecurity</key>
 	<dict>
 		<key>NSAllowsLocalNetworking</key>

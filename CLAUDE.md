@@ -58,6 +58,25 @@ cd ios/FootscanCapture && xcodebuild test -project FootscanCapture.xcodeproj -sc
 
 - `src/footscan/insole.py`: insole generator (height map of the sole, caps, outline, heel cup, bevel, 3MF/STL,
   summary sheet, 3-D preview).
+- `src/footscan/footwear.py`: clog generator (`footscan footwear`): a standard-shape upper in the foot's size (its
+  walls let out where the sole scan's sides stand wider), the first-fit insole's surface as its floor, styles,
+  summary sheet, pictures, print-trial pieces, the studio's 3-D preview. Tests: `tests/test_footwear.py`, ~2 min.
+  Walking and casual wear only; docs/footwear.md says what is a judgment and that nothing is printed yet.
+  A sole scan the studio would refuse on arrival (rolled forefoot, torn, an end missing) makes no shoe
+  (`unfit_for_a_footbed`): the footbed can't be taken out of a shoe, so don't turn that into a warning.
+- `src/footscan/footwear_choices.py`: the clog's choices checked against the generator's own lists and limits, and a
+  typed description read into them (by known words on this computer; by Claude only with `footscan serve
+  --describe-with-claude`). The fixed answers for anything medical or any sport are safety requirements, and a
+  description that says the shoe is for either is not read into settings at all, nor sent to Claude (`wanted_for`):
+  don't narrow that. Tests: `tests/test_footwear_choices.py`.
+  The studio's Make printed shoe is `server.make_clog`, `web/studio/clog.html`, `web/assets/clog-page.js` and
+  `clog-form.js` (not `shoes.py`: that is saved bought shoes, whose outline an insole is cut to).
+  Tests: `tests/test_server_clog.py` (~2 min), `tests/js/clog-form.test.mjs`.
+- `src/footscan/footwear_fit.py`: what a clog's print-trial pieces showed (fixed questions, kept with the capture, each
+  record about the shoe its pieces were cut from) and the changes to that shoe's choices it suggests by fixed rules:
+  the cushioning picked, one fit roomier or snugger. It never changes the footbed to how it felt, and once any record
+  says something hurt it suggests nothing for any shoe of that capture again (the stop rule instead; nothing lifts
+  it): safety requirements, don't narrow them. Tests: `tests/test_footwear_fit.py`.
 - `src/footscan/recon/foot_prep.py`: turns an Object Capture model (metres, Y up) into a foot on a flat floor, per
   scan kind (`foot`, `sole_up`, `sole_hanging`, `impression`), plus the plausibility warnings.
 - `src/footscan/recon/shoe.py`: a shoe's own insole scan → outline, handedness, fit round the foot.

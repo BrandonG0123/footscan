@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from footscan.server import WEB_DIR, StudioServer, make_handler
+from footscan.server import PUBLIC_PAIRING_NOTE, STALE_MESSAGES, WEB_DIR, StudioServer, make_handler
 
 JPEG = b"\xff\xd8\xff\xe0" + b"\x00" * 64
 KEY = "test-studio-key"
@@ -663,9 +663,37 @@ def test_pairing_through_the_public_address_uses_it_and_needs_no_fingerprint(tmp
     try:
         assert call(f"{url}/api/studio/pairing")[0] == 403
         p = body(call(f"{url}/api/studio/pairing", headers={"X-Studio-Key": KEY, "Host": "footscan.example.dev"}))
-        assert p == {"available": True, "url": "https://footscan.example.dev", "key": KEY, "fingerprint": None}
+        assert p == {"available": True, "url": "https://footscan.example.dev", "key": KEY, "fingerprint": None,
+                     "note": PUBLIC_PAIRING_NOTE}  # the App Store build won't take it: said where the code is shown
     finally:
         httpd.shutdown()
+
+
+def test_the_studio_knows_the_apps_own_network_rule():
+    """The same rule as the app's StudioStore.isOwnNetwork, so the studio can say when the App Store build
+    will refuse the code it shows (a computer given a public address, on a campus network say)."""
+    from footscan.server import own_network
+
+    for own in ("192.168.11.233", "10.0.0.5", "172.20.1.1", "169.254.3.4", "100.113.53.83", "mac-mini.local",
+                "mac.local.", "[fd7a:115c:a1e0::1]", "fe90::1", "::ffff:192.168.1.5"):
+        assert own_network(own), own
+    for other in ("172.32.0.1", "100.128.0.1", "128.32.10.1", "footscan.example.dev", "mac.tail1234.ts.net",
+                  "2001:db8::1", "fe7f::1", "fd::1"):  # fd::1 is 00fd::1, not unique-local
+        assert not own_network(other), other
+
+
+def test_a_lan_pairing_code_at_an_address_the_app_store_build_refuses_says_so(tmp_path, monkeypatch):
+    from footscan import server
+
+    handler = make_handler(WEB_DIR, tmp_path, studio_key=KEY, cert_fingerprint="ab" * 32)
+    monkeypatch.setattr(handler, "other_addresses", lambda self, url: [])
+    monkeypatch.setattr(handler, "studio_info", lambda self: {"phones_can_connect": True,
+                                                              "scan_url": "https://128.32.10.1:8766/"})
+    p = handler.pairing(object.__new__(handler))
+    assert p["url"] == "https://128.32.10.1:8766" and p["note"] == server.OWN_NETWORK_NOTE
+    monkeypatch.setattr(handler, "studio_info", lambda self: {"phones_can_connect": True,
+                                                              "scan_url": "https://192.168.11.233:8766/"})
+    assert "note" not in handler.pairing(object.__new__(handler))
 
 
 def _phone_ready_studio(tmp_path, monkeypatch, tailnet):
@@ -773,21 +801,121 @@ def test_tailnet_address_is_found_through_the_mac_app_when_the_command_isnt_on_p
 
 def test_a_stopped_tailscale_means_no_tailnet_address(monkeypatch, tmp_path):
     """Tailscale stopped: its command runs and gives no address, and that is the answer. (The computer's own
-    addresses aren't looked at: a 100.64.0.0/10 one then is someone else's, such as Cloudflare WARP's.)"""
+    addresses aren't looked at: a 100.64.0.0/10 one then is someone else's, such as Cloudflare WARP's. On
+    Windows, neither is Tailscale's adapter, below.)"""
     import subprocess
 
     import footscan.server as srv
 
+    monkeypatch.setattr(srv, "ON_WINDOWS", True)
+
     exe = tmp_path / "tailscale"
     exe.write_text("")
     monkeypatch.setattr(srv.shutil, "which", lambda name: str(exe))
-    monkeypatch.setattr(srv.subprocess, "run",
-                        lambda cmd, **k: subprocess.CompletedProcess(cmd, 1, "", "Tailscale is stopped.\n"))
+    monkeypatch.setattr(srv.Path, "is_file", lambda self: self == exe)  # not this computer's own Tailscale
+    ran = []
+    monkeypatch.setattr(srv.subprocess, "run", lambda cmd, **k: ran.append(cmd[0]) or subprocess.CompletedProcess(
+        cmd, 1, "", "Tailscale is stopped.\n"))
+    assert srv.tailnet_ip() is None and ran == [str(exe)]  # it said so: the adapter isn't read
+    monkeypatch.setattr(srv.subprocess, "run", lambda cmd, **k: subprocess.CompletedProcess(
+        cmd, 0, "" if cmd[0] == str(exe) else "100.88.1.2", "Logged out.\n" if cmd[0] == str(exe) else ""))
     assert srv.tailnet_ip() is None
     # with no tailscale command anywhere (WARP on, Tailscale not installed), still none
     monkeypatch.setattr(srv.shutil, "which", lambda name: None)
     monkeypatch.setattr(srv.Path, "is_file", lambda self: False)
     assert srv.tailnet_ip() is None
+
+
+def test_the_windows_service_finds_its_tailscale_address_on_tailscales_adapter(monkeypatch):
+    """On tank the studio runs as Local Service, and `tailscale ip -4` gave that account no address (6 Nov 2026,
+    "Run unattended" on too), so the connect code had only the home address. The "Tailscale" adapter has it."""
+    import ntpath
+    import subprocess
+
+    import footscan.server as srv
+
+    win = r"C:\Program Files\Tailscale\tailscale.exe"
+    ran = []
+    monkeypatch.setattr(srv, "ON_WINDOWS", True)
+    monkeypatch.setattr(srv.shutil, "which", lambda name: None)
+    monkeypatch.setattr(srv.Path, "is_file", lambda self: self == Path(win))
+
+    def run(cmd, **kw):
+        ran.append("tailscale" if cmd[0] == win else ntpath.basename(cmd[0]))
+        if cmd[0] == win:  # what the service got: no address
+            return subprocess.CompletedProcess(cmd, 1, "", "")
+        assert cmd[-1] == srv.WINDOWS_TAILSCALE_ADAPTER
+        # only Tailscale's own adapter, and only while it is up (a 100.x address elsewhere isn't Tailscale's)
+        assert "-Name Tailscale " in cmd[-1] and "$a.Status -eq 'Up'" in cmd[-1]
+        return subprocess.CompletedProcess(cmd, 0, "100.113.53.83\r\n", "")
+
+    monkeypatch.setattr(srv.subprocess, "run", run)
+    assert srv.tailnet_ip() == "100.113.53.83" and ran == ["tailscale", "powershell.exe"]
+
+
+def test_the_tailscale_adapter_is_read_only_on_windows_with_tailscale_installed(monkeypatch, tmp_path):
+    """Without Tailscale (Cloudflare WARP's 100.64/10 address, say) nothing is read, and an answer outside
+    Tailscale's range from the adapter doesn't count."""
+    import subprocess
+
+    import footscan.server as srv
+
+    ran = []
+    monkeypatch.setattr(srv.subprocess, "run",
+                        lambda cmd, **k: ran.append(cmd[0]) or subprocess.CompletedProcess(cmd, 0, "100.64.0.9\n", ""))
+    monkeypatch.setattr(srv, "ON_WINDOWS", True)
+    monkeypatch.setattr(srv.shutil, "which", lambda name: None)
+    monkeypatch.setattr(srv.Path, "is_file", lambda self: False)
+    assert srv.tailnet_ip() is None and ran == []  # not installed: PowerShell never runs
+
+    exe = tmp_path / "tailscale"
+    exe.write_text("")
+    monkeypatch.setattr(srv.shutil, "which", lambda name: str(exe))
+    monkeypatch.setattr(srv.Path, "is_file", lambda self: self == exe)
+    monkeypatch.setattr(srv.subprocess, "run",
+                        lambda cmd, **k: subprocess.CompletedProcess(cmd, 0, "" if cmd[0] == str(exe) else "169.254.3.4", ""))
+    assert srv.tailnet_ip() is None
+    monkeypatch.setattr(srv, "ON_WINDOWS", False)  # the Mac and Linux: only the command's answer
+    monkeypatch.setattr(srv.subprocess, "run", lambda cmd, **k: ran.append(cmd[0]) or subprocess.CompletedProcess(cmd, 1, "", ""))
+    assert srv.tailnet_ip() is None and ran == [str(exe)]
+
+
+def test_a_stuck_tailscaled_on_windows_still_leaves_the_adapter_to_read(monkeypatch):
+    """Reading the adapter doesn't ask tailscaled, so a command that times out (the service's own access to it
+    stalling, say) doesn't cost the connect code its Tailscale address."""
+    import subprocess
+
+    import footscan.server as srv
+
+    win = r"C:\Program Files\Tailscale\tailscale.exe"
+    monkeypatch.setattr(srv, "ON_WINDOWS", True)
+    monkeypatch.setattr(srv.shutil, "which", lambda name: None)
+    monkeypatch.setattr(srv.Path, "is_file", lambda self: self == Path(win))
+
+    def run(cmd, **kw):
+        if cmd[0] == win:
+            raise subprocess.TimeoutExpired(cmd, 3)
+        return subprocess.CompletedProcess(cmd, 0, "100.113.53.83\n", "")
+
+    monkeypatch.setattr(srv.subprocess, "run", run)
+    assert srv.tailnet_ip() == "100.113.53.83"
+
+
+def test_powershell_is_never_run_from_a_relative_path(monkeypatch):
+    """An empty or relative SystemRoot in the service's environment would run powershell.exe from the service's
+    own folder, which its owner can change."""
+    import subprocess
+
+    import footscan.server as srv
+
+    ran = []
+    monkeypatch.setattr(srv.subprocess, "run", lambda cmd, **k: ran.append(cmd[0]) or subprocess.CompletedProcess(
+        cmd, 0, "100.88.1.2", ""))
+    for root in ("", "Windows", r"\Users\Public", "C:", r"D:\Win"):
+        monkeypatch.setenv("SystemRoot", root)
+        assert srv.windows_tailscale_adapter_ip() == "100.88.1.2"
+    assert ran == [r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe"] * 4 + [
+        r"D:\Win\System32\WindowsPowerShell\v1.0\powershell.exe"]
 
 
 def test_the_tailscale_command_runs_once_when_path_finds_an_install_location(monkeypatch):
@@ -798,6 +926,7 @@ def test_the_tailscale_command_runs_once_when_path_finds_an_install_location(mon
     import footscan.server as srv
 
     win = r"C:\Program Files\Tailscale\tailscale.exe"
+    monkeypatch.setattr(srv, "ON_WINDOWS", False)  # the command only (Windows reads the adapter after)
     ran = []
     monkeypatch.setattr(srv.shutil, "which", lambda name: win)
     monkeypatch.setattr(srv.Path, "is_file", lambda self: self == Path(win))
@@ -818,6 +947,7 @@ def test_a_stuck_tailscaled_is_waited_on_once_not_once_per_program(monkeypatch):
     import footscan.server as srv
 
     mac_cli, wrapper = "/Applications/Tailscale.app/Contents/MacOS/Tailscale", "/usr/local/bin/tailscale"
+    monkeypatch.setattr(srv, "ON_WINDOWS", False)  # the command only (Windows reads the adapter after)
     ran = []
     monkeypatch.setattr(srv.shutil, "which", lambda name: wrapper)
     monkeypatch.setattr(srv.Path, "is_file", lambda self: self in (Path(mac_cli), Path(wrapper)))
@@ -1115,6 +1245,131 @@ def test_make_insole_can_fit_to_a_scanned_shoes_insole(servers):
     listed = [c for c in body(call(f"{op}/api/captures")) if c["capture_id"] == foot][0]
     assert listed["insole"].get("stale") is True
     assert call(f"{op}/api/captures/{foot}/insole/insole.3mf")[0] == 409
+
+
+def test_a_default_the_studio_cant_write_answers_with_why(servers, monkeypatch):
+    """data/shoes not writable or the disk full: a JSON answer naming the folder, as a failed save gets."""
+    from footscan import shoes
+
+    op, _phone, _data = servers
+
+    def full(folder, sid):
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(shoes, "set_default", full)
+    st, raw, _ = call(f"{op}/api/shoes/default", "POST", {"id": None})
+    assert st == 500 and "couldn't choose the default" in json.loads(raw)["error"]
+
+
+def test_a_saved_shoe_is_the_default_outline_for_every_new_insole(servers):
+    """POST /api/shoes saves a shoe's-insole capture as a saved shoe (one outline per shoe and size); made the
+    default, POST insole {} takes its outline; {foot_outline: true} opts out; saving it again makes the insole
+    stale; the phone can't reach any of it."""
+    import time
+
+    import synth
+
+    op, phone, data = servers
+    foot = body(call(f"{op}/api/captures", "POST", {"condition": "swb", "foot": "right", "session": "LIDAR",
+                                                     "load_kg": 30, "method": "imported_mesh"}))["id"]
+    assert call(f"{op}/api/captures/{foot}/mesh?ext=obj&up=y", "PUT", _object_capture_foot("right"),
+                {"Content-Type": "application/octet-stream"})[0] == 200
+    shoe = body(call(f"{op}/api/captures", "POST", {"condition": "shoe_insole", "session": "LIDAR",
+                                                    "method": "imported_mesh"}))["id"]
+    assert call(f"{op}/api/captures/{shoe}/mesh?ext=obj&up=y", "PUT",
+                synth.shoe_insole().export(file_type="obj").encode(), {"Content-Type": "application/octet-stream"})[0] == 200
+
+    assert body(call(f"{op}/api/shoes")) == {"shoes": [], "default": None, "default_problem": None}
+    plain = body(call(f"{op}/api/captures/{foot}/insole", "POST", {}))  # no saved shoe yet: the foot's outline
+    # recorded as "the default" (there was none), not as a choice of the foot's outline: once a default is
+    # saved, this card's menu and Remake follow it instead of cutting the foot's outline again
+    assert plain["shoe"] is None and plain["length_mm"] < 265 and plain["outline"] == "default"
+
+    new = {"capture": shoe, "name": "Test Trainer", "size": "US men's 9.5", "default": True}
+    st, raw, _ = call(f"{op}/api/shoes", "POST", new)
+    assert st == 201, raw
+    s = json.loads(raw)
+    assert s["id"] == "test-trainer-us-men-s-9-5" and s["length_mm"] == pytest.approx(271, abs=2) and "outline" not in s
+    listed = body(call(f"{op}/api/shoes"))
+    assert listed["default"] == s["id"] and [x["id"] for x in listed["shoes"]] == [s["id"]]
+    assert call(f"{op}/api/shoes", "POST", {**new, "capture": foot})[0] == 400  # not a shoe's insole
+    assert call(f"{op}/api/shoes", "POST", {**new, "name": " "})[0] == 400
+    assert call(f"{phone}/api/shoes")[0] == 403
+
+    r = body(call(f"{op}/api/captures/{foot}/insole", "POST", {}))  # nothing chosen: the default saved shoe
+    assert r["shoe"]["saved"] == s["id"] and r["shoe"]["name"] == "Test Trainer, US men's 9.5"
+    assert r["outline"] == "saved"
+    assert r["length_mm"] == pytest.approx(271, abs=2)
+    assert "Test Trainer" in call(f"{op}/api/captures/{foot}/insole/summary.html")[1].decode()
+    own = body(call(f"{op}/api/captures/{foot}/insole", "POST", {"foot_outline": True}))
+    assert own["shoe"] is None and own["length_mm"] == plain["length_mm"] and own["outline"] == "foot"
+    # recorded, so the studio's menu shows "the foot's own" for this card after a reload, not the default shoe
+    mine = [c for c in body(call(f"{op}/api/captures")) if c["capture_id"] == foot][0]
+    assert mine["insole"]["outline"] == "foot"
+    assert call(f"{op}/api/captures/{foot}/insole", "POST", {"saved_shoe": s["id"], "length_mm": 280})[0] == 400
+    assert call(f"{op}/api/captures/{foot}/insole", "POST", {"saved_shoe": s["id"], "foot_outline": True})[0] == 400
+    assert call(f"{op}/api/captures/{foot}/insole", "POST", {"saved_shoe": "no-such-shoe"})[0] == 400
+    assert call(f"{op}/api/captures/{foot}/insole", "POST", {"saved_shoe": "../x"})[0] == 400
+
+    # saved again (a better scan of the same shoe): an insole made from the old outline is stale
+    assert body(call(f"{op}/api/captures/{foot}/insole", "POST", {"saved_shoe": s["id"]}))["shoe"]["saved"] == s["id"]
+    time.sleep(0.01)
+    assert call(f"{op}/api/shoes", "POST", new)[0] == 201
+    listed = [c for c in body(call(f"{op}/api/captures")) if c["capture_id"] == foot][0]
+    assert listed["insole"].get("stale") is True and listed["insole"]["stale_reason"] == "shoe"
+    assert listed["insole"]["stale_message"] == STALE_MESSAGES["shoe"]  # the card's words, from one place
+    st, raw, _ = call(f"{op}/api/captures/{foot}/insole/insole.3mf")
+    assert st == 409 and "shoe" in json.loads(raw)["error"] and "3D model" not in json.loads(raw)["error"]
+
+    # a capture.json naming something that isn't a saved shoe's id (edited by hand): that insole is stale, and
+    # the studio's list still loads (it used to answer 500, an empty studio)
+    cj = data / "captures" / foot / "capture.json"
+    kept = cj.read_bytes()
+    m = json.loads(kept)
+    m["insole"]["shoe"]["saved"] = "../Not An Id"
+    cj.write_text(json.dumps(m))
+    st, raw, _ = call(f"{op}/api/captures")
+    assert st == 200
+    assert [c for c in json.loads(raw) if c["capture_id"] == foot][0]["insole"]["stale_reason"] == "shoe"
+    cj.write_bytes(kept)
+
+    # the default's file broken by hand: Make insole says so, rather than cutting to the foot's own outline
+    good = (data / "shoes" / f"{s['id']}.json").read_bytes()
+    (data / "shoes" / f"{s['id']}.json").write_text("<<<<<<< HEAD\n")
+    st, raw, _ = call(f"{op}/api/captures/{foot}/insole", "POST", {})
+    assert st == 400 and "default saved shoe can't be used" in json.loads(raw)["error"]
+    assert "can't be used" in body(call(f"{op}/api/shoes"))["default_problem"]
+    (data / "shoes" / f"{s['id']}.json").write_bytes(good)
+
+    assert body(call(f"{op}/api/shoes/default", "POST", {"id": None})) == {"default": None}
+    assert call(f"{op}/api/shoes/default", "POST", {"id": "no-such-shoe"})[0] == 400
+    assert body(call(f"{op}/api/captures/{foot}/insole", "POST", {}))["shoe"] is None  # no default: the foot's
+    (data / "captures" / shoe / "mesh.ply").write_bytes(b"ply\nnot a model")  # broken: an answer, not a dropped line
+    st, raw, _ = call(f"{op}/api/shoes", "POST", new)
+    assert st == 400 and "couldn't read" in json.loads(raw)["error"]
+
+
+def test_saving_a_shoe_into_a_folder_that_cant_be_written_is_the_studios_fault_not_the_scans(servers, monkeypatch):
+    """A save that fails on the studio's own disk (not writable, full) answers 500 naming the folder, not a 400
+    that sends the user off to scan a good insole again."""
+    import synth
+
+    from footscan import shoes
+
+    op, _, _ = servers
+    shoe = body(call(f"{op}/api/captures", "POST", {"condition": "shoe_insole", "session": "LIDAR",
+                                                    "method": "imported_mesh"}))["id"]
+    assert call(f"{op}/api/captures/{shoe}/mesh?ext=obj&up=y", "PUT",
+                synth.shoe_insole().export(file_type="obj").encode(), {"Content-Type": "application/octet-stream"})[0] == 200
+
+    def refuse(*a, **k):
+        raise PermissionError(13, "Permission denied")
+
+    monkeypatch.setattr(shoes, "save", refuse)
+    st, raw, _ = call(f"{op}/api/shoes", "POST", {"capture": shoe, "name": "Test Trainer", "size": "9.5"})
+    assert st == 500
+    err = json.loads(raw)["error"]
+    assert "couldn't save the shoe" in err and "Permission denied" in err and "read the shoe's insole" not in err
 
 
 def test_the_studio_compares_two_scans_of_the_same_foot(servers):
@@ -1854,3 +2109,60 @@ def test_a_studio_that_cant_write_its_key_says_how_to_make_it(monkeypatch):
     monkeypatch.setattr(server, "load_studio_key", read_only)
     with pytest.raises(SystemExit, match="Start footscan serve once as yourself"):
         server.serve()
+
+
+# ---- what the customer's scan page sends, and who it is from --------------------------------------------------
+
+def test_a_customers_scan_summary_keeps_only_numbers_and_short_words(servers):
+    """The scan page sends its summary without the studio key, and the studio page shows it: markup sent in it
+    (here, a script tag in a number's place) is not kept, while what scanner.js really sends is."""
+    op, phone, _ = servers
+    sub = body(call(f"{phone}/api/submissions", "POST", PERSON))
+    tok = {"X-Upload-Token": sub["upload_token"]}
+    key = sub["plan"][0]["key"]
+    base = f"{phone}/api/submissions/{sub['id']}/scans/{key}"
+    assert call(f"{base}/start", "POST", {}, tok)[0] == 200
+    assert call(f"{base}/frames/1", "PUT", JPEG, {**tok, "Content-Type": "image/jpeg"})[0] == 200
+    bad = "<img src=x onerror=alert(1)>" + "x" * 40
+    summary = {"frames_kept": 1, "duration_s": bad, "rejected_blur": 0, "mat_paper": "a4",
+               "view_sources": {"sensor": 1}, "focal_px_median": None, "orientation_source": {"no": [bad]},
+               bad: 1, "coverage_completeness": 0.5}
+    assert call(f"{base}/complete", "POST", {"frames": [], "summary": summary}, tok)[0] == 200
+    kept = body(call(f"{op}/api/submissions/{sub['id']}"))["scans"][key]["summary"]
+    assert kept == {"frames_kept": 1, "rejected_blur": 0, "mat_paper": "a4", "view_sources": {"sensor": 1},
+                    "focal_px_median": None, "coverage_completeness": 0.5}
+
+
+def test_the_submission_page_escapes_every_scan_summary_figure():
+    """Summaries saved before the server cleaned them are still shown: the page itself escapes each one."""
+    import re
+
+    page = (WEB_DIR / "studio" / "submission.html").read_text(encoding="utf-8")
+    raw = re.findall(r"\$\{\s*\(?\s*(?:sum\.|scan\.load_kg|s\.feet)", page)
+    assert raw == []
+
+
+def test_rate_limit_counts_a_direct_request_by_its_own_address_whatever_header_it_sends():
+    from footscan.server import client_of
+
+    spoof = {"CF-Connecting-IP": "203.0.113.5", "X-Forwarded-For": "203.0.113.6"}
+    assert client_of("100.70.1.2", spoof) == "100.70.1.2"       # straight from Tailscale or the Wi-Fi
+    assert client_of("127.0.0.1", spoof) == "203.0.113.5"       # the tunnel on this computer names the client
+    assert client_of("127.0.0.1", {"X-Forwarded-For": "198.51.100.1, 10.0.0.1"}) == "198.51.100.1"
+    assert client_of("127.0.0.1", {}) == "127.0.0.1"
+
+
+def test_rate_limiter_forgets_clients_with_nothing_in_the_last_hour(monkeypatch):
+    import time
+
+    from footscan import server
+
+    monkeypatch.setattr(server, "RATE_LIMIT_CLIENTS_KEPT", 3)
+    limiter = server.RateLimiter(per_hour=1)
+    now = [1000.0]
+    monkeypatch.setattr(time, "monotonic", lambda: now[0])
+    for c in ("a", "b", "c", "d"):
+        assert limiter.allow(c)
+    now[0] += 3601
+    assert limiter.allow("e") and set(limiter.hits) == {"e"}
+    assert not limiter.allow("e")  # the limit itself still holds
