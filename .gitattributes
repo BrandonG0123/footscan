@@ -1,0 +1,4 @@
+# The served mat files are compared byte for byte with the generator (tests/test_mat.py), so they keep LF line
+# endings on every system; Git for Windows would otherwise turn them into CRLF on checkout (core.autocrlf).
+web/mat/*.json text eol=lf
+web/mat/*.pdf binary

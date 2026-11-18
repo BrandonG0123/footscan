@@ -14,13 +14,17 @@ sluggish for the person scanning.
 
 from __future__ import annotations
 
+import functools
 import json
 import math
+import os
 import subprocess
 import sys
 import threading
 import time
 from pathlib import Path
+
+from . import atomic
 
 # Files the studio may download from a recon folder (nothing else is served).
 RECON_FILES = {
@@ -40,27 +44,75 @@ class Busy(Exception):
     pass
 
 
-def pid_alive(pid) -> bool:
-    """Is a process with this id still running?"""
-    import os
+ERROR_ACCESS_DENIED = 5
+# A build writes its status at every stage; none goes this long without one (dense reconstruction, the
+# longest, takes minutes). A judgment, not measured on the tank.
+SILENT_BUILD_S = 6 * 3600.0
+# How far the clock may have been set forward since the computer started (NTP fixing a slow clock) before a
+# status written just after the start would look older than the start.
+CLOCK_SLACK_S = 600.0
 
+
+@functools.cache
+def _kernel32():
+    import ctypes
+
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    k32.GetTickCount64.restype = ctypes.c_ulonglong
+    return k32
+
+
+def _windows_pid_alive(pid: int, k32=None, last_error=None, unheard_for_s: float | None = None) -> bool:
+    """Windows: ask for the process's exit code. Opening it is refused (access denied) when another account
+    started it (``footscan reconstruct`` in the owner's PowerShell, seen by the Local Service studio): it
+    exists, so it's running, unless its build hasn't written its status for longer than any build takes
+    (``unheard_for_s`` > SILENT_BUILD_S): then the number belongs to another account's process now (Windows
+    hands numbers out again soon). Any other refusal (no such process) is not running."""
+    import ctypes
+
+    if k32 is None:
+        k32, last_error = _kernel32(), ctypes.get_last_error
+    PROCESS_QUERY_LIMITED_INFORMATION, STILL_ACTIVE = 0x1000, 259
+    handle = k32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+    if not handle:
+        return last_error() == ERROR_ACCESS_DENIED and not (unheard_for_s is not None and unheard_for_s > SILENT_BUILD_S)
+    try:
+        code = ctypes.c_ulong()
+        return bool(k32.GetExitCodeProcess(handle, ctypes.byref(code))) and code.value == STILL_ACTIVE
+    finally:
+        k32.CloseHandle(handle)
+
+
+def booted_at() -> float | None:
+    """When this computer last started (seconds since 1970), or None if it can't tell (macOS)."""
+    if os.name == "nt":
+        return time.time() - _kernel32().GetTickCount64() / 1000  # milliseconds since it started
+    try:
+        with open("/proc/stat", encoding="ascii") as f:
+            for line in f:
+                if line.startswith("btime "):
+                    return float(line.split()[1])
+    except (OSError, ValueError):
+        pass
+    return None
+
+
+def pid_alive(pid, since=None) -> bool:
+    """Is a process with this id still running? ``since``: when that process last wrote its status (``at``).
+    A process from before the computer last started (allowing CLOCK_SLACK_S for the clock being set forward
+    since) has stopped, whatever has its number now: Windows hands numbers out again soon, and one now held
+    by another account (a system service) can't be asked, so it would look alive for good. (Windows' Fast
+    Startup shutdown keeps the start time; a restart or a power cut resets it.)"""
     if not isinstance(pid, int) or pid <= 0:
         return False
+    if isinstance(since, (int, float)):
+        boot = booted_at()
+        if boot is not None and since < boot - CLOCK_SLACK_S:
+            return False
     if os.name == "nt":
         # On Windows os.kill(pid, 0) is not a harmless check: signal 0 is
         # CTRL_C_EVENT, which would interrupt the build. Ask Windows instead.
-        import ctypes
-
-        PROCESS_QUERY_LIMITED_INFORMATION, STILL_ACTIVE = 0x1000, 259
-        k32 = ctypes.windll.kernel32
-        handle = k32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
-        if not handle:
-            return False
-        try:
-            code = ctypes.c_ulong()
-            return bool(k32.GetExitCodeProcess(handle, ctypes.byref(code))) and code.value == STILL_ACTIVE
-        finally:
-            k32.CloseHandle(handle)
+        return _windows_pid_alive(pid, unheard_for_s=time.time() - since if isinstance(since, (int, float)) else None)
     try:
         os.kill(pid, 0)  # signal 0: "does it exist?", sends nothing
     except ProcessLookupError:
@@ -68,6 +120,20 @@ def pid_alive(pid) -> bool:
     except PermissionError:
         return True
     return True
+
+
+def read_json_or_none(path: Path, encoding: str = "utf-8"):
+    """A recon file's JSON, or None when it isn't there, can't be read, isn't UTF-8 or is cut short (being
+    rewritten, or removed by a rebuild between the check and the read)."""
+    try:
+        return json.loads(path.read_text(encoding=encoding))
+    except (ValueError, OSError):  # garbled or not UTF-8 (both ValueErrors), or gone meanwhile
+        return None
+
+
+def read_calipers(folder: Path) -> dict | None:
+    """calipers.json, also when saved with a byte-order mark (Notepad, PowerShell 5.1's -Encoding UTF8)."""
+    return read_json_or_none(folder / "calipers.json", encoding="utf-8-sig")
 
 
 def validate_calipers(body: dict) -> dict:
@@ -100,15 +166,12 @@ class ReconRunner:
                 raise Busy(f"another 3D model is being built ({self.folder.name}); try again when it finishes")
             st = folder / "recon" / "status.json"
             if st.exists():
-                try:
-                    cur = json.loads(st.read_text())
-                except (json.JSONDecodeError, OSError):
-                    cur = {}
-                if cur.get("state") == "running" and pid_alive(cur.get("pid")):
+                cur = read_json_or_none(st) or {}
+                if cur.get("state") == "running" and pid_alive(cur.get("pid"), cur.get("at")):
                     raise Busy("this model is already being built")
             out = folder / "recon"
             out.mkdir(exist_ok=True)
-            (out / "status.json").write_text(json.dumps(dict(stage="queued", state="running", at=time.time())))
+            atomic.write_utf8(out / "status.json", json.dumps(dict(stage="queued", state="running", at=time.time())))
             if accuracy_only:
                 cmd = [self.python, "-m", "footscan.cli", "accuracy", str(folder)]
                 if (folder / "calipers.json").exists():
@@ -119,8 +182,11 @@ class ReconRunner:
                 cmd.append("--calibration-object")
                 if (folder / "calipers.json").exists():
                     cmd += ["--calipers", str(folder / "calipers.json")]
-            log = open(out / "log.txt", "w")  # noqa: SIM115 - handed to the child process
-            self.proc = subprocess.Popen(cmd, stdout=log, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL)
+            log = open(out / "log.txt", "wb")  # noqa: SIM115 - handed to the child process, which writes it
+            # UTF-8 mode in the child, so what it prints and writes is UTF-8 on Windows too (its default there is
+            # the ANSI code page, which can't write characters like the √ in a report and crashes)
+            env = {**os.environ, "PYTHONUTF8": "1"}
+            self.proc = subprocess.Popen(cmd, stdout=log, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, env=env)
             self.folder = folder
             log.close()
 
@@ -130,14 +196,13 @@ def summary(folder: Path, runner: ReconRunner | None = None) -> dict:
     out = folder / "recon"
     if not (out / "status.json").exists():
         return dict(state="none")
-    try:
-        status = json.loads((out / "status.json").read_text())
-    except (json.JSONDecodeError, OSError):
+    status = read_json_or_none(out / "status.json")
+    if status is None:
         return dict(state="running", stage="starting")  # being written this instant
     # A process that died without writing "done"/"failed" (killed, crashed).
     # The process id survives a restart of the web server; the runner doesn't.
     running_here = runner is not None and runner.busy() and runner.folder == folder
-    if status.get("state") == "running" and not running_here and not pid_alive(status.get("pid")):
+    if status.get("state") == "running" and not running_here and not pid_alive(status.get("pid"), status.get("at")):
         status.update(state="failed", error="the reconstruction process stopped unexpectedly")
     elapsed = status.get("elapsed_s") or 0
     if status.get("state") == "running" and status.get("at"):
@@ -145,10 +210,7 @@ def summary(folder: Path, runner: ReconRunner | None = None) -> dict:
     res = dict(state=status.get("state"), stage=status.get("stage"), elapsed_s=round(elapsed),
                error=status.get("error"))
     if (out / "report.json").exists() and res["state"] != "running":
-        try:
-            r = json.loads((out / "report.json").read_text())
-        except (json.JSONDecodeError, OSError):
-            r = {}
+        r = read_json_or_none(out / "report.json") or {}
         res.update(
             synthetic=r.get("synthetic"),
             seconds=r.get("seconds"),
@@ -164,11 +226,12 @@ def summary(folder: Path, runner: ReconRunner | None = None) -> dict:
             plantar=r.get("plantar"),
         )
     if (out / "plantar.json").exists() and res["state"] == "done":
-        p = json.loads((out / "plantar.json").read_text())
+        p = read_json_or_none(out / "plantar.json") or {}
         res["medial_profile"] = p.get("medial_profile")
     if res["state"] == "failed" and (out / "log.txt").exists():
-        res["log_tail"] = (out / "log.txt").read_text(errors="replace")[-2000:]
+        res["log_tail"] = (out / "log.txt").read_text(encoding="utf-8", errors="replace")[-2000:]
     res["files"] = [f for f in RECON_FILES if (out / f).exists()] if res["state"] == "done" else []
-    if (folder / "calipers.json").exists():
-        res["calipers"] = json.loads((folder / "calipers.json").read_text())
+    calipers = read_calipers(folder)
+    if calipers is not None:
+        res["calipers"] = calipers
     return res

@@ -24,10 +24,12 @@ would see if you scanned again tomorrow.
 from __future__ import annotations
 
 import csv
+import io
 import math
 from collections import defaultdict
 from dataclasses import dataclass, field
 from itertools import combinations
+from pathlib import Path
 
 import numpy as np
 from scipy import stats
@@ -37,10 +39,20 @@ MIN_RELIABLE_N = 5
 G = 9.80665
 
 
+def _csv_text(p) -> str:
+    """A hand-filled CSV's text. Excel saves "CSV UTF-8" with a byte-order mark (utf-8-sig drops it, or the
+    first column name would carry it) and plain "CSV" on Windows in cp1252, which isn't valid UTF-8."""
+    raw = Path(p).read_bytes()
+    try:
+        return raw.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        return raw.decode("cp1252", errors="replace")
+
+
 def read_rows(paths) -> list[dict]:
     rows = []
     for p in paths:
-        with open(p, newline="") as fh:
+        with io.StringIO(_csv_text(p), newline="") as fh:
             for r in csv.DictReader(fh):
                 if r.get("value", "").strip() == "":
                     continue

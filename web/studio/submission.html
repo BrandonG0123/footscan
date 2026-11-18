@@ -99,12 +99,12 @@
       <dl class="facts" style="margin-top:12px">
         <div><dt>Photos</dt><dd class="mono">${files.length}</dd></div>
         <div><dt>Angles covered</dt><dd class="mono">${cov}</dd></div>
-        <div><dt>Rejected</dt><dd class="mono">${(sum.rejected_blur ?? 0) + (sum.rejected_exposure ?? 0)}</dd></div>
-        <div><dt>Scan time</dt><dd class="mono">${sum.duration_s ?? "—"} s</dd></div>
-        <div><dt>Scale reading</dt><dd class="mono">${scan.load_kg == null ? "—" : scan.load_kg + " kg"}</dd></div>
-        <div><dt>Photos with mat</dt><dd class="mono">${sum.frames_with_mat ?? "—"}${files.length && sum.frames_with_mat != null ? ` (${Math.round(100 * sum.frames_with_mat / files.length)}%)` : ""}</dd></div>
+        <div><dt>Rejected</dt><dd class="mono">${esc((Number(sum.rejected_blur) || 0) + (Number(sum.rejected_exposure) || 0))}</dd></div>
+        <div><dt>Scan time</dt><dd class="mono">${esc(sum.duration_s ?? "—")} s</dd></div>
+        <div><dt>Scale reading</dt><dd class="mono">${esc(scan.load_kg == null ? "—" : scan.load_kg + " kg")}</dd></div>
+        <div><dt>Photos with mat</dt><dd class="mono">${esc(sum.frames_with_mat ?? "—")}${files.length && sum.frames_with_mat != null ? ` (${esc(Math.round(100 * sum.frames_with_mat / files.length))}%)` : ""}</dd></div>
         <div><dt>Mat paper</dt><dd>${esc(sum.mat_paper || "—")}</dd></div>
-        <div><dt>Focal estimate</dt><dd class="mono">${sum.focal_px_median ? Math.round(sum.focal_px_median) + " px" : "—"}</dd></div>
+        <div><dt>Focal estimate</dt><dd class="mono">${esc(sum.focal_px_median ? Math.round(sum.focal_px_median) + " px" : "—")}</dd></div>
       </dl>
       ${files.length ? `<div class="thumbs">${thumbs}</div>` : ""}
       ${files.length > 24 ? `<p class="hint" style="margin:8px 0 0">Showing 24 of ${files.length}.</p>` : ""}
@@ -129,7 +129,7 @@
           <section class="card" style="margin:0 0 16px">
             <dl class="facts">
               <div><dt>Sent</dt><dd>${fmtDate(s.submitted)}</dd></div>
-              <div><dt>Feet</dt><dd>${s.feet.join(", ")}</dd></div>
+              <div><dt>Feet</dt><dd>${esc(s.feet.join(", "))}</dd></div>
               <div><dt>Use</dt><dd>${esc(s.survey?.sport || answerText(schema.flatMap((x) => x.questions).find((q) => q.id === "use"), s.survey?.use))}</dd></div>
               <div><dt>Scans</dt><dd>${Object.keys(s.scans).length}</dd></div>
               <div><dt>Mat check bar</dt><dd class="mono">${s.mat_check ? `${s.mat_check.value} ${s.mat_check.unit} (${s.mat_check.mm} mm)` : s.mat_check_mm == null ? "—" : s.mat_check_mm + " mm"}</dd></div>

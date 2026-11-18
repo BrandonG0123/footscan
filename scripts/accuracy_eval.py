@@ -148,12 +148,12 @@ def main(argv=None) -> int:
     out = dict(scans=rows, pairs=pairs)
     if a.json:
         Path(a.json).parent.mkdir(parents=True, exist_ok=True)
-        Path(a.json).write_text(json.dumps(out, indent=2))
+        Path(a.json).write_text(json.dumps(out, indent=2), encoding="utf-8")
     md = to_markdown(out)
     print(md)
     if a.md:
         Path(a.md).parent.mkdir(parents=True, exist_ok=True)
-        Path(a.md).write_text(md)
+        Path(a.md).write_text(md, encoding="utf-8")
     return 0
 
 

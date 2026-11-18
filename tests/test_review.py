@@ -7,6 +7,7 @@ make_insole, so the packets read exactly what the studio writes.
 import json
 import plistlib
 import shutil
+import sys
 import zipfile
 
 import numpy as np
@@ -86,6 +87,51 @@ def test_a_left_and_right_of_different_lengths_are_flagged_and_drawn_together(da
     for p in made:
         assert not _check(p, "pair_length")["ok"]  # 275 mm against the foot's own length
         assert (p / "pair.png").read_bytes().startswith(b"\x89PNG")
+
+
+def test_an_insole_cut_to_a_saved_shoe_is_checked_against_that_shoe_not_the_chart_length(tmp_path):
+    """The insole takes the saved shoe's outline (the design rule: the shoe sets the outline), so its length
+    check is against that outline. The spec's 275 mm chart length would FLAG it, and the skill's fix for that
+    used to rebuild from the foot's own outline. A saved shoe that isn't the spec's shoe is flagged by name."""
+    from footscan import shoes
+    from footscan.recon import shoe as shoe_mod
+
+    data = tmp_path / "data"
+    outline, read = shoe_mod.outline_from_scan(synth.shoe_insole(ball=114.0))
+    s = shoes.save(data / "shoes", outline, "ASICS Gel Resolution X", "US men's 9.5", "synthetic", read)
+    d = data / "captures" / "Rsaved"
+    d.mkdir(parents=True)
+    m = synth.block_foot(0.0, "right", origin=(0, 0))
+    m.apply_transform(np.block([[imported.UP["y"].T, np.zeros((3, 1))], [np.zeros((1, 3)), np.ones((1, 1))]]))
+    m.apply_scale(0.001)
+    m.export(d / "mesh.ply")
+    meta = dict(capture_id="Rsaved", foot="right", method="imported_mesh", condition="swb", scan_kind="foot",
+                mesh=dict(up="y"))
+    meta["insole"] = server.make_insole(d, meta, saved=server.saved_shoe(data / "shoes", s["id"]))
+    assert "error" not in meta["insole"], meta["insole"]
+    server.write_json(d / "capture.json", meta)
+    assert abs(meta["insole"]["length_mm"] - 275.0) > 1.0  # the saved shoe isn't the chart's 275 mm
+
+    [p] = review.run_once(data, SPEC)
+    c = _check(p, "length")
+    assert c["ok"] and "the saved shoe ASICS Gel Resolution X, US men's 9.5" in c["found"]
+    assert _check(p, "shoe")["ok"]
+    md = (p / "packet.md").read_text()
+    assert "Outline: the saved shoe ASICS Gel Resolution X, US men's 9.5" in md
+
+    other = dict(SPEC, shoe="Some Other Shoe", size="US men's 10")
+    shutil.rmtree(data / "reviews")
+    [p] = review.run_once(data, other)
+    c = _check(p, "shoe")
+    assert not c["ok"] and "review-spec.json names Some Other Shoe" in c["found"]
+    assert _check(p, "length")["ok"]
+
+
+def test_an_insole_with_the_foots_own_outline_says_so_in_its_packet(data):
+    _only(data, "Lfoot")
+    [p] = review.run_once(data, SPEC)
+    assert "the outline is the foot's own" in _check(p, "length")["found"]
+    assert "Outline: the foot's own" in (p / "packet.md").read_text()
 
 
 def test_pictures_are_real_pngs_at_half_a_millimetre_per_pixel(data):
@@ -329,6 +375,16 @@ def test_every_service_serves_on_the_wifi_with_https_and_review_and_never_public
     assert "--public" not in r["content"]  # the internet is a separate step, with the owner's go-ahead
 
 
+def test_every_service_runs_the_studio_in_utf8_mode(tmp_path):
+    """Windows' default text encoding can't write characters like the √ in a report; UTF-8 mode fixes the whole
+    process, including libraries that open text files with the default."""
+    plist = plistlib.loads(service.render("macos", tmp_path / "f", tmp_path / "d")["content"].encode())
+    assert plist["EnvironmentVariables"] == {"PYTHONUTF8": "1"}
+    assert "Environment=PYTHONUTF8=1" in service.render("linux", tmp_path / "f", tmp_path / "d")["content"]
+    assert "nssm set Footscan AppEnvironmentExtra PYTHONUTF8=1" in service.render(
+        "windows", tmp_path / "f", tmp_path / "d")["content"]
+
+
 def test_the_macos_service_is_a_valid_launch_agent_that_restarts(tmp_path):
     r = service.render("macos", tmp_path / "foot scan", tmp_path / "data")
     plist = plistlib.loads(r["content"].encode())
@@ -347,6 +403,56 @@ def test_the_windows_service_opens_the_port_on_private_networks_only(tmp_path):
     r = service.render("windows", tmp_path / "footscan", tmp_path / "data")
     assert "nssm install Footscan" in r["content"] and "Scripts/footscan.exe" in r["content"].replace("\\", "/")
     assert "-Profile Private" in r["content"]
+
+
+def test_the_windows_service_runs_nssm_from_where_only_an_administrator_can_change_it(tmp_path):
+    """nssm.exe is the service's program and runs as administrator whenever nssm is typed; winget leaves it in the
+    user's own folder, so the commands copy it
+    to Program Files and put that copy first before `nssm install` records which nssm the service runs."""
+    lines = service.render("windows", tmp_path / "footscan", tmp_path / "data")["content"].splitlines()
+    copy = next(i for i, ln in enumerate(lines) if "Copy-Item" in ln and "Program Files\\nssm" in ln)
+    first = next(i for i, ln in enumerate(lines) if ln.startswith('$env:Path = "C:\\Program Files\\nssm;"'))
+    install = next(i for i, ln in enumerate(lines) if ln.startswith("nssm install Footscan"))
+    assert copy < first < install
+
+
+def test_windows_service_commands_made_on_another_computer_ask_the_checkouts_own_python(tmp_path, monkeypatch):
+    """Made on the Mac for the tank: the Mac's Python folder is no use there, so the commands ask the
+    checkout's .venv for its Python, as DEPLOY-TANK.md does, and grant that."""
+    monkeypatch.setattr(service.os, "name", "posix")
+    lines = service.render("windows", tmp_path / "footscan", tmp_path / "data")["content"].splitlines()
+    ask = next(i for i, ln in enumerate(lines) if ln.startswith("$py = & "))
+    assert "python.exe" in lines[ask] and "sys.base_prefix" in lines[ask]
+    assert lines[ask + 1].startswith("icacls $py /grant") and not any(sys.base_prefix in ln for ln in lines)
+
+
+def test_pasting_the_windows_service_commands_again_leaves_the_running_nssm_alone(tmp_path):
+    """The second time, (Get-Command nssm) is already the Program Files copy, which Copy-Item can't copy onto
+    itself or overwrite while a service runs from it; PowerShell would print the error and carry on."""
+    lines = service.render("windows", tmp_path / "footscan", tmp_path / "data")["content"].splitlines()
+    copy = next(ln for ln in lines if "Copy-Item" in ln)
+    assert copy.startswith('if (-not (Test-Path "C:\\Program Files\\nssm\\nssm.exe")) {')
+    assert "-ErrorAction Stop" in copy
+
+
+def test_the_windows_service_runs_the_studio_as_local_service_not_localsystem(tmp_path):
+    """The checkout and its .venv are the owner's to change, so the code the service starts must not run with
+    full control of the computer: it runs as Local Service, which may read the checkout and the Python the .venv
+    runs on and write only the data folder. And a later Administrator PowerShell's `nssm` must be the Program
+    Files copy, so that folder goes first on the computer's own PATH."""
+    r = service.render("windows", tmp_path / "footscan", tmp_path / "data", python_home=tmp_path / "py311")
+    lines = r["content"].splitlines()
+    install = next(i for i, ln in enumerate(lines) if ln.startswith("nssm install Footscan"))
+    account = lines.index('nssm set Footscan ObjectName "NT AUTHORITY\\LocalService"')
+    start = lines.index("nssm start Footscan")
+    assert install < account < start
+    grants = {ln.split('"')[1]: ln.split('"')[3] for ln in lines if ln.startswith("icacls ")}
+    assert grants == {str(tmp_path / "footscan"): "*S-1-5-19:(OI)(CI)RX", str(tmp_path / "py311"): "*S-1-5-19:(OI)(CI)RX",
+                      str(tmp_path / "data"): "*S-1-5-19:(OI)(CI)M"}
+    assert max(i for i, ln in enumerate(lines) if ln.startswith("icacls ")) < start
+    machine_path = next(ln for ln in lines if "SetEnvironmentVariable" in ln)
+    assert '"C:\\Program Files\\nssm;" + $machine, "Machine"' in machine_path and "-notcontains" in machine_path
+    assert any("LocalService" in step and "sc.exe qc" in step for step in r["steps"])
 
 
 def test_the_windows_service_refuses_a_data_folder_with_spaces(tmp_path):
@@ -368,3 +474,100 @@ def test_footscan_service_prints_only_the_file_on_stdout(capsys, tmp_path):
     assert cli.main(["service", "--system", "linux", "--data", str(tmp_path)]) == 0
     out = capsys.readouterr()
     assert out.out.startswith("[Unit]") and "systemctl --user" in out.err
+
+
+def test_a_saved_shoe_far_from_the_charts_length_is_flagged_though_the_insole_matches_it(tmp_path):
+    """An insole cut to a saved shoe always matches that shoe's outline, so the length check alone can't catch
+    a stock insole scanned at the wrong scale (the same few percent the foot scans read short). The outline is
+    checked against the spec's chart length too, within shoe_length_tolerance_mm."""
+    from footscan import shoes
+    from footscan.recon import shoe as shoe_mod
+
+    data = tmp_path / "data"
+    scan = synth.shoe_insole(ball=114.0)
+    scan.apply_scale(0.92)  # SYNTHETIC: a stock insole read 8% short
+    outline, read = shoe_mod.outline_from_scan(scan)
+    s = shoes.save(data / "shoes", outline, "ASICS Gel Resolution X", "US men's 9.5", "synthetic", read)
+    assert s["length_mm"] < 275.0 - 15
+    d = data / "captures" / "Rshort"
+    d.mkdir(parents=True)
+    m = synth.block_foot(0.0, "right", origin=(0, 0))
+    m.apply_transform(np.block([[imported.UP["y"].T, np.zeros((3, 1))], [np.zeros((1, 3)), np.ones((1, 1))]]))
+    m.apply_scale(0.001)
+    m.export(d / "mesh.ply")
+    meta = dict(capture_id="Rshort", foot="right", method="imported_mesh", condition="swb", scan_kind="foot",
+                mesh=dict(up="y"))
+    meta["insole"] = server.make_insole(d, meta, saved=server.saved_shoe(data / "shoes", s["id"]))
+    assert "error" not in meta["insole"], meta["insole"]
+    server.write_json(d / "capture.json", meta)
+
+    [p] = review.run_once(data, SPEC)
+    assert _check(p, "length")["ok"] and _check(p, "shoe")["ok"]  # it is the spec's shoe, and matches its outline
+    c = _check(p, "shoe_length")
+    assert not c["ok"] and "chart length" in c["found"]
+    assert "shoe_length" in json.loads((p / "review.json").read_text())["flags"]
+
+
+def _saved_shoe_capture(data, cid, foot, sid, turn_deg=0.0, scale=1.0):
+    """A SYNTHETIC block foot, turned ``turn_deg`` about the vertical and scaled, cut to saved shoe ``sid``."""
+    import trimesh
+
+    d = data / "captures" / cid
+    d.mkdir(parents=True)
+    m = synth.block_foot(0.0, foot, origin=(0, 0))
+    m.apply_transform(trimesh.transformations.rotation_matrix(np.radians(turn_deg), [0, 0, 1]))
+    m.apply_scale(scale)
+    m.apply_transform(np.block([[imported.UP["y"].T, np.zeros((3, 1))], [np.zeros((1, 3)), np.ones((1, 1))]]))
+    m.apply_scale(0.001)
+    m.export(d / "mesh.ply")
+    meta = dict(capture_id=cid, foot=foot, method="imported_mesh", condition="swb", scan_kind="foot",
+                mesh=dict(up="y"))
+    meta["insole"] = server.make_insole(d, meta, saved=server.saved_shoe(data / "shoes", sid))
+    assert "error" not in meta["insole"], meta["insole"]
+    server.write_json(d / "capture.json", meta)
+    return meta
+
+
+def test_a_pair_cut_to_one_saved_shoe_is_compared_by_the_outline_not_its_length_along_each_foot(tmp_path):
+    """Each foot turns the one saved outline to itself (up to 10 degrees), which shortens it along that foot by a
+    mm or two: the pair check compares the outline's own length, so a right pair isn't flagged. The shoe_length
+    check and the packet's Outline line use the outline's own length too."""
+    from footscan import shoes
+    from footscan.recon import shoe as shoe_mod
+
+    data = tmp_path / "data"
+    outline, read = shoe_mod.outline_from_scan(synth.shoe_insole(ball=114.0))
+    s = shoes.save(data / "shoes", outline, "ASICS Gel Resolution X", "US men's 9.5", "synthetic", read)
+    left = _saved_shoe_capture(data, "Lsaved", "left", s["id"])
+    right = _saved_shoe_capture(data, "Rsaved", "right", s["id"], turn_deg=8.0)
+    for meta in (left, right):
+        fit = meta["insole"]["shoe"]["fit"]
+        assert fit["outline_length_mm"] == pytest.approx(s["length_mm"], abs=0.2)
+    shutil.rmtree(data / "reviews", ignore_errors=True)
+    packets = review.run_once(data, SPEC)
+    for p in packets:
+        c = _check(p, "pair_length")
+        assert c["ok"] and "cut to an outline" in c["found"], c
+        assert f"is {s['length_mm']:.1f} mm long" in _check(p, "shoe_length")["found"]
+
+
+def test_a_saved_shoe_that_only_shares_an_id_with_the_specs_shoe_is_flagged(tmp_path):
+    """"Nike Pegasus", "40 US 9" and the spec's "Nike Pegasus 40", "US 9" have one id but are different shoes."""
+    from footscan import shoes
+    from footscan.recon import shoe as shoe_mod
+
+    data = tmp_path / "data"
+    outline, read = shoe_mod.outline_from_scan(synth.shoe_insole(ball=114.0))
+    s = shoes.save(data / "shoes", outline, "Nike Pegasus", "40 US 9", "synthetic", read)
+    _saved_shoe_capture(data, "Rpeg", "right", s["id"])
+    [p] = review.run_once(data, dict(SPEC, shoe="Nike Pegasus 40", size="US 9"))
+    assert not _check(p, "shoe")["ok"]
+
+
+def test_a_review_spec_saved_with_a_byte_order_mark_still_loads(tmp_path):
+    """Windows PowerShell 5.1's Set-Content -Encoding UTF8 (and "UTF-8 with BOM" in editors) starts the file with a
+    byte-order mark; strict UTF-8 refused it, and every review round then wrote no packet."""
+    spec = tmp_path / "review-spec.json"
+    spec.write_bytes(b"\xef\xbb\xbf" + json.dumps({"shoe": "Test Shoe", "target_length_mm": 271.0}).encode())
+    got = review.load_spec(spec)
+    assert got["shoe"] == "Test Shoe" and got["target_length_mm"] == 271.0

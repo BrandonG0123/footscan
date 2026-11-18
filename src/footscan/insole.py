@@ -104,6 +104,9 @@ class InsoleParams:
     target_length_mm: float | None = None  # if set, the outline reaches this length (a shoe's insole), see build()
     shoe_outline: tuple | None = None   # if set, the outline is this shoe's own insole's ((x, y), ...) mm, heel at
                                         # the origin (recon/shoe.py), fitted round the foot; see build()
+    shoe_name: str | None = None        # which shoe that outline is (a saved shoe, footscan/shoes.py), for the sheet
+    shoe_saved: bool = False            # that outline is a saved shoe's, kept once for both feet: mirroring it for
+                                        # the other foot is expected, not a sign the scan was upside down
     bed_mm: float = 256.0           # printer bed (Bambu X1/P1/A1); for the fit check only
 
 
@@ -118,6 +121,10 @@ class Insole:
     params: InsoleParams
     report: dict = field(default_factory=dict)
     sole: object = None             # the scan in the insole's own frame (for the 3-D preview)
+    surface: dict | None = None     # the fill as a grid, before the base goes under it (xs, ys, fill), the foot's
+                                    # outline it was read under, and the heel zone's weight along xs (1 in the
+                                    # heel, fading to 0 past it: where the caps changed): footwear.py builds a
+                                    # shoe's footbed from the same heights and caps
 
 
 # ---------------------------------------------------------------------------
@@ -368,7 +375,7 @@ def build(foot_mesh, foot: str, params: InsoleParams | None = None) -> Insole:
         warnings.append(f"{holes:.0%} of the area under the foot is a hole in the scan (taken as flat).")
     warnings += outline_notes
     if shoe_fit is not None:
-        warnings += shoe_mod.fit_warnings(shoe_fit)
+        warnings += shoe_mod.fit_warnings(shoe_fit, saved=p.shoe_saved)
     if extended:
         warnings.append(f"lengthened to {p.target_length_mm:.0f} mm for the shoe: the flat front was extended by "
                         f"{extended:.0f} mm past the toes; the shape under the heel, arch and ball is unchanged")
@@ -388,10 +395,15 @@ def build(foot_mesh, foot: str, params: InsoleParams | None = None) -> Insole:
         max_fill_at_mm=dict(x=round(float(X[peak]), 1), y=round(float(Y[peak]), 1)),
         bed_fit=bed_fit_shape(np.asarray(mesh.vertices)[:, :2], p.bed_mm),
         shoe_fit=shoe_fit,
+        lengthened_mm=round(float(extended), 1),  # added to the front to reach the shoe's length (0: none needed)
+        # where the outline came from: a shoe's insole (the same for every foot in that shoe), or this foot's own
+        outline_from="shoe" if shoe_fit is not None else "foot",
+        shoe_name=p.shoe_name if shoe_fit is not None else None,
         warnings=warnings,
         frame="mm; x forward from the back of the heel, y toward the foot's left, z up; bottom at z = 0",
     )
-    return Insole(mesh=mesh, foot=foot, params=p, report=report, sole=m)
+    return Insole(mesh=mesh, foot=foot, params=p, report=report, sole=m,
+                  surface=dict(xs=xs, ys=ys, fill=fill, under_foot=in_sil, foot_outline=sil, heel_weight=w_heel[0]))
 
 
 def bed_fit_shape(xy, bed: float, clearance: float = 3.0) -> dict:
@@ -576,15 +588,38 @@ def capture_html(prep: dict | None) -> str:
     return "<h2>How the foot was captured</h2>\n<table>\n" + "\n".join(rows) + "\n</table>"
 
 
-def shoe_row(fit: dict | None) -> str:
-    """The summary sheet's line on the outline: the foot's own, or fitted to a shoe's insole."""
+def shoe_row(fit: dict | None, name: str | None = None, lengthened_to: float | None = None,
+             added_mm: float | None = None) -> str:
+    """The summary sheet's line on the outline: the foot's own (lengthened to a shoe's length or not), or fitted
+    to a shoe's insole. ``added_mm``: how much the front was lengthened (None: not recorded, an older insole)."""
+    from html import escape
+
+    if not fit and lengthened_to and added_mm is not None and added_mm <= 0:
+        return (f'<tr><th>Outline</th><td colspan="3">the foot\'s own, already the shoe\'s {lengthened_to:g} mm long '
+                f'(nothing added; no shoe\'s outline): check it against the shoe\'s stock insole and trim to '
+                f'it</td></tr>')
+    if not fit and lengthened_to:
+        return (f'<tr><th>Outline</th><td colspan="3">the foot\'s own, its front lengthened to the shoe\'s '
+                f'{lengthened_to:g} mm (no shoe\'s outline): check it against the shoe\'s stock insole and trim to '
+                f'it</td></tr>')
     if not fit:
-        return ""
+        return ('<tr><th>Outline</th><td colspan="3">the foot\'s own (no shoe chosen): check it against the '
+                'shoe\'s stock insole and trim to it</td></tr>')
     o = fit["overhang"]
     over = (f"the foot is wider than it at the {o['where']} by up to {o['max_mm']} mm (the insole stops at the shoe's edge)"
             if o["max_mm"] > 1.0 else "the foot is inside it all round")
-    return (f'<tr><th>Outline</th><td colspan="3">the shoe\'s own insole ({fit["shoe_length_mm"]} mm long, '
+    which = f" of the {escape(name)}" if name else ""
+    return (f'<tr><th>Outline</th><td colspan="3">the shoe\'s own insole{which} '
+            f'({fit.get("outline_length_mm", fit["shoe_length_mm"])} mm long, '
             f'{fit["room_past_toes_mm"]} mm past the toes{", matched mirrored" if fit["mirrored"] else ""}); {over}</td></tr>')
+
+
+# The break-in protocol (docs/SAFETY.md, requirement 2), as every summary sheet prints it: the insole's and the
+# printed shoe's (footwear.py) both use this one paragraph.
+BREAK_IN_HTML = """<p>Day 1: 1 h &middot; days 2&ndash;3: 2 h &middot; days 4&ndash;5: 3 h &middot; days 6&ndash;7: 4 h &middot; days 8&ndash;10: 6 h &middot;
+days 11&ndash;14: all day. Check both feet after every session.
+<b>Stop at once</b> and don't resume until reviewed if anything new hurts (foot, ankle, shin, knee, hip or back),
+a skin mark is still there the next day, a foot feels numb, tingly or burning, or an existing pain gets worse.</p>"""
 
 
 def summary_html(insole: Insole, scan_label: str, synthetic: bool = False) -> str:
@@ -627,7 +662,7 @@ anything and is not equivalent to, or a substitute for, a prescribed orthotic. N
 <tr><th>Stiffness</th><td colspan="3">Uniform (no lattice zones). Material and infill as printed: record below.</td></tr>
 <tr><th>Size</th><td colspan="3">{r['length_mm']} &times; {r['width_mm']} mm, {r['height_mm']} mm tall</td></tr>
 {f'<tr><th>Under the toes</th><td colspan="3">no fill from {p.toes_flat_from:.0%} of the length (the toes lie flat when standing)</td></tr>' if p.toes_flat_from is not None else ''}
-{shoe_row(r.get('shoe_fit'))}
+{shoe_row(r.get('shoe_fit'), r.get('shoe_name'), p.target_length_mm, r.get('lengthened_mm'))}
 </table>
 
 {capture}
@@ -654,10 +689,7 @@ The foot frame is {"provisional (from the scan alone)" if scan.get('provisional'
 <p>Notes:</p><div style="border:1px solid #ccc;height:90px"></div>
 
 <h2>Break-in (walking only until signed above)</h2>
-<p>Day 1: 1 h &middot; days 2&ndash;3: 2 h &middot; days 4&ndash;5: 3 h &middot; days 6&ndash;7: 4 h &middot; days 8&ndash;10: 6 h &middot;
-days 11&ndash;14: all day. Check both feet after every session.
-<b>Stop at once</b> and don't resume until reviewed if anything new hurts (foot, ankle, shin, knee, hip or back),
-a skin mark is still there the next day, a foot feels numb, tingly or burning, or an existing pain gets worse.</p>
+{BREAK_IN_HTML}
 </body></html>"""
 
 
@@ -727,9 +759,9 @@ def write_outputs(insole: Insole, out_dir: Path, name: str, scan_label: str, syn
                  notes=out / "print-notes.txt", json=out / f"{name}.json")
     write_3mf(insole.mesh, files["threemf"], title=f"{tag}{name}", notes=notes, bed_mm=insole.params.bed_mm)
     insole.mesh.export(files["stl"])
-    files["summary"].write_text(summary_html(insole, scan_label, synthetic))
-    files["notes"].write_text(PRINT_NOTES)
-    files["json"].write_text(json.dumps(dict(synthetic=synthetic, params=asdict(insole.params), **insole.report), indent=2))
+    files["summary"].write_text(summary_html(insole, scan_label, synthetic), encoding="utf-8")
+    files["notes"].write_text(PRINT_NOTES, encoding="utf-8")
+    files["json"].write_text(json.dumps(dict(synthetic=synthetic, params=asdict(insole.params), **insole.report), indent=2), encoding="utf-8")
     out_files = {k: str(v) for k, v in files.items()}
     out_files.update({f"preview_{k}": v for k, v in write_preview(insole, out, name).items()})
     return out_files
