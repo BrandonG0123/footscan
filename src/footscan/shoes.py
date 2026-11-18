@@ -25,6 +25,7 @@ from __future__ import annotations
 import json
 import math
 import re
+import threading
 import unicodedata
 from datetime import datetime
 from pathlib import Path
@@ -37,6 +38,9 @@ ID_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,89}$")
 DEFAULT_FILE = "default.txt"
 NAME_MAX = 60   # characters. The id keeps all of the name's and the size's letters and numbers (at most 60 + 1 +
 SIZE_MAX = 24   # 24 = 85 characters). Two shoes can still share an id (save() refuses the second; see same_shoe)
+
+
+_SAVING = threading.Lock()  # one save's check-then-write at a time, in this process
 
 
 class ShoeLibraryError(ValueError):
@@ -90,6 +94,9 @@ def save(folder: Path, outline, name: str, size: str, source: str, read: dict, d
     import shapely
 
     ring = shoe_mod.as_param(outline)
+    if not _usable_ring(ring):  # what load() checks: never keep a shoe that can't be read back
+        raise ShoeLibraryError("the shoe's outline came out unusable (it crosses itself or has no area): "
+                               "scan its insole again, lying flat")
     # which shoe, read from the ring as it is kept, not the scan's finer outline: fit_to_foot reads the kept ring
     # again when it decides whether to mirror it, and near HAND_MIN_MM the two could disagree
     hand, _ = shoe_mod.handedness(shapely.Polygon(ring))
@@ -102,17 +109,21 @@ def save(folder: Path, outline, name: str, size: str, source: str, read: dict, d
     folder = Path(folder)
     folder.mkdir(parents=True, exist_ok=True)
     path = _path(folder, shoe["id"])
-    if path.is_file():  # saving the same shoe again replaces it; a different shoe with the same id doesn't
-        try:
-            old = load(folder, shoe["id"])
-        except ShoeLibraryError:
-            old = None  # unreadable: replaced (the way to repair it)
-        if old is not None and not same_shoe(old, shoe):
-            raise ShoeLibraryError(f"a different saved shoe already has the id {shoe['id']} ({label(old)}): "
-                                   f"give this one a name or size that tells them apart")
-    # written whole to this save's own temporary file, then swapped in, tried again for a moment on Windows while
-    # a reader has the old file open (atomic.py): a reader sees the old shoe or the new one, never half
-    atomic.write_utf8(path, json.dumps(shoe, indent=1))
+    # The check and the write together, one save at a time (the studio answers requests on many threads): two
+    # different shoes that get one id, saved at the same moment, can't both pass the check and the second
+    # silently replace the first.
+    with _SAVING:
+        if path.is_file():  # saving the same shoe again replaces it; a different shoe with the same id doesn't
+            try:
+                old = load(folder, shoe["id"])
+            except ShoeLibraryError:
+                old = None  # unreadable: replaced (the way to repair it)
+            if old is not None and not same_shoe(old, shoe):
+                raise ShoeLibraryError(f"a different saved shoe already has the id {shoe['id']} ({label(old)}): "
+                                       f"give this one a name or size that tells them apart")
+        # written whole to this save's own temporary file, then swapped in, tried again for a moment on Windows
+        # while a reader has the old file open (atomic.py): a reader sees the old shoe or the new one, never half
+        atomic.write_utf8(path, json.dumps(shoe, indent=1))
     if default:
         set_default(folder, shoe["id"])
     return shoe

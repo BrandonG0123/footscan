@@ -121,6 +121,10 @@ class Insole:
     params: InsoleParams
     report: dict = field(default_factory=dict)
     sole: object = None             # the scan in the insole's own frame (for the 3-D preview)
+    surface: dict | None = None     # the fill as a grid, before the base goes under it (xs, ys, fill), the foot's
+                                    # outline it was read under, and the heel zone's weight along xs (1 in the
+                                    # heel, fading to 0 past it: where the caps changed): footwear.py builds a
+                                    # shoe's footbed from the same heights and caps
 
 
 # ---------------------------------------------------------------------------
@@ -214,7 +218,7 @@ def _to_length(outline, x_from: float, target: float):
     now = ox1 - ox0
     if target < now - 0.5:
         raise InsoleError(f"the shoe's insole ({target:.0f} mm) is shorter than this foot's outline ({now:.0f} mm)")
-    if target <= now:
+    if target - now < 0.05:  # nothing worth adding (and nothing the sheet's and warning's 0.1 mm could show)
         return outline, 0.0
     k = (target - (x_from - ox0)) / (ox1 - x_from)
 
@@ -391,14 +395,18 @@ def build(foot_mesh, foot: str, params: InsoleParams | None = None) -> Insole:
         max_fill_at_mm=dict(x=round(float(X[peak]), 1), y=round(float(Y[peak]), 1)),
         bed_fit=bed_fit_shape(np.asarray(mesh.vertices)[:, :2], p.bed_mm),
         shoe_fit=shoe_fit,
-        lengthened_mm=round(float(extended), 1),  # added to the front to reach the shoe's length (0: none needed)
+        lengthened_mm=round(float(extended), 1),
+        # the foot's own heel and toe (x): the base tapers along these, not along the outline (which a shoe's
+        # insole or a lengthened front makes longer); the preview tapers the same way
+        base_taper_x_mm=[round(float(x0), 2), round(float(x1), 2)],  # added to the front to reach the shoe's length (0: none needed)
         # where the outline came from: a shoe's insole (the same for every foot in that shoe), or this foot's own
         outline_from="shoe" if shoe_fit is not None else "foot",
         shoe_name=p.shoe_name if shoe_fit is not None else None,
         warnings=warnings,
         frame="mm; x forward from the back of the heel, y toward the foot's left, z up; bottom at z = 0",
     )
-    return Insole(mesh=mesh, foot=foot, params=p, report=report, sole=m)
+    return Insole(mesh=mesh, foot=foot, params=p, report=report, sole=m,
+                  surface=dict(xs=xs, ys=ys, fill=fill, under_foot=in_sil, foot_outline=sil, heel_weight=w_heel[0]))
 
 
 def bed_fit_shape(xy, bed: float, clearance: float = 3.0) -> dict:
@@ -609,6 +617,14 @@ def shoe_row(fit: dict | None, name: str | None = None, lengthened_to: float | N
             f'{fit["room_past_toes_mm"]} mm past the toes{", matched mirrored" if fit["mirrored"] else ""}); {over}</td></tr>')
 
 
+# The break-in protocol (docs/SAFETY.md, requirement 2), as every summary sheet prints it: the insole's and the
+# printed shoe's (footwear.py) both use this one paragraph.
+BREAK_IN_HTML = """<p>Day 1: 1 h &middot; days 2&ndash;3: 2 h &middot; days 4&ndash;5: 3 h &middot; days 6&ndash;7: 4 h &middot; days 8&ndash;10: 6 h &middot;
+days 11&ndash;14: all day. Check both feet after every session.
+<b>Stop at once</b> and don't resume until reviewed if anything new hurts (foot, ankle, shin, knee, hip or back),
+a skin mark is still there the next day, a foot feels numb, tingly or burning, or an existing pain gets worse.</p>"""
+
+
 def summary_html(insole: Insole, scan_label: str, synthetic: bool = False) -> str:
     """The clinician summary sheet (docs/SAFETY.md, requirement 1), for this first-fit device."""
     from html import escape
@@ -676,10 +692,7 @@ The foot frame is {"provisional (from the scan alone)" if scan.get('provisional'
 <p>Notes:</p><div style="border:1px solid #ccc;height:90px"></div>
 
 <h2>Break-in (walking only until signed above)</h2>
-<p>Day 1: 1 h &middot; days 2&ndash;3: 2 h &middot; days 4&ndash;5: 3 h &middot; days 6&ndash;7: 4 h &middot; days 8&ndash;10: 6 h &middot;
-days 11&ndash;14: all day. Check both feet after every session.
-<b>Stop at once</b> and don't resume until reviewed if anything new hurts (foot, ankle, shin, knee, hip or back),
-a skin mark is still there the next day, a foot feels numb, tingly or burning, or an existing pain gets worse.</p>
+{BREAK_IN_HTML}
 </body></html>"""
 
 
@@ -718,7 +731,10 @@ def write_preview(insole: Insole, out_dir: Path, name: str = "insole") -> dict:
     p = insole.params
     z = m.vertices[:, 2]
     x = m.vertices[:, 0]
-    x0, x1 = x.min(), x.max()
+    # as build(): along the foot's own length, which the outline (a shoe's, or lengthened) can overrun;
+    # an insole made before that was recorded falls back to its own length
+    x0, x1 = insole.report.get("base_taper_x_mm") or (x.min(), x.max())
+
     def base_at(xs):  # as build(): base_mm under the heel, tapering to toe_base_mm at the toes
         t = np.clip((xs - (x0 + p.taper_from * (x1 - x0))) / ((1 - p.taper_from) * (x1 - x0)), 0, 1)
         return p.base_mm + (p.toe_base_mm - p.base_mm) * t

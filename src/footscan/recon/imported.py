@@ -48,6 +48,7 @@ PLANE_TOL_MM = 1.0          # a sample within this of a plane is on it
 BELOW_TOL_MM = 2.0          # ...and the table has (almost) nothing more than this below it:
 BELOW_MAX_SHARE = 0.02      # at most this share of the surface
 RANSAC_TRIES = 300
+TABLE_TRIES = 4             # planes tried, largest first, before giving up on finding the table
 # A real scan's size is off by a few percent at worst; anything outside this
 # isn't the calibration object (another object, clutter, or no real scale).
 SIZE_RANGE = (0.7, 1.6)
@@ -139,9 +140,28 @@ def _find_table(P: np.ndarray, N: np.ndarray, seed: int = 0):
     """
     up = N[:, 2] > FLOOR_FACING
     C = P[up]
-    if len(C) < FLOOR_MIN_SHARE * len(P):
-        return None
     rng = np.random.default_rng(seed)
+    # The largest upward plane first. When things hang below it (a flat top on the object bigger than the
+    # table still in view), its points are set aside and the next largest is tried, so a big object top can't
+    # hide the table under it.
+    for _ in range(TABLE_TRIES):
+        if len(C) < FLOOR_MIN_SHARE * len(P):
+            return None
+        found, F = _largest_plane(P, C, rng)
+        if found is not None:
+            return found
+        if F is None:
+            return None
+        keep = np.ones(len(C), bool)
+        keep[F] = False
+        C = C[keep]
+    return None
+
+
+def _largest_plane(P, C, rng):
+    """The largest plane through the upward-facing points C. -> ((centre, normal, its points), None) when
+    nothing hangs below it (the table); (None, indices into C of its points) when things do (a flat top on the
+    object); (None, None) when there's no plane big enough."""
     best, best_count = None, 0
     for _ in range(RANSAC_TRIES):
         a, b, d = C[rng.choice(len(C), 3, replace=False)]
@@ -158,17 +178,17 @@ def _find_table(P: np.ndarray, N: np.ndarray, seed: int = 0):
         if count > best_count:
             best, best_count = (a, n), count
     if best is None or best_count < FLOOR_MIN_SHARE * len(P):
-        return None
+        return None, None
     a, n = best
-    F = C[np.abs((C - a) @ n) < PLANE_TOL_MM]
+    on = np.abs((C - a) @ n) < PLANE_TOL_MM
     for _ in range(3):  # refine: least squares on the plane's own points
-        c, n = accuracy.fit_plane(F)
-        F = C[np.abs((C - c) @ n) < PLANE_TOL_MM]
-    c, n = accuracy.fit_plane(F)
+        c, n = accuracy.fit_plane(C[on])
+        on = np.abs((C - c) @ n) < PLANE_TOL_MM
+    c, n = accuracy.fit_plane(C[on])
     below = float(np.mean((P - c) @ n < -BELOW_TOL_MM))
     if below > BELOW_MAX_SHARE:
-        return None  # things hang below it: a flat top on the object, not the table
-    return c, n, F
+        return None, np.flatnonzero(on)  # things hang below it: a flat top on the object, not the table
+    return (c, n, C[on]), None
 
 
 def to_floor_frame(mesh_mm, up: str = "y", n_samples: int = 60_000, seed: int = 0):
