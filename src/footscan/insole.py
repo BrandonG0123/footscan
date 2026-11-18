@@ -218,7 +218,7 @@ def _to_length(outline, x_from: float, target: float):
     now = ox1 - ox0
     if target < now - 0.5:
         raise InsoleError(f"the shoe's insole ({target:.0f} mm) is shorter than this foot's outline ({now:.0f} mm)")
-    if target <= now:
+    if target - now < 0.05:  # nothing worth adding (and nothing the sheet's and warning's 0.1 mm could show)
         return outline, 0.0
     k = (target - (x_from - ox0)) / (ox1 - x_from)
 
@@ -395,7 +395,10 @@ def build(foot_mesh, foot: str, params: InsoleParams | None = None) -> Insole:
         max_fill_at_mm=dict(x=round(float(X[peak]), 1), y=round(float(Y[peak]), 1)),
         bed_fit=bed_fit_shape(np.asarray(mesh.vertices)[:, :2], p.bed_mm),
         shoe_fit=shoe_fit,
-        lengthened_mm=round(float(extended), 1),  # added to the front to reach the shoe's length (0: none needed)
+        lengthened_mm=round(float(extended), 1),
+        # the foot's own heel and toe (x): the base tapers along these, not along the outline (which a shoe's
+        # insole or a lengthened front makes longer); the preview tapers the same way
+        base_taper_x_mm=[round(float(x0), 2), round(float(x1), 2)],  # added to the front to reach the shoe's length (0: none needed)
         # where the outline came from: a shoe's insole (the same for every foot in that shoe), or this foot's own
         outline_from="shoe" if shoe_fit is not None else "foot",
         shoe_name=p.shoe_name if shoe_fit is not None else None,
@@ -728,7 +731,10 @@ def write_preview(insole: Insole, out_dir: Path, name: str = "insole") -> dict:
     p = insole.params
     z = m.vertices[:, 2]
     x = m.vertices[:, 0]
-    x0, x1 = x.min(), x.max()
+    # as build(): along the foot's own length, which the outline (a shoe's, or lengthened) can overrun;
+    # an insole made before that was recorded falls back to its own length
+    x0, x1 = insole.report.get("base_taper_x_mm") or (x.min(), x.max())
+
     def base_at(xs):  # as build(): base_mm under the heel, tapering to toe_base_mm at the toes
         t = np.clip((xs - (x0 + p.taper_from * (x1 - x0))) / ((1 - p.taper_from) * (x1 - x0)), 0, 1)
         return p.base_mm + (p.toe_base_mm - p.base_mm) * t
