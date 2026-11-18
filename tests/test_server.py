@@ -2134,6 +2134,63 @@ def test_a_studio_that_cant_write_its_key_says_how_to_make_it(monkeypatch):
         server.serve()
 
 
+# ---- what the customer's scan page sends, and who it is from --------------------------------------------------
+
+def test_a_customers_scan_summary_keeps_only_numbers_and_short_words(servers):
+    """The scan page sends its summary without the studio key, and the studio page shows it: markup sent in it
+    (here, a script tag in a number's place) is not kept, while what scanner.js really sends is."""
+    op, phone, _ = servers
+    sub = body(call(f"{phone}/api/submissions", "POST", PERSON))
+    tok = {"X-Upload-Token": sub["upload_token"]}
+    key = sub["plan"][0]["key"]
+    base = f"{phone}/api/submissions/{sub['id']}/scans/{key}"
+    assert call(f"{base}/start", "POST", {}, tok)[0] == 200
+    assert call(f"{base}/frames/1", "PUT", JPEG, {**tok, "Content-Type": "image/jpeg"})[0] == 200
+    bad = "<img src=x onerror=alert(1)>" + "x" * 40
+    summary = {"frames_kept": 1, "duration_s": bad, "rejected_blur": 0, "mat_paper": "a4",
+               "view_sources": {"sensor": 1}, "focal_px_median": None, "orientation_source": {"no": [bad]},
+               bad: 1, "coverage_completeness": 0.5}
+    assert call(f"{base}/complete", "POST", {"frames": [], "summary": summary}, tok)[0] == 200
+    kept = body(call(f"{op}/api/submissions/{sub['id']}"))["scans"][key]["summary"]
+    assert kept == {"frames_kept": 1, "rejected_blur": 0, "mat_paper": "a4", "view_sources": {"sensor": 1},
+                    "focal_px_median": None, "coverage_completeness": 0.5}
+
+
+def test_the_submission_page_escapes_every_scan_summary_figure():
+    """Summaries saved before the server cleaned them are still shown: the page itself escapes each one."""
+    import re
+
+    page = (WEB_DIR / "studio" / "submission.html").read_text(encoding="utf-8")
+    raw = re.findall(r"\$\{\s*\(?\s*(?:sum\.|scan\.load_kg|s\.feet)", page)
+    assert raw == []
+
+
+def test_rate_limit_counts_a_direct_request_by_its_own_address_whatever_header_it_sends():
+    from footscan.server import client_of
+
+    spoof = {"CF-Connecting-IP": "203.0.113.5", "X-Forwarded-For": "203.0.113.6"}
+    assert client_of("100.70.1.2", spoof) == "100.70.1.2"       # straight from Tailscale or the Wi-Fi
+    assert client_of("127.0.0.1", spoof) == "203.0.113.5"       # the tunnel on this computer names the client
+    assert client_of("127.0.0.1", {"X-Forwarded-For": "198.51.100.1, 10.0.0.1"}) == "198.51.100.1"
+    assert client_of("127.0.0.1", {}) == "127.0.0.1"
+
+
+def test_rate_limiter_forgets_clients_with_nothing_in_the_last_hour(monkeypatch):
+    import time
+
+    from footscan import server
+
+    monkeypatch.setattr(server, "RATE_LIMIT_CLIENTS_KEPT", 3)
+    limiter = server.RateLimiter(per_hour=1)
+    now = [1000.0]
+    monkeypatch.setattr(time, "monotonic", lambda: now[0])
+    for c in ("a", "b", "c", "d"):
+        assert limiter.allow(c)
+    now[0] += 3601
+    assert limiter.allow("e") and set(limiter.hits) == {"e"}
+    assert not limiter.allow("e")  # the limit itself still holds
+
+
 def test_an_insole_cut_to_the_foots_outline_by_default_is_stale_now_that_the_default_is_the_generic_outline():
     """Made before the generic insole outline was the default: cut to the foot's own outline without asking (or
     lengthened at the front for a shoe's length), it can be the long thin shape the generic outline replaces."""

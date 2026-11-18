@@ -23,12 +23,13 @@ Nothing here is measured from a person: a shoe's insole is not personal data.
 from __future__ import annotations
 
 import json
+import math
 import re
-import secrets
 import unicodedata
 from datetime import datetime
 from pathlib import Path
 
+from . import atomic
 from .filestamp import file_stamp
 
 DEFAULT_DIR = Path(__file__).resolve().parents[2] / "data" / "shoes"  # the studio's: <its data folder>/shoes
@@ -86,10 +87,15 @@ def save(folder: Path, outline, name: str, size: str, source: str, read: dict, d
         raise ShoeLibraryError("a saved shoe needs a name (e.g. ASICS Gel Resolution X) and a size (e.g. US men's 9.5)")
     if len(name) > NAME_MAX or len(size) > SIZE_MAX:
         raise ShoeLibraryError(f"name: at most {NAME_MAX} characters; size: at most {SIZE_MAX}")
-    hand, _ = shoe_mod.handedness(outline)
+    import shapely
+
+    ring = shoe_mod.as_param(outline)
+    # which shoe, read from the ring as it is kept, not the scan's finer outline: fit_to_foot reads the kept ring
+    # again when it decides whether to mirror it, and near HAND_MIN_MM the two could disagree
+    hand, _ = shoe_mod.handedness(shapely.Polygon(ring))
     x0, y0, x1, y1 = outline.bounds
     shoe = dict(id=shoe_id(name, size), name=name, size=size,
-                outline=[list(p) for p in shoe_mod.as_param(outline)],
+                outline=[list(p) for p in ring],
                 length_mm=round(x1 - x0, 1), width_mm=round(y1 - y0, 1), shoe=hand,
                 read_from=str(source)[:200], table_found=bool(read.get("table_found")),
                 saved=datetime.now().isoformat(timespec="seconds"))
@@ -104,12 +110,9 @@ def save(folder: Path, outline, name: str, size: str, source: str, read: dict, d
         if old is not None and not same_shoe(old, shoe):
             raise ShoeLibraryError(f"a different saved shoe already has the id {shoe['id']} ({label(old)}): "
                                    f"give this one a name or size that tells them apart")
-    tmp = path.with_name(f"{path.name}.part-{secrets.token_hex(4)}")  # this save's own: two at once never share one
-    try:
-        tmp.write_text(json.dumps(shoe, indent=1), encoding="utf-8")
-        tmp.replace(path)
-    finally:
-        tmp.unlink(missing_ok=True)
+    # written whole to this save's own temporary file, then swapped in, tried again for a moment on Windows while
+    # a reader has the old file open (atomic.py): a reader sees the old shoe or the new one, never half
+    atomic.write_utf8(path, json.dumps(shoe, indent=1))
     if default:
         set_default(folder, shoe["id"])
     return shoe
@@ -122,18 +125,37 @@ def load(folder: Path, sid: str) -> dict:
     if not path.is_file():
         raise ShoeLibraryError(f"no saved shoe {sid!r} (footscan shoe list shows them)")
     try:
-        shoe = json.loads(path.read_text(encoding="utf-8"))
+        shoe = json.loads(atomic.read_utf8(path))
         ok = (isinstance(shoe, dict) and all(isinstance(shoe.get(k), str) for k in ("name", "size"))
-              and all(isinstance(shoe.get(k), (int, float)) for k in ("length_mm", "width_mm"))
+              and all(_number(shoe.get(k)) for k in ("length_mm", "width_mm"))
               and isinstance(shoe.get("outline"), list) and len(shoe["outline"]) >= 3
-              and all(isinstance(p, list) and len(p) == 2 and all(isinstance(v, (int, float)) for v in p)
-                      for p in shoe["outline"]))
+              and all(isinstance(p, list) and len(p) == 2 and all(_number(v) for v in p)
+                      for p in shoe["outline"])
+              and _usable_ring(shoe["outline"]))
     except (OSError, ValueError):
         ok = False
     if not ok:
         raise ShoeLibraryError(f"saved shoe {sid!r} can't be read: save it again from its insole's scan")
     shoe["id"] = sid
     return shoe
+
+
+def _number(v) -> bool:
+    """A finite number. JSON can hold NaN and Infinity, and True is an int to Python: none of them is a length."""
+    return isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v)
+
+
+def _usable_ring(points) -> bool:
+    """Do these points make one simple outline with an area (not crossing itself)? A file edited by hand or
+    garbled can hold a ring that does, and cutting an insole to it fails deep inside the geometry or comes out
+    wrong; refused here, it reads as a saved shoe to save again."""
+    import shapely
+
+    try:
+        ring = shapely.Polygon(points)
+        return bool(ring.is_valid and ring.area > 1.0)
+    except (ValueError, shapely.errors.GEOSException):
+        return False
 
 
 def load_stamped(folder: Path, sid: str) -> tuple[dict, str | None]:
@@ -169,7 +191,7 @@ def default_id(folder: Path, strict: bool = False) -> str | None:
     if not f.is_file():
         return None
     try:
-        sid = f.read_text(encoding="utf-8").strip()
+        sid = atomic.read_utf8(f).strip()
         if not ID_RE.match(sid):
             raise ShoeLibraryError(f"the default saved shoe ({f}) names no saved shoe: {sid[:40]!r}")
         load(folder, sid)
@@ -190,12 +212,7 @@ def set_default(folder: Path, sid: str | None) -> None:
     load(folder, sid)  # it has to exist
     # Written whole, then swapped in, as save() writes a shoe: an insole made at that moment reads the old
     # default or the new one, never an empty file (which would read as no default).
-    tmp = f.with_name(f"{f.name}.part-{secrets.token_hex(4)}")
-    try:
-        tmp.write_text(sid + "\n", encoding="utf-8")
-        tmp.replace(f)
-    finally:
-        tmp.unlink(missing_ok=True)
+    atomic.write_utf8(f, sid + "\n")
 
 
 def stamp(folder: Path, sid: str) -> str | None:
