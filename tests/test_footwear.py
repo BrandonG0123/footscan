@@ -188,7 +188,9 @@ def test_a_real_shaped_footbed_stays_within_the_insoles_own_fill(curved, shod):
     """SYNTHETIC curved foot (a smooth 14 mm arch on the inner side): the floor rises under the arch on the
     inner side, rests flat under the heel and along the outer side, and is nowhere above the insole's fill."""
     fb = shod.report["footbed"]
-    assert fb["max_fill_mm"] == pytest.approx(curved.report["max_fill_mm"], abs=0.05)
+    # the footbed stands under the whole foot: its highest fill is the foot's own, which can be past the edge of
+    # the insole's generic outline, where the printed insole stops (max_fill_mm is the printed insole's)
+    assert fb["max_fill_mm"] == pytest.approx(curved.report["foot_max_fill_mm"], abs=0.05)
     flat = fw.build("right", replace(shod.params, foot_length_mm=fb["scan_length_mm"], foot_width_mm=fb["scan_width_mm"]))
     fill = {(x, y): _floor(shod.mesh, x, y) - _floor(flat.mesh, x, y)
             for x in np.arange(70.0, 160.0, 5.0) for y in np.arange(-24.0, 33.0, 4.0)}
@@ -435,11 +437,11 @@ def test_the_footbed_takes_its_caps_from_the_insole_not_from_a_copy_of_its_rule(
     """SYNTHETIC curved foot: its arch fill stands above the heel's 12 mm cap. The footbed eases between the
     insole's two caps where the insole itself says its heel zone is (``surface["heel_weight"]``): told the
     heel zone runs the whole length, it is capped at the heel's 12 mm everywhere."""
-    assert curved.report["max_fill_mm"] > 12.5
+    assert curved.report["foot_max_fill_mm"] > 12.5
     s = curved.surface
     heel_everywhere = replace(curved, surface={**s, "heel_weight": np.ones_like(s["heel_weight"])})
     p = fw.ShoeParams(style="stone")
-    for ins, top in ((curved, curved.report["max_fill_mm"]), (heel_everywhere, 12.0)):
+    for ins, top in ((curved, curved.report["foot_max_fill_mm"]), (heel_everywhere, 12.0)):  # the foot's own peak
         bed = fw.Footbed(ins, "right")
         loft = fw._loft_for(fw.size_inside(bed.scan_length, bed.scan_width, p), p, 13.0, 0.0, 0)
         bed.place(loft.floor.polygon, loft.inside_ends()[0])

@@ -27,9 +27,10 @@ never suggest posting or any correction (the first fit has none). Every number y
    every listed one, newest first.
 
 2. Read `packet.md` (and `review.json` for exact values). Note where the outline came from (the packet's
-   "Outline" line: a saved shoe, a scan of the shoe's insole, or the foot's own), the shoe in the packet's spec
-   (today: ASICS Gel Resolution X, US men's 9.5, 275 mm chart length), and every **FLAG** in the plain checks.
-   The outline should be the shoe's (a saved shoe): the foot only shapes the top surface and the arch support.
+   "Outline" line: a saved shoe, a scan of the shoe's insole, the generic insole outline, or the foot's own), the
+   shoe in the packet's spec (today: ASICS Gel Resolution X, US men's 9.5, 275 mm chart length), and every
+   **FLAG** in the plain checks. The outline should be the shoe's (a saved shoe), or else the generic insole
+   outline at the spec's length: the foot only shapes the top surface and the arch support.
 
 3. Look at `top.png`, `side.png` and, if present, `pair.png` with the Read tool. Answer every question under
    "Look at the pictures" with what you actually see, one line each, yes or no plus the reason. If a picture is
@@ -41,9 +42,11 @@ never suggest posting or any correction (the first fit has none). Every number y
 5. For each FLAG, say what it most likely means and the fix, in the studio, not the slicer:
    - `length` off, outline from a saved shoe or a shoe's scan: the file isn't the length of the outline it was cut
      to, so it was scaled or built another way. Rebuild it in the studio with the same shoe (Outline: that shoe).
-   - `length` off, outline the foot's own: rebuild it in the studio with the saved shoe for the spec's shoe
-     (Outline: <that shoe>). Only if no saved shoe exists, rebuild with the spec's length in the length box, and
-     say a saved shoe would be better. Never rebuild a shoe-outline insole with "Outline: the foot's own".
+   - `length` off, outline the generic insole outline or the foot's own: rebuild it in the studio with the saved
+     shoe for the spec's shoe (Outline: <that shoe>). Only if no saved shoe exists, rebuild with "Outline: a
+     generic insole, the shoe's length" and the spec's length in the length box (a generic insole sized from the
+     scan misses it by however short the scan reads), and say a saved shoe would be better. Never rebuild a
+     shoe-outline insole with "Outline: the foot's own".
    - `shoe`: it was cut to a saved shoe other than the one in review-spec.json. Ask Brandon which shoe it goes in.
    - `shoe_length`: the shoe's outline (saved, or scanned) is far from the spec's chart length, so the stock insole
      was probably scanned at the wrong scale, or is another size. Don't rebuild: ask Brandon to measure the stock

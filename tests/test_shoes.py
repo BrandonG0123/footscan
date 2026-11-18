@@ -62,7 +62,7 @@ def test_feet_of_different_sizes_in_the_same_saved_shoe_get_the_same_outline(tmp
     small = foot.copy()
     small.apply_transform(trimesh.transformations.scale_matrix(0.93, [0, 0, 0]))  # 7% small all round
 
-    own = [insole.from_scan(f, "right") for f in (foot, small)]
+    own = [insole.from_scan(f, "right", insole.InsoleParams(foot_outline=True)) for f in (foot, small)]
     fitted = [insole.from_scan(f, "right", params) for f in (foot, small)]
     # the foot's own outline follows the scan's size...
     assert _outline_area(own[1]) < 0.9 * _outline_area(own[0])
@@ -97,7 +97,7 @@ def test_the_insole_command_takes_the_default_saved_shoes_outline_unless_told_ot
                          "--shoes", str(shoes_dir), *extra]) == 0
         return capsys.readouterr().out
 
-    assert "outline: the foot's own (no default saved shoe" in insole()
+    assert "outline: the generic insole outline, sized from the foot (no default saved shoe" in insole()
     assert cli.main(["shoe", "add", str(scan), "--name", "Test Trainer", "--size", "9.5", "--default",
                      "--shoes", str(shoes_dir)]) == 0
     assert "saved test-trainer-9-5: Test Trainer, 9.5" in capsys.readouterr().out
@@ -105,12 +105,13 @@ def test_the_insole_command_takes_the_default_saved_shoes_outline_unless_told_ot
     assert "outline: saved shoe Test Trainer, 9.5" in out and "(the default)" in out
     assert "first-fit right insole: 27" in out  # the shoe's ~271 mm, not the foot's ~256
     assert "outline: the foot's own\n" in insole("--foot-outline")
-    assert "outline: the foot's own, lengthened to 280 mm" in insole("--length", "280")
+    assert "outline: the generic insole outline, 280 mm long" in insole("--length", "280")
+    assert "outline: the foot's own, lengthened to 280 mm" in insole("--length", "280", "--foot-outline")
     assert "outline: saved shoe Test Trainer, 9.5" in insole("--shoe", "test-trainer-9-5")
     assert cli.main(["shoe", "list", "--shoes", str(shoes_dir)]) == 0
     assert "* test-trainer-9-5" in capsys.readouterr().out
     assert cli.main(["shoe", "default", "none", "--shoes", str(shoes_dir)]) == 0
-    assert "outline: the foot's own (no default" in (capsys.readouterr(), insole())[1]
+    assert "outline: the generic insole outline, sized from the foot (no default" in (capsys.readouterr(), insole())[1]
     assert cli.main(["insole", str(foot), "--foot", "right", "-o", str(tmp_path / "x"), "--shoes", str(shoes_dir),
                      "--shoe", "no-such-shoe"]) == 1
 
@@ -361,7 +362,7 @@ def test_the_sheet_says_a_lengthened_outline_was_lengthened(tmp_path):
 
     foot = _foot_file(tmp_path)
     assert cli.main(["insole", str(foot), "--foot", "right", "-o", str(tmp_path / "out"),
-                     "--shoes", str(tmp_path / "shoes"), "--length", "280"]) == 0
+                     "--shoes", str(tmp_path / "shoes"), "--length", "280", "--foot-outline"]) == 0
     sheet = (tmp_path / "out" / "right-insole-summary.html").read_text(encoding="utf-8")
     assert "lengthened to the shoe&#x27;s 280 mm" in sheet or "lengthened to the shoe's 280 mm" in sheet
     assert "no shoe chosen" not in sheet
@@ -378,7 +379,8 @@ def test_the_sheet_says_nothing_was_added_when_the_foot_already_reaches_the_shoe
     own = json.loads((tmp_path / "own" / "right-insole.json").read_text(encoding="utf-8"))["length_mm"]
     # a shoe length within the outline's 0.5 mm leeway: nothing is added, and the sheet must not say it was
     assert cli.main(["insole", str(foot), "--foot", "right", "-o", str(tmp_path / "out"),
-                     "--shoes", str(tmp_path / "shoes"), "--length", f"{own - 0.3:.1f}"]) == 0
+                     "--shoes", str(tmp_path / "shoes"), "--length", f"{own - 0.3:.1f}",
+                     "--foot-outline"]) == 0  # a length alone is the generic outline
     sheet = (tmp_path / "out" / "right-insole-summary.html").read_text(encoding="utf-8")
     assert "nothing added" in sheet and "its front lengthened" not in sheet
 
@@ -444,6 +446,18 @@ def test_saving_a_shoe_and_choosing_the_default_wait_out_a_reader_on_windows(tmp
     monkeypatch.setattr(atomic.os, "replace", busy_once)
     s = shoes.save(tmp_path, outline, "Test Trainer", "9.5", "synthetic", read, default=True)
     assert shoes.default_id(tmp_path, strict=True) == s["id"] and calls["n"] >= 3
+
+
+def test_the_sheet_says_a_generic_outline_was_made_at_the_shoes_length(tmp_path):
+    from footscan import cli
+
+    foot = _foot_file(tmp_path)
+    assert cli.main(["insole", str(foot), "--foot", "right", "-o", str(tmp_path / "out"),
+                     "--shoes", str(tmp_path / "shoes"), "--length", "280"]) == 0
+    sheet = (tmp_path / "out" / "right-insole-summary.html").read_text(encoding="utf-8")
+    assert "the generic insole outline, the same shape for every foot, 280.0 mm long" in sheet
+    assert "the shoe&#x27;s length, 280 mm" in sheet or "the shoe's length, 280 mm" in sheet
+    assert "lengthened" not in sheet and "no shoe chosen" not in sheet
 
 
 def test_two_different_shoes_with_one_id_saved_at_the_same_moment_never_replace_each_other(tmp_path, monkeypatch):
