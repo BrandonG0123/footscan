@@ -53,6 +53,10 @@ import numpy as np
 
 from .frame import FootFrame, build_frame
 
+# The dorsum half way along the foot sits below the ankle bones; anything that far along and higher than this
+# above the higher malleolus is the leg. A JUDGMENT, not measured: generous so a high instep is never cut.
+DORSUM_ABOVE_MALLEOLUS_MM = 30.0
+
 MEASURES = (
     "foot_length_mm",
     "truncated_foot_length_mm",
@@ -74,8 +78,9 @@ def _tilt_deg(vec_local: np.ndarray) -> float:
     return math.degrees(math.atan2(m, u))
 
 
-def cross_section_max_height(vertices_local: np.ndarray, faces: np.ndarray, x0: float) -> float | None:
-    """Highest point where the mesh surface crosses the plane anterior = x0.
+def cross_section_max_height(vertices_local: np.ndarray, faces: np.ndarray, x0: float,
+                             ceiling: float = np.inf) -> float | None:
+    """Highest point, below ``ceiling``, where the mesh surface crosses the plane anterior = x0.
 
     Slicing a triangle mesh with a plane: for every triangle edge, compute the
     signed distance of both endpoints to the plane (here just ``x - x0``). If
@@ -100,7 +105,11 @@ def cross_section_max_height(vertices_local: np.ndarray, faces: np.ndarray, x0: 
         pts.append(a[on])
     if not pts:
         return None
-    return float(np.concatenate(pts)[:, 2].max())
+    z = np.concatenate(pts)[:, 2]
+    # Above the ceiling is the leg (a shin leaning forward over the midfoot crosses this plane too): left out,
+    # as the lengths leave out everything above the malleoli.
+    z = z[z < ceiling]
+    return float(z.max()) if len(z) else None
 
 
 def measure_scan(record: dict, mesh: tuple[np.ndarray, np.ndarray] | None = None) -> tuple[dict, list[str]]:
@@ -120,11 +129,14 @@ def measure_scan(record: dict, mesh: tuple[np.ndarray, np.ndarray] | None = None
 
     # --- lengths ---------------------------------------------------------
     heel_x = 0.0
+    above_ankle = np.inf  # mesh above this height is the leg, not the foot (from the malleoli, when marked)
     if V is not None:
         # Restrict extremes to below the malleoli so the lower leg can't be
         # mistaken for heel or toes.
         mall = [lm[k][2] for k in ("malleolus_medial", "malleolus_lateral") if k in lm]
         ceiling = min(mall) if mall else np.inf
+        if mall:
+            above_ankle = max(mall) + DORSUM_ABOVE_MALLEOLUS_MM
         low = V[V[:, 2] < ceiling]
         heel_x, toe_x = float(low[:, 0].min()), float(low[:, 0].max())
         out["foot_length_mm"] = toe_x - heel_x
@@ -138,7 +150,8 @@ def measure_scan(record: dict, mesh: tuple[np.ndarray, np.ndarray] | None = None
 
     # --- arch height -----------------------------------------------------
     if out["foot_length_mm"] is not None and V is not None:
-        out["dorsal_height_50_mm"] = cross_section_max_height(V, F, heel_x + 0.5 * out["foot_length_mm"])
+        out["dorsal_height_50_mm"] = cross_section_max_height(V, F, heel_x + 0.5 * out["foot_length_mm"],
+                                                              ceiling=above_ankle)
     elif "dorsum_50" in lm:
         out["dorsal_height_50_mm"] = float(lm["dorsum_50"][2])
     else:
