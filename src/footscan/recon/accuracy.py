@@ -183,7 +183,7 @@ def _robust(P: np.ndarray, fn, keep: float = 2.5, rounds: int = 3):
 
 
 def measure_dimensions(scan_ref: np.ndarray, floor_plane: tuple[np.ndarray, np.ndarray],
-                       floor_ref: np.ndarray | None = None) -> dict:
+                       floor_ref: np.ndarray | None = None, walls_clear_of_bottom: bool = False) -> dict:
     """Caliper-style dimensions measured on scan points already in the model frame.
 
     Heights are measured from ``floor_plane`` (point, unit normal): the
@@ -191,6 +191,10 @@ def measure_dimensions(scan_ref: np.ndarray, floor_plane: tuple[np.ndarray, np.n
     frame by the alignment. Not from the model's own z = 0: the alignment is
     free to slide the scan up or down a little, which would hide a scale
     error in exactly the numbers meant to reveal it.
+
+    ``walls_clear_of_bottom``: the scan's underside was made up (see
+    imported.evaluate_imported), so the walls' lowest few millimetres may bend
+    into the made-up part; walls tall enough for it are read higher up.
     """
     out = {}
     floor_c, floor_n = floor_plane
@@ -230,24 +234,40 @@ def measure_dimensions(scan_ref: np.ndarray, floor_plane: tuple[np.ndarray, np.n
             out["dome_apex"] = dict(value=round(apex, 3), n=n_used)
 
     # Wall-to-wall: points on the base's side walls (between 2 and 8 mm up).
-    band = (height(scan_ref) > 2) & (height(scan_ref) < 8)
-    for key, axis, lo_pos, hi_pos, other in (
-        ("length", 0, 0.0, calib.LENGTH, (1, 6, calib.WIDTH - 6)),
-        ("width", 1, 0.0, calib.WIDTH, (0, 6, calib.LENGTH - 6)),
+    # Next to a made-up bottom the lowest part of a tall wall can bend into
+    # it (17 Nov 2026 Object Capture scan of the print: the terrace end sat
+    # 7 mm in at 2-5 mm up and within a millimetre of the design from 14 mm
+    # up). So then the walls that are tall enough (the terrace end, and both
+    # sides beside the terraces) are read 14-20 mm up: above where that bend
+    # ended, below the low terrace's top, so still straight wall on the design.
+    # The dome end is only the base's 10 mm tall and stays at 2-8 mm; on that
+    # scan it sat within a millimetre of the design all the way up (it did not
+    # bend in), but a scan where it does would read the length wrong.
+    h_all = height(scan_ref)
+    low_band = (h_all > 2) & (h_all < 8)
+    high_band = (h_all > 14) & (h_all < 20) if walls_clear_of_bottom else low_band
+    x = scan_ref[:, 0]
+    y = scan_ref[:, 1]
+    beside_terraces = (x > calib.RAMP_X[1] + 6) & (x < calib.LENGTH - 6)
+    along = (x > 6) & (x < calib.LENGTH - 6)
+    across = (y > 6) & (y < calib.WIDTH - 6)
+    # (key, coordinate, near wall's points, far wall's points)
+    # Wide windows round where each wall should be: a scan several percent too big or too small still has its
+    # walls inside them, and must be measured, not dropped. The rigid alignment can't scale the scan, so it may
+    # line one end up and leave the other wall a whole scale error away: 5% of the length is 7.5 mm (a SYNTHETIC
+    # scan 5% small lost its length at +-6 mm). In these bands, with the corners cut off, the walls are the only
+    # surface there (the terraces' tops and the step between them are above 20 mm, the dome above the base), so a
+    # wide window can't catch anything else.
+    wl = max(6.0, WALL_WINDOW * calib.LENGTH)
+    ww = max(6.0, WALL_WINDOW * calib.WIDTH)
+    sides = high_band & beside_terraces if walls_clear_of_bottom else low_band & along
+    for key, coord, near, far in (
+        ("length", x, low_band & across & (np.abs(x) < wl), high_band & across & (np.abs(x - calib.LENGTH) < wl)),
+        ("width", y, sides & (np.abs(y) < ww), sides & (np.abs(y - calib.WIDTH) < ww)),
     ):
-        o_axis, o_lo, o_hi = other
-        span_ok = band & (scan_ref[:, o_axis] > o_lo) & (scan_ref[:, o_axis] < o_hi)
-        # Wide windows round where each wall should be: a scan several percent too big or too small still has its
-        # walls inside them, and must be measured, not dropped. The rigid alignment can't scale the scan, so it
-        # may line one end up and leave the other wall a whole scale error away: 5% of the length is 7.5 mm (a
-        # SYNTHETIC scan 5% small lost its length at +-6 mm). In the 2-8 mm band, with the corners cut off by
-        # span_ok, the end walls are the only surface there, so a wide window can't catch anything else.
-        win = max(6.0, WALL_WINDOW * (hi_pos - lo_pos))
-        lo = span_ok & (np.abs(scan_ref[:, axis] - lo_pos) < win)
-        hi = span_ok & (np.abs(scan_ref[:, axis] - hi_pos) < win)
-        if lo.sum() > 20 and hi.sum() > 20:
-            out[key] = dict(value=round(float(np.median(scan_ref[hi, axis]) - np.median(scan_ref[lo, axis])), 3),
-                            n=int(lo.sum() + hi.sum()))
+        if near.sum() > 20 and far.sum() > 20:
+            out[key] = dict(value=round(float(np.median(coord[far]) - np.median(coord[near])), 3),
+                            n=int(near.sum() + far.sum()))
     return out
 
 
@@ -287,7 +307,7 @@ def scale_estimate(table: list[dict]) -> dict | None:
 
 
 def evaluate(scan_mesh, floor_pts: np.ndarray | None = None, calipers: dict | None = None,
-             n_samples: int = 100_000) -> dict:
+             n_samples: int = 100_000, walls_clear_of_bottom: bool = False) -> dict:
     import trimesh
 
     ref = calib.build()
@@ -312,7 +332,7 @@ def evaluate(scan_mesh, floor_pts: np.ndarray | None = None, calipers: dict | No
 
     # The paper (z = 0 in the scan's mat frame), carried into the model frame.
     floor_plane = (T[:3, 3].copy(), T[:3, :3] @ np.array([0.0, 0.0, 1.0]))
-    dims = measure_dimensions(S, floor_plane, floor_ref)
+    dims = measure_dimensions(S, floor_plane, floor_ref, walls_clear_of_bottom)
     table = []
     for chk in calib.CALIPER_CHECKS:
         row = dict(key=chk.key, label=chk.label, model_mm=chk.nominal_mm,

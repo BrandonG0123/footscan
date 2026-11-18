@@ -168,6 +168,10 @@ class Insole:
     params: InsoleParams
     report: dict = field(default_factory=dict)
     sole: object = None             # the scan in the insole's own frame (for the 3-D preview)
+    surface: dict | None = None     # the fill as a grid, before the base goes under it (xs, ys, fill), the foot's
+                                    # outline it was read under, and the heel zone's weight along xs (1 in the
+                                    # heel, fading to 0 past it: where the caps changed): footwear.py builds a
+                                    # shoe's footbed from the same heights and caps
 
 
 # ---------------------------------------------------------------------------
@@ -261,7 +265,7 @@ def _to_length(outline, x_from: float, target: float):
     now = ox1 - ox0
     if target < now - 0.5:
         raise InsoleError(f"the shoe's insole ({target:.0f} mm) is shorter than this foot's outline ({now:.0f} mm)")
-    if target <= now:
+    if target - now < 0.05:  # nothing worth adding (and nothing the sheet's and warning's 0.1 mm could show)
         return outline, 0.0
     k = (target - (x_from - ox0)) / (ox1 - x_from)
 
@@ -516,6 +520,10 @@ def build(foot_mesh, foot: str, params: InsoleParams | None = None) -> Insole:
         foot_max_fill_at_mm=dict(x=round(float(X[peak]), 1), y=round(float(Y[peak]), 1)),
         bed_fit=bed_fit_shape(np.asarray(mesh.vertices)[:, :2], p.bed_mm),
         shoe_fit=shoe_fit,
+        lengthened_mm=round(float(extended), 1),  # added to the front to reach the shoe's length (0: none needed)
+        # the foot's own heel and toe (x): the base tapers along these, not along the outline (which a shoe's
+        # insole, the generic outline or a lengthened front makes longer); the preview tapers the same way
+        base_taper_x_mm=[round(float(x0), 2), round(float(x1), 2)],
         # where the outline came from: a shoe's insole, the generic insole outline (both the same for every foot), or
         # this foot's own
         outline_from=outline_from,
@@ -523,7 +531,8 @@ def build(foot_mesh, foot: str, params: InsoleParams | None = None) -> Insole:
         warnings=warnings,
         frame="mm; x forward from the back of the heel, y toward the foot's left, z up; bottom at z = 0",
     )
-    return Insole(mesh=mesh, foot=foot, params=p, report=report, sole=m)
+    return Insole(mesh=mesh, foot=foot, params=p, report=report, sole=m,
+                  surface=dict(xs=xs, ys=ys, fill=fill, under_foot=in_sil, foot_outline=sil, heel_weight=w_heel[0]))
 
 
 def bed_fit_shape(xy, bed: float, clearance: float = 3.0) -> dict:
@@ -709,9 +718,10 @@ def capture_html(prep: dict | None) -> str:
 
 
 def shoe_row(fit: dict | None, name: str | None = None, lengthened_to: float | None = None,
-             outline_from: str | None = None) -> str:
+             added_mm: float | None = None, outline_from: str | None = None) -> str:
     """The summary sheet's line on the outline: the foot's own (lengthened to a shoe's length or not), the generic
-    insole outline, or fitted to a shoe's insole."""
+    insole outline, or fitted to a shoe's insole. ``added_mm``: how much the foot's own outline was lengthened at
+    the front (None: not recorded, an older insole)."""
     from html import escape
 
     from .recon import shoe as shoe_mod
@@ -728,7 +738,10 @@ def shoe_row(fit: dict | None, name: str | None = None, lengthened_to: float | N
         return (f'<tr><th>Outline</th><td colspan="3">the generic insole outline, the same shape for every foot, '
                 f'{fit["outline_length_mm"]} mm long ({size}); {over("its edge")}. Check it against the shoe\'s stock insole'
                 f'</td></tr>')
-
+    if not fit and lengthened_to and added_mm is not None and added_mm <= 0:
+        return (f'<tr><th>Outline</th><td colspan="3">the foot\'s own, already the shoe\'s {lengthened_to:g} mm long '
+                f'(nothing added; no shoe\'s outline): check it against the shoe\'s stock insole and trim to '
+                f'it</td></tr>')
     if not fit and lengthened_to:
         return (f'<tr><th>Outline</th><td colspan="3">the foot\'s own, its front lengthened to the shoe\'s '
                 f'{lengthened_to:g} mm (no shoe\'s outline): check it against the shoe\'s stock insole and trim to '
@@ -753,6 +766,14 @@ def fill_row(r: dict) -> str:
     if foot is None or foot <= r["max_fill_mm"] + FILL_PAST_EDGE_MM:
         return f"{r['max_fill_mm']} mm"
     return f"{r['max_fill_mm']} mm on the insole ({foot} mm under the foot, past the outline's edge)"
+
+
+# The break-in protocol (docs/SAFETY.md, requirement 2), as every summary sheet prints it: the insole's and the
+# printed shoe's (footwear.py) both use this one paragraph.
+BREAK_IN_HTML = """<p>Day 1: 1 h &middot; days 2&ndash;3: 2 h &middot; days 4&ndash;5: 3 h &middot; days 6&ndash;7: 4 h &middot; days 8&ndash;10: 6 h &middot;
+days 11&ndash;14: all day. Check both feet after every session.
+<b>Stop at once</b> and don't resume until reviewed if anything new hurts (foot, ankle, shin, knee, hip or back),
+a skin mark is still there the next day, a foot feels numb, tingly or burning, or an existing pain gets worse.</p>"""
 
 
 def summary_html(insole: Insole, scan_label: str, synthetic: bool = False) -> str:
@@ -795,7 +816,7 @@ anything and is not equivalent to, or a substitute for, a prescribed orthotic. N
 <tr><th>Stiffness</th><td colspan="3">Uniform (no lattice zones). Material and infill as printed: record below.</td></tr>
 <tr><th>Size</th><td colspan="3">{r['length_mm']} &times; {r['width_mm']} mm, {r['height_mm']} mm tall</td></tr>
 {f'<tr><th>Under the toes</th><td colspan="3">no fill from {p.toes_flat_from:.0%} of the length (the toes lie flat when standing)</td></tr>' if p.toes_flat_from is not None else ''}
-{shoe_row(r.get('shoe_fit'), r.get('shoe_name'), p.target_length_mm, r.get('outline_from'))}
+{shoe_row(r.get('shoe_fit'), r.get('shoe_name'), p.target_length_mm, r.get('lengthened_mm'), r.get('outline_from'))}
 </table>
 
 {capture}
@@ -822,10 +843,7 @@ The foot frame is {"provisional (from the scan alone)" if scan.get('provisional'
 <p>Notes:</p><div style="border:1px solid #ccc;height:90px"></div>
 
 <h2>Break-in (walking only until signed above)</h2>
-<p>Day 1: 1 h &middot; days 2&ndash;3: 2 h &middot; days 4&ndash;5: 3 h &middot; days 6&ndash;7: 4 h &middot; days 8&ndash;10: 6 h &middot;
-days 11&ndash;14: all day. Check both feet after every session.
-<b>Stop at once</b> and don't resume until reviewed if anything new hurts (foot, ankle, shin, knee, hip or back),
-a skin mark is still there the next day, a foot feels numb, tingly or burning, or an existing pain gets worse.</p>
+{BREAK_IN_HTML}
 </body></html>"""
 
 
@@ -864,7 +882,10 @@ def write_preview(insole: Insole, out_dir: Path, name: str = "insole") -> dict:
     p = insole.params
     z = m.vertices[:, 2]
     x = m.vertices[:, 0]
-    x0, x1 = x.min(), x.max()
+    # as build(): along the foot's own length, which the outline (a shoe's, or lengthened) can overrun;
+    # an insole made before that was recorded falls back to its own length
+    x0, x1 = insole.report.get("base_taper_x_mm") or (x.min(), x.max())
+
     def base_at(xs):  # as build(): base_mm under the heel, tapering to toe_base_mm at the toes
         t = np.clip((xs - (x0 + p.taper_from * (x1 - x0))) / ((1 - p.taper_from) * (x1 - x0)), 0, 1)
         return p.base_mm + (p.toe_base_mm - p.base_mm) * t
