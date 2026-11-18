@@ -57,6 +57,31 @@ def test_the_generic_outline_is_an_insole_shape_at_every_length(length):
     assert shoe_mod.handedness(poly)[0] == "right"
 
 
+def _half_widths(poly, share):
+    """(inner, outer) half-widths in mm of an outline at ``share`` of its length from the heel, for a right shoe
+    (inner side +y, the heel's middle at y = 0)."""
+    x0, _, x1, _ = poly.bounds
+    x = x0 + share * (x1 - x0)
+    cut = poly.intersection(shapely.box(x - 0.5, -500, x + 0.5, 500))
+    _, y0, _, y1 = cut.bounds
+    return y1, -y0
+
+
+def test_the_generic_outline_has_a_shoe_insoles_round_heel_and_a_toe_that_points_to_the_big_toe():
+    """The first generic outline came out a paddle (owner, 2026-11-10: "it wouldn't fit in any sort of shoe"):
+    80 mm across the heel at 280 mm, the heel end nearly square, the toe a round end centred on the heel. A shoe's
+    insole has a round heel end, a heel narrower than the ball, and a toe end set to the big toe's side."""
+    poly = insole.generic_outline(280.0)
+    length, heel, ball = _proportions(poly)
+    assert heel <= 0.27 * length  # 75.6 mm at 280: no wider than a shoe's heel seat
+    assert ball >= 1.25 * heel
+    near_back = sum(_half_widths(poly, 0.02))
+    assert near_back <= 0.15 * length  # a round heel end, not a square one (the old one: 50.6 mm at 280)
+    for share in (0.85, 0.90, 0.94):  # the outer (little-toe) side runs back first
+        inner, outer = _half_widths(poly, share)
+        assert inner > outer + 0.03 * length
+
+
 def test_the_generic_outline_is_scaled_as_a_whole_not_only_lengthened():
     a, b = _proportions(insole.generic_outline(250.0)), _proportions(insole.generic_outline(325.0))
     assert b[1] / a[1] == pytest.approx(1.3, rel=0.01) and b[2] / a[2] == pytest.approx(1.3, rel=0.01)
@@ -119,7 +144,10 @@ def test_the_sheet_gives_the_highest_fill_on_the_printed_insole_when_the_foots_i
     # the highest fill given is on the printed insole, and the arch is still read on the inner side
     assert shapely.contains_xy(insole_outline(wide), r["max_fill_at_mm"]["x"], r["max_fill_at_mm"]["y"])
     assert r["foot_max_fill_at_mm"]["y"] > 0
-    normal = insole.build(_foot(), "right", insole.InsoleParams(target_length_mm=275.0)).report
+    # a foot whose arch lies on the insole: just the number. (synth.curved_foot is 0.40 of its length wide, wider
+    # than the slimmer shoe-shaped outline of 2026-11-10 at the inner ball; at 85% width it lies inside)
+    normal = insole.build(_foot(width_scale=0.85), "right", insole.InsoleParams(target_length_mm=275.0)).report
+    assert normal["shoe_fit"]["overhang"]["max_mm"] == 0.0
     assert insole.fill_row(normal) == f"{normal['max_fill_mm']} mm"
 
 

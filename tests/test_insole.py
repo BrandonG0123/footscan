@@ -621,9 +621,13 @@ def test_if_the_exact_outline_fails_the_insole_still_covers_the_whole_foot(monke
     def boom(*a, **k):
         raise shapely.errors.GEOSException("forced")
 
+    whole = insole.from_scan(synth.block_foot(37.0, "right"), "right").report
     monkeypatch.setattr(shapely, "concave_hull", boom)
     ins = insole.from_scan(synth.block_foot(37.0, "right"), "right")
-    assert ins.report["length_mm"] > 240 and ins.report["width_mm"] > 90
+    # the same insole as with the exact outline (a fragment would be shorter or narrower); 255 x 89.8 mm
+    assert ins.report["length_mm"] > 240
+    assert ins.report["length_mm"] == pytest.approx(whole["length_mm"], abs=1.0)
+    assert ins.report["width_mm"] == pytest.approx(whole["width_mm"], abs=1.0)
     assert any("convex outline" in w for w in ins.report["warnings"])
 
 
