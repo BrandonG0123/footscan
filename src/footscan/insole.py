@@ -102,21 +102,25 @@ HOLE_ABOVE_FLOOR_MM = 3.0  # an unseen hit higher than this: the inside of the f
 # The generic insole outline (generic_outline): a shoe insole's plan shape, the same for every foot, scaled as a whole
 # to the insole's length. Each row is (distance from the back of the heel, half-width to the inner side, half-width
 # to the outer side), all as shares of the length, for a right shoe. A JUDGMENT, not measured from any shoe: drawn to
-# the proportions of a men's running-shoe sock liner, at 275 mm long 78 mm across the heel and about 103 mm across
-# the ball, the big-toe end furthest forward. The heel is as wide as a real heel and its cup wall need: on the first
-# real foot scan (docs/insole.md) the heel was 71 mm across near the floor and 74 mm at the heel cup's height, and
-# the cup wall rises over 2.5 mm outside that (heel_wall_ramp_mm). Wider still and it stops fitting a shoe's heel
-# seat; where a heel is wider, its own rounded underside forms the cup, as in a shoe's outline. Its inner side runs
-# nearly straight from the heel to the ball, without the inward curve a high-arched footprint has: a flat foot's arch reaches the floor there (the owner's feet are flat, CLAUDE.md), and
-# the arch support has to sit on the insole, not past its edge. For comparison, Menz et al. 2014 (J Foot Ankle Res
-# 7:3, table 3) measured shoe lasts 278.7 mm long and 95.6 mm across the ball (0.343 of the length); an insole is a
-# little wider than its last's bottom, as it reaches up into the shoe's sides. A scan of the real shoe's stock
-# insole (a saved shoe) replaces it for that shoe.
+# slide into most shoes of its size, at 280 mm long about 75 mm across the heel and 99 mm across the ball. Redrawn
+# 2026-11-10 after the owner saw the first version (80 mm heel, a centred round toe) at 280 mm and said it
+# wouldn't fit any shoe. What makes it a shoe's shape:
+# - the heel end is round (38 mm across 2% in), not squared off, so it sits in a shoe's curved heel seat;
+# - the heel is about 75 mm across, as wide as the owner's heel at the cup's height (71-74 mm on the first real
+#   foot scan, docs/insole.md) and no wider; a wider heel stops fitting a shoe's heel seat;
+# - the toe end points to the big toe: the outer side runs back from about 75% of the length (a shoe's toe box is
+#   shorter on the little-toe side), the tip sits 4% of the length to the inner side;
+# - the inner side runs nearly straight from the heel to the ball, without the inward curve a high-arched
+#   footprint has: a flat foot's arch reaches the floor there (the owner's feet are flat, CLAUDE.md), and the arch
+#   support has to sit on the insole, not past its edge.
+# For comparison, Menz et al. 2014 (J Foot Ankle Res 7:3, table 3) measured shoe lasts 278.7 mm long and 95.6 mm
+# across the ball (0.343 of the length); an insole is a little wider than its last's bottom, as it reaches up into
+# the shoe's sides. A scan of the real shoe's stock insole (a saved shoe) replaces it for that shoe.
 GENERIC_STATIONS = (
-    (0.02, 0.0836, 0.0836), (0.05, 0.1182, 0.1182), (0.10, 0.1364, 0.1364), (0.16, 0.1418, 0.1418),
-    (0.25, 0.1418, 0.1436), (0.35, 0.1418, 0.1473), (0.45, 0.1455, 0.1564), (0.55, 0.1564, 0.1745),
-    (0.65, 0.1709, 0.1909), (0.72, 0.1800, 0.1945), (0.80, 0.1818, 0.1800), (0.88, 0.1691, 0.1491),
-    (0.94, 0.1418, 0.1036), (0.98, 0.0964, 0.0564),
+    (0.02, 0.0679, 0.0679), (0.05, 0.1000, 0.1000), (0.10, 0.1214, 0.1250), (0.16, 0.1286, 0.1357),
+    (0.25, 0.1286, 0.1393), (0.35, 0.1286, 0.1429), (0.45, 0.1321, 0.1536), (0.55, 0.1393, 0.1607),
+    (0.65, 0.1643, 0.1714), (0.72, 0.1786, 0.1679), (0.80, 0.1786, 0.1464), (0.85, 0.1714, 0.1214),
+    (0.90, 0.1571, 0.0893), (0.94, 0.1321, 0.0571), (0.97, 0.1000, 0.0286),
 )
 GENERIC_TOE_TIP = 0.04       # the very front sits this share of the length to the inner side (the big toe's end)
 GENERIC_ROOM_MM = 12.0       # no length given: the insole reaches this far past the scanned toes. A judgment: the
