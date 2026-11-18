@@ -57,6 +57,19 @@ deviation (median, 95th percentile, signed mean), coverage, and the
 caliper dimensions (length, width, heights, dome radius). The alignment
 never rescales, so if LiDAR gets the size wrong, it shows.
 
+Keep the object flat on the table; don't raise it on a stand (the stand ends
+up in the model and is taken for the floor). The phone never sees the
+underside, so Object Capture makes one up, and it can hang well below the
+object: on the first real scan (17 Nov 2026) it was a wedge about 30 mm deep. The
+studio spots that (the lowest points sit more than 3 mm below where the base
+slab's flat top says the bottom is, allowing for the model's own size),
+stands the model on the slab's top less its 10 mm (or your caliper
+reading), cuts the made-up part away, and says so under the score. The base thickness is then not measured; the length, width
+and the other heights still are. Next to a made-up bottom the lowest part of a
+tall wall can bend into it, so the terrace end and the sides beside the
+terraces are then read 14-20 mm up instead of 2-8 mm. If the slab's top
+can't be found, the score says the bottom couldn't be checked.
+
 ### More detail on the Mac
 
 The phone builds the *reduced* level of detail. The same photos (they carry
@@ -118,7 +131,18 @@ Capture itself needs a phone with LiDAR and isn't covered.
   iPhone photos of a shoe, no LiDAR) in 84 s. Without LiDAR or the mat its
   size is meaningless (it came out 2.5 "metres" across), which is the point
   of LiDAR or the mat.
-- `accuracy-mesh` is tested on synthetic models only: a perfect model
+- `accuracy-mesh` is tested on synthetic models: a perfect model
   exported the way Object Capture does (metres, Y up, tilted table) comes
-  back perfect, and one 1% too big reports 1% too big. **No LiDAR accuracy
-  number exists yet.**
+  back perfect, one 1% too big reports 1% too big, and one with a made-up
+  wedge underneath is stood on its base slab and scored as perfect.
+- One real LiDAR scan so far: the printed block, Object Capture on the
+  iPhone at reduced detail, 17 Nov 2026 (capture
+  LIDAR_calibration_X_20261117-102255-bff2), against the design (no caliper
+  readings yet). Before the made-up-bottom handling it scored dome top 70.1 mm
+  (design 30) and couldn't measure length or width. With it: length 151.3
+  (150), width 71.3 (70), high terrace 35.0 (35), low terrace 22.0 (22), dome
+  top 29.0 (30), dome radius 18.0 (20); surface median 0.69 mm, 95th
+  percentile 3.55 mm, 84% of the scan within 2 mm. Length and width, the
+  two numbers that don't lean on the assumed 10 mm base, read 0.9% and 1.8%
+  big. The dome's sphere fit reads 10% small; why isn't known yet. One scan,
+  against the design: not yet a repeatable number.

@@ -335,23 +335,65 @@ def never_local(handler) -> bool:
 
 
 class RateLimiter:
+    """New submissions per client per hour. Request threads share it, so it takes a lock."""
+
     def __init__(self, per_hour: int):
         self.per_hour = per_hour
         self.hits: dict[str, list[float]] = {}
+        self.lock = threading.Lock()
 
     def allow(self, client: str) -> bool:
         import time
 
-        now = time.monotonic()
-        if len(self.hits) > RATE_LIMIT_CLIENTS_KEPT:  # forget clients with nothing in the last hour
-            self.hits = {c: ts for c, ts in self.hits.items() if ts and now - ts[-1] < 3600}
-        recent = [t for t in self.hits.get(client, []) if now - t < 3600]
-        if len(recent) >= self.per_hour:
+        client = rate_key(client)
+        with self.lock:
+            now = time.monotonic()
+            if len(self.hits) > RATE_LIMIT_CLIENTS_KEPT:  # forget clients with nothing in the last hour
+                self.hits = {c: ts for c, ts in self.hits.items() if ts and now - ts[-1] < 3600}
+            recent = [t for t in self.hits.get(client, []) if now - t < 3600]
+            if len(recent) >= self.per_hour:
+                self.hits[client] = recent
+                return False
+            recent.append(now)
             self.hits[client] = recent
-            return False
-        recent.append(now)
-        self.hits[client] = recent
-        return True
+            return True
+
+
+def rate_key(client: str) -> str:
+    """Whom the rate limit counts: an IPv4 address as it is, an IPv6 address by its /64 (one home or phone
+    network is given a whole /64, and can take a new address from it for every request)."""
+    try:
+        ip = ipaddress.ip_address(client.strip("[]"))
+    except ValueError:
+        return client
+    if isinstance(ip, ipaddress.IPv6Address):
+        if ip.ipv4_mapped:
+            return str(ip.ipv4_mapped)
+        return str(ipaddress.ip_network(f"{ip}/64", strict=False))
+    return str(ip)
+
+
+# A customer's submission holds at most this much (photos): a real one is about 60 photos of under 1 MB per
+# scan, and up to 4 scans. And every photo, customer's or studio's, leaves at least this much of the disk free.
+MAX_SUBMISSION_BYTES = 1024 * 1024 * 1024
+MIN_FREE_BYTES = 5 * 1024 * 1024 * 1024
+# ?key=... (the studio key) and ?t=... (a rescan's upload token) in a logged request line
+SECRET_IN_URL = re.compile(r"\b(key|t)=[^&\s]*")
+
+
+def folder_bytes(folder: Path) -> int:
+    """The size of the files in this folder and the ones in it."""
+    return sum(f.stat().st_size for f in Path(folder).rglob("*") if f.is_file())
+
+
+def changes_submission(method: str, rest: list[str]) -> bool:
+    """Does this request to one submission rewrite its submission.json (so it takes that submission's lock)?"""
+    if method == "DELETE":
+        return rest == []
+    if method != "POST":
+        return False
+    return rest in (["rescan"], ["status"], ["submit"]) or (
+        len(rest) == 3 and rest[0] == "scans" and rest[2] in ("start", "complete"))
 
 
 # The rate limiter's memory: past this many clients, the ones with nothing in the last hour are forgotten.
@@ -376,6 +418,7 @@ def client_of(peer: str, headers) -> str:
 
 
 SUMMARY_TEXT_MAX = 40
+SUMMARY_MARKUP = re.compile(r"[<>\"'&]")
 
 
 def clean_summary(summary) -> dict:
@@ -388,8 +431,8 @@ def clean_summary(summary) -> dict:
     if not isinstance(summary, dict):
         return {}
 
-    def word(v):
-        return isinstance(v, str) and len(v) <= SUMMARY_TEXT_MAX
+    def word(v):  # and never markup: the page escapes it too, but a word needs none of < > " ' &
+        return isinstance(v, str) and len(v) <= SUMMARY_TEXT_MAX and not SUMMARY_MARKUP.search(v)
 
     def number(v):
         return v is None or isinstance(v, bool) or (isinstance(v, (int, float)) and v == v and abs(v) < 1e12)
@@ -491,7 +534,8 @@ def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check
 
         def log_message(self, fmt, *args):  # skip static asset noise
             if args and "/api/" in str(args[0]):
-                super().log_message(fmt, *args)
+                # the request line: a studio key or upload token in it (?key=, &t=) never goes into the log
+                super().log_message(fmt, SECRET_IN_URL.sub(r"\1=…", str(args[0])), *args[1:])
 
         def end_headers(self):
             if not self.close_connection and self.body_left_unread():
@@ -540,6 +584,10 @@ def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check
                 raise BadRequest("body too large")
             body = self.rfile.read(length)
             self._body_read = len(body) == length
+            if not self._body_read:
+                # the connection ended (or stalled past TRANSFER_TIMEOUT_S) part-way: never keep part of a file
+                self.close_connection = True
+                raise BadRequest(f"the upload ended early ({len(body)} of {length} bytes)")
             return body
 
         def handle_expect_100(self):
@@ -566,6 +614,7 @@ def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check
             # studio-key cookie in _extra_headers, which is only for the response that set it).
             self._body_read = False
             self._extra_headers = {}
+            self._json = None
             self.__dict__.pop("headers", None)  # the request before's: a request line refused before its headers
             if not super().parse_request():
                 return False
@@ -599,9 +648,12 @@ def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check
                 return True
 
         def json_body(self) -> dict:
+            if self._json is not None:  # already read (api_submissions reads it before taking a lock)
+                return self._json
             body = json.loads(self.read_body(MAX_JSON_BYTES))
             if not isinstance(body, dict):
                 raise BadRequest("expected a JSON object")
+            self._json = body
             return body
 
         def has_studio_cookie(self) -> bool:
@@ -672,13 +724,28 @@ def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check
             self.end_headers()
             self.wfile.write(body)
 
-        def save_jpeg(self, path: Path, n: int):
+        def save_jpeg(self, path: Path, n: int, quota: Path | None = None):
+            """One photo; False when refused for the disk (answered here). ``quota``: a customer's submission folder, which may hold at most MAX_SUBMISSION_BYTES.
+            Every photo needs MIN_FREE_BYTES left on the disk after it, so uploads can't fill it."""
             if not 1 <= n <= MAX_FRAMES:
                 raise BadRequest("frame number out of range")
+            coming = int(self.headers.get("Content-Length") or 0)
+            if quota is not None and folder_bytes(quota) + coming > MAX_SUBMISSION_BYTES:
+                raise BadRequest("this submission already holds as many photos as it may")
+            if shutil.disk_usage(path.parent).free - coming < MIN_FREE_BYTES:
+                self.send_json({"error": "the studio's disk is nearly full; try again later"},
+                               HTTPStatus.INSUFFICIENT_STORAGE)
+                return False
             body = self.read_body(MAX_FRAME_BYTES)
             if body[:3] != b"\xff\xd8\xff":
                 raise BadRequest("frame must be a JPEG")
-            path.write_bytes(body)
+            tmp = path.with_name(f".{path.name}.part-{secrets.token_hex(4)}")  # not frame_*.jpg until whole
+            try:
+                tmp.write_bytes(body)
+                atomic.replace(tmp, path)  # a photo sent again replaces the old one only once it's all here
+            finally:
+                tmp.unlink(missing_ok=True)
+            return True
 
         def route(self, method: str):
             path, _, query = self.path.partition("?")
@@ -1114,8 +1181,22 @@ def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check
                     return self.send_json(list_submissions(submissions_dir))
                 raise FileNotFoundError
 
-            d, meta = self.submission(p[0])
+            self.submission(p[0])  # a bad id, or no such submission: answered before anything is read
             rest = p[1:]
+            if changes_submission(method, rest):
+                # submission.json is read, changed and written again: one such request per submission at a time,
+                # or a slow one would write back what it read before another (a send closing uploads, the
+                # other scan finished) and undo it. Its body is read first, so a slow upload holds no one up.
+                if method != "DELETE" and int(self.headers.get("Content-Length") or 0):
+                    self.json_body()
+                with capture_lock(f"submission:{p[0]}"):
+                    d, meta = self.submission(p[0])  # read again inside the lock
+                    return self.submission_request(method, d, meta, rest)
+            d, meta = self.submission(p[0])
+            return self.submission_request(method, d, meta, rest)
+
+        def submission_request(self, method: str, d: Path, meta: dict, rest: list[str]):
+            """One submission's routes (api_submissions has checked its id and taken its lock where needed)."""
 
             if rest == [] and method == "GET":
                 self.require_local()
@@ -1178,7 +1259,7 @@ def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check
                 note = "sent by customer"
                 if meta.get("rescan"):
                     # The mat may have been reprinted since: check it again.
-                    body = json.loads(self.read_body(MAX_JSON_BYTES)) if int(self.headers.get("Content-Length") or 0) else {}
+                    body = self.json_body() if int(self.headers.get("Content-Length") or 0) else {}
                     done = dict(meta.pop("rescan"), mat_check=validate_mat_check(body), sent=now_iso())
                     meta.setdefault("rescans", []).append(done)
                     note = f"rescan sent: {', '.join(done['scans'])}"
@@ -1206,8 +1287,9 @@ def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check
                         if not scan_dir.is_dir():
                             raise BadRequest("call start before uploading frames")
                         n = int(rest[3])
-                        self.save_jpeg(scan_dir / f"frame_{n:04d}.jpg", n)
-                        return self.send_json({"ok": True})
+                        if self.save_jpeg(scan_dir / f"frame_{n:04d}.jpg", n, quota=d):
+                            self.send_json({"ok": True})
+                        return None
                     if method == "GET" and rest[3].endswith(".jpg"):
                         self.require_local()
                         f = scan_dir / f"frame_{int(rest[3][:-4]):04d}.jpg"
@@ -1347,8 +1429,9 @@ def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check
             if len(p) == 3 and p[1] == "frames":
                 if method == "PUT":
                     n = int(p[2])
-                    self.save_jpeg(d / f"frame_{n:04d}.jpg", n)
-                    return self.send_json({"ok": True})
+                    if self.save_jpeg(d / f"frame_{n:04d}.jpg", n):
+                        self.send_json({"ok": True})
+                    return None
                 if method == "GET" and p[2].endswith(".jpg"):
                     f = d / f"frame_{int(p[2][:-4]):04d}.jpg"
                     if not f.is_file():

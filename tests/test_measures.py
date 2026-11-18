@@ -155,3 +155,18 @@ def test_frame_axes_orthonormal():
     R, t = random_rigid(7)
     f = build_frame(transform(right_foot(), R, t), "right")
     assert np.allclose(f.rotation @ f.rotation.T, np.eye(3))
+
+
+def test_dorsal_height_leaves_out_a_shin_leaning_over_the_midfoot():
+    # SYNTHETIC: a 250 x 80 x 60 block foot with a "shin" column standing over its midpoint, up to z = 250.
+    # The lengths already leave out everything above the malleoli; the dorsum must not read the shin either.
+    foot = trimesh.creation.box(extents=[250, 80, 60])
+    foot.apply_translation([125, 0, 30])
+    shin = trimesh.creation.box(extents=[30, 40, 190])
+    shin.apply_translation([125, 0, 60 + 95])
+    mesh = trimesh.util.concatenate([foot, shin])
+    lm = right_foot()
+    del lm["dorsum_50"], lm["toe_tip"]
+    values, _ = measure_scan(record(lm), mesh=(mesh.vertices, mesh.faces))
+    assert values["dorsal_height_50_mm"] == pytest.approx(60)
+    assert values["ahi"] == pytest.approx(60 / 180)
