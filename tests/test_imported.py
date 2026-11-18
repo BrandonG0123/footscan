@@ -124,3 +124,24 @@ def test_a_file_with_no_triangles_is_refused(tmp_path):
     (tmp_path / "empty.obj").write_text("v 0 0 0\nv 1 0 0\n")
     with pytest.raises(ValueError):
         imported.load_geometry(tmp_path / "empty.obj")
+
+
+def test_the_table_is_found_under_an_object_whose_flat_top_is_bigger_than_the_table_in_view():
+    """SYNTHETIC: a 300 x 300 x 40 mm box on a table of which only a 30 mm strip round it was scanned. The box's
+    top is the largest flat surface but its sides hang below it; the table under it is the next largest."""
+    box = trimesh.creation.box(extents=[300, 300, 40])
+    box.apply_translation([0, 0, 20])
+    strips = []
+    for x0, x1, y0, y1 in ((-180, 180, 150, 180), (-180, 180, -180, -150), (-180, -150, -150, 150), (150, 180, -150, 150)):
+        q = trimesh.Trimesh([[x0, y0, 0], [x1, y0, 0], [x1, y1, 0], [x0, y1, 0]], [[0, 1, 2], [0, 2, 3]])
+        strips.append(q.subdivide().subdivide().subdivide())
+    m = trimesh.util.concatenate([box] + strips)
+    T = np.eye(4)
+    T[:3, :3] = _rot([1, 0, 0], 1.0)
+    T[:3, 3] = [0, 0, 7.0]
+    m.apply_transform(T)
+    out, floor_pts, info = imported.to_floor_frame(m, up="z")
+    assert "table found" in info["floor"]
+    assert info["floor_tilt_corrected_deg"] == pytest.approx(1.0, abs=0.1)
+    assert np.abs(floor_pts[:, 2]).max() < imported.PLANE_TOL_MM
+    assert out.vertices[:, 2].max() == pytest.approx(40.0, abs=0.5)  # the box's top, 40 mm above the table
