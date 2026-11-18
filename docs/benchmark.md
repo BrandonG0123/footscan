@@ -47,9 +47,14 @@ foam prints.
 | floor tilt | 0.03 degrees or less | 0.91 degrees or less |
 | outline length | +0.4 to +0.5 mm | +0.3 to +1.8 mm |
 | arch on the inner side | every case | every case |
+| default insole's plan shape (generic outline, across the ball / heel, share of its length; 2026-11-09) | 0.376 / 0.284, every case | 0.376 / 0.284, every case |
 
 Scans rougher than 0.5 mm (as the processing reads them) get a warning to
 scan again.
+
+A case also fails if the insole made by default from it (the generic insole
+outline, sized from the foot) falls outside 0.33-0.42 of its length across
+the ball or 0.22-0.29 across the heel (a judgment, as tests/test_insole_shape.py).
 
 **What this does and doesn't show.** It shows the software reading the sole
 adds next to nothing on a clean scan, and well under a millimetre on a

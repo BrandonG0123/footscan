@@ -980,9 +980,13 @@ def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check
                     raise BadRequest("give one of: a shoe's insole, a saved shoe, a length")
                 if opts.get("foot_outline") and (shoe_id is not None or saved_id is not None):
                     raise BadRequest("the foot's own outline or a shoe's, not both")
-                if shoe_id is None and saved_id is None and length is None and not opts.get("foot_outline"):
+                if opts.get("generic") and (shoe_id is not None or saved_id is not None or opts.get("foot_outline")):
+                    raise BadRequest("the generic insole outline, or a shoe's, or the foot's own: one of them")
+                if (shoe_id is None and saved_id is None and length is None and not opts.get("foot_outline")
+                        and not opts.get("generic")):
+                    # (a length alone asks for the generic outline at that length, whatever the default)
                     # per shoe by default: the default saved shoe's outline. A default that's chosen but broken
-                    # stops here with why, rather than quietly cutting the insole to the foot's own outline
+                    # stops here with why, rather than quietly cutting the insole to another outline
                     try:
                         saved_id = shoes_mod.default_id(shoes_dir, strict=True)
                     except shoes_mod.ShoeLibraryError as e:
@@ -994,10 +998,14 @@ def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check
                         raise BadRequest("an insole needs a foot capture (left or right)")
                     shoe = shoe_capture(captures_dir, shoe_id) if shoe_id is not None else None
                     saved = saved_shoe(shoes_dir, saved_id) if saved_id is not None else None
-                    result = make_insole(d, meta, length_mm=length, shoe=shoe, saved=saved)
-                    if result.get("outline") == "foot" and length is None and not opts.get("foot_outline"):
-                        # nothing was asked, and there was no default saved shoe: not a choice of the foot's
-                        # outline, so once a default is saved the menu (and Remake) follow it
+                    result = make_insole(d, meta, length_mm=length, shoe=shoe, saved=saved,
+                                         foot_outline=bool(opts.get("foot_outline")))
+                    if (result.get("outline") == "generic" and not opts.get("generic")
+                            and (length is None or not (shoes_dir / shoes_mod.DEFAULT_FILE).is_file())):
+                        # no outline was asked for (at most a length) and there was no default saved shoe: not a
+                        # choice of the generic outline, so once a default is saved the menu (and Remake) follow it.
+                        # A length alone with a default saved shoe chosen did pass it over: that stays "generic",
+                        # so Remake makes the same insole
                         result["outline"] = "default"
                     if "error" in result:  # a failed attempt leaves nothing printable behind
                         shutil.rmtree(d / "insole", ignore_errors=True)
@@ -1639,6 +1647,16 @@ def _shoe_changed(folder: Path, ins: dict) -> bool:
     return source_stamp(insole_source(sf, read_json(sf / "capture.json"))) != shoe.get("source")
 
 
+def _old_default_outline(ins: dict) -> bool:
+    """Was this insole cut to the foot's own outline by default (or lengthened at the front for a shoe's length),
+    before the generic insole outline (insole.generic_outline) became the default? Those can come out long and
+    thin, the scan's size and shape; one made since says which shape it got (outline_shape). An insole cut to a
+    shoe, or to the foot's own outline because that was chosen (no length), still matches."""
+    if ins.get("outline_shape") or ins.get("shoe"):
+        return False
+    return not (ins.get("outline") == "foot" and ins.get("shoe_length_mm") is None)
+
+
 def _prepared_another_way(meta: dict, ins: dict) -> bool:
     """Was this sole scan's insole made by a preparation that has changed since (foot_prep.prep_version(kind))?
     Made before 29 Oct 2026, its toes, if they hung up, weren't laid flat, and its outline can be short."""
@@ -1655,6 +1673,8 @@ STALE_MESSAGES = {
     "shoe": "The shoe this insole was cut to has been saved again (or its scan replaced or removed) since, so it no "
             "longer matches.",
     "prep": "The way this kind of scan is prepared has changed since this insole was made.",
+    "outline": "This insole was cut to the foot's own outline, from before insoles took a shoe insole's shape by "
+               "default; made again, it gets the generic insole outline (or choose the foot's own).",
     None: "This insole can't be downloaded: the last attempt failed, or it no longer matches.",
 }
 
@@ -1671,10 +1691,12 @@ def insole_stale_reason(folder: Path, meta: dict) -> str | None:
             return "model"
         if _shoe_changed(folder, ins):
             return "shoe"
+        if _prepared_another_way(meta, ins):
+            return "prep"
+        if _old_default_outline(ins):
+            return "outline"
     except (ValueError, OSError):  # what it was made from can't be read (or is mid-rebuild): not current
         return "model"
-    if _prepared_another_way(meta, ins):
-        return "prep"
     return None
 
 
@@ -1690,14 +1712,14 @@ def insole_downloadable(folder: Path, meta: dict) -> bool:
     if not ins or "error" in ins:
         return False
     try:
-        current = source_stamp(insole_source(folder, meta))
+        return source_stamp(insole_source(folder, meta)) is not None and insole_stale_reason(folder, meta) is None
     except (ValueError, OSError):  # what it was made from can't be read (or is mid-rebuild): not current
         return False
-    return current is not None and insole_stale_reason(folder, meta) is None
 
 
 def parse_shoe_length(value) -> float | None:
-    """The shoe's insole length for Make insole (mm), or None for the foot's own length."""
+    """The shoe's insole length for Make insole (mm), or None: none given (the generic outline is then sized
+    from the foot, the foot's own outline isn't lengthened, and a shoe's outline keeps its own length)."""
     if value in (None, ""):
         return None
     try:
@@ -1751,11 +1773,13 @@ def shoe_stamp(folder: Path) -> dict:
 
 
 def make_insole(folder: Path, meta: dict, length_mm: float | None = None, shoe: Path | None = None,
-                saved: tuple[str, dict, str | None] | None = None) -> dict:
+                saved: tuple[str, dict, str | None] | None = None, foot_outline: bool = False) -> dict:
     """First-fit insole for a foot capture: an imported model (iPhone app) or a footscan reconstruction.
 
-    ``length_mm``: a shoe's insole length: the outline is lengthened to it at the front only (the
-    shape under the heel, arch and ball unchanged); never shorter than the foot.
+    With none of the below, the outline is the generic insole outline (insole.generic_outline), sized from the
+    foot. ``length_mm``: a shoe's insole length: the generic outline is made that long, scaled as a whole (with
+    ``foot_outline``, the foot's own outline lengthened at the front only); never shorter than the foot.
+    ``foot_outline``: the foot's own outline instead of the generic one.
     ``shoe``: a shoe's-insole capture's folder: the insole takes that insole's outline, fitted round the
     foot (recon/shoe.py). Not with ``length_mm``.
     ``saved``: (id, saved shoe, stamp) from <data>/shoes (footscan/shoes.py): the same, from the outline kept for
@@ -1770,7 +1794,7 @@ def make_insole(folder: Path, meta: dict, length_mm: float | None = None, shoe: 
 
     foot = meta["foot"]
     stamp = source_stamp(insole_source(folder, meta))
-    params = insole_mod.InsoleParams(target_length_mm=length_mm) if length_mm is not None else None
+    params = insole_mod.InsoleParams(target_length_mm=length_mm, foot_outline=foot_outline)
     shoe_info = None
     try:
         if shoe is not None:
@@ -1821,11 +1845,16 @@ def make_insole(folder: Path, meta: dict, length_mm: float | None = None, shoe: 
         shutil.rmtree(tmp, ignore_errors=True)
     r = ins.report
     return dict(made=now_iso(), foot=foot, length_mm=r["length_mm"], width_mm=r["width_mm"], height_mm=r["height_mm"],
-                max_fill_mm=r["max_fill_mm"], sole=r["sole"], bed=r["bed_fit"], warnings=r["warnings"],
+                max_fill_mm=r["max_fill_mm"], foot_max_fill_mm=r["foot_max_fill_mm"], sole=r["sole"], bed=r["bed_fit"], warnings=r["warnings"],
                 files=sorted(INSOLE_FILES), source=stamp, prep=foot_prep.prep_version(meta.get("scan_kind")), shoe_length_mm=length_mm,
                 # which outline was asked for, so the studio shows the same choice after a reload: a saved shoe,
                 # a shoe's-insole scan, or the foot's own (lengthened or not)
-                outline="saved" if saved is not None else "scan" if shoe is not None else "foot",
+                outline="saved" if saved is not None else "scan" if shoe is not None else r["outline_from"],
+                # the outline's shape as made: "shoe", "generic" or "foot" (an insole without it was made when the
+                # default was the foot's own outline: insole_stale_reason)
+                outline_shape=r["outline_from"],
+                generic=dict(length_mm=r["shoe_fit"]["outline_length_mm"], fit=r["shoe_fit"])
+                if r["outline_from"] == "generic" else None,
                 shoe=dict(shoe_info, fit=r.get("shoe_fit")) if shoe_info else None)
 
 

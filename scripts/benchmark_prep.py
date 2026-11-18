@@ -217,9 +217,13 @@ def measure(name, kind, builder, kw, foot, seed=0):
     rng = np.random.default_rng(seed)
     scan, to_synth, truth, floor0 = builder(foot, rng, **kw)
     t = time.time()
-    ins, placed = foot_prep.insole_from_object_capture(scan, foot, kind=kind)
+    # the foot's own outline: this measures how the scan is read, and a shoe's or the generic outline would add its
+    # own warnings (where a synthetic foot hangs over it) and move the highest fill to inside it
+    ins, placed = foot_prep.insole_from_object_capture(scan, foot, kind=kind,
+                                                       params=insole.InsoleParams(foot_outline=True))
     secs = time.time() - t
     r = ins.report
+    generic = generic_shape(placed, foot, ins.params)
     to_mat = np.array(r["prep"]["to_mat"])
 
     # the sole the generator reads: the same steps as insole.build
@@ -280,13 +284,32 @@ def measure(name, kind, builder, kw, foot, seed=0):
     shaped = np.minimum(smooth, raw + insole.SMOOTH_MAY_RAISE_MM)
     arch_read = float(np.max(shaped[seen][interior]))
     arch_true = float(np.max(true_z - floor0))
-    inner_side = (r["max_fill_at_mm"]["y"] > 0) == (foot == "right")
+    inner_side = (r["foot_max_fill_at_mm"]["y"] > 0) == (foot == "right")
     return dict(
         name=name, kind=kind, foot=foot, secs=round(secs, 1), points=int(interior.sum()),
         bias=float(np.mean(err)), rms=float(np.sqrt(np.mean(err ** 2))), p95=float(np.percentile(np.abs(err), 95)),
         arch=arch_read - arch_true, tilt=tilt, pitch=wedge_pitch, roll=wedge_roll, length=_longest(sil) - _longest(synth.curved_plan()),
         surface_rms=float(np.sqrt(np.mean(surface_err ** 2))), side=inner_side, noise=r["prep"].get("surface_noise_mm"), warnings=r["warnings"],
+        generic=generic,
     )
+
+
+# The default insole (the generic insole outline, with no saved shoe) made from every case: the default build path
+# runs on every damaged scan, and its plan shape has to stay a shoe insole's (insole.INSOLE_BALL_SHARE and
+# INSOLE_HEEL_SHARE, a judgment) wherever the outline was placed. A case outside them fails.
+def generic_shape(placed, foot, params):
+    """The insole as made by default from this scan (the generic outline, sized from the foot): its width across the
+    ball and across the heel as shares of its length. Raises past the bounds."""
+    from dataclasses import replace
+
+    g = insole.from_scan(placed, foot, replace(params, foot_outline=False))
+    length, heel, ball = insole.plan_widths(g.mesh.vertices, g.report["shoe_fit"]["turned_deg"])
+    ball, heel = ball / length, heel / length
+    (b0, b1), (h0, h1) = insole.INSOLE_BALL_SHARE, insole.INSOLE_HEEL_SHARE
+    if not (b0 <= ball <= b1 and h0 <= heel <= h1):
+        raise ValueError(f"the default (generic outline) insole isn't an insole's shape: {ball:.3f} of its length "
+                         f"across the ball, {heel:.3f} across the heel")
+    return round(ball, 3), round(heel, 3)
 
 
 def _longest(poly) -> float:
@@ -302,7 +325,7 @@ def row(m):
     w = "; ".join(x.split(":")[0][:48] for x in m["warnings"]) or "-"
     return (f"| {m['kind']} | {m['name']} | {m['foot']} | {m['bias']:+.2f} | {m['rms']:.2f} | {m['p95']:.2f} | "
             f"{m['arch']:+.2f} | {m['tilt']:.2f} ({m['pitch']:.2f} / {m['roll']:.2f}) | {m['length']:+.1f} | "
-            f"{'yes' if m['side'] else 'NO'} | {m['noise']} | {w} |")
+            f"{'yes' if m['side'] else 'NO'} | {m['noise']} | {m['generic'][0]:.3f} / {m['generic'][1]:.3f} | {w} |")
 
 
 def main(argv=None) -> int:
@@ -324,7 +347,8 @@ def main(argv=None) -> int:
             else:
                 print(f"{kind:10s} {name:22s} {foot:5s} bias {m['bias']:+.2f} rms {m['rms']:.2f} p95 {m['p95']:.2f} "
                       f"arch {m['arch']:+.2f} tilt {m['tilt']:.2f} len {m['length']:+.1f} side {m['side']} "
-                      f"noise {m['noise']} warn {len(m['warnings'])} ({m['secs']}s)", flush=True)
+                      f"noise {m['noise']} warn {len(m['warnings'])} generic {m['generic'][0]:.3f}/{m['generic'][1]:.3f} "
+                      f"({m['secs']}s)", flush=True)
             results.append(m)
 
     ok = [m for m in results if "error" not in m]
@@ -335,8 +359,11 @@ def main(argv=None) -> int:
         "the processing adds, not the accuracy of a real phone scan of a real foot. Made by",
         "`scripts/benchmark_prep.py`; heights in mm, tilt in degrees.",
         "",
-        "| scan | case | foot | bias | rms | p95 | arch | floor tilt (wedge: heel-toe / side) | length | inner side | noise read | warnings |",
-        "|---|---|---|---|---|---|---|---|---|---|---|---|",
+        "The generic column is the default insole's (the generic outline, sized from the foot) width across the ball /",
+        "across the heel, as shares of its length; outside 0.33-0.42 / 0.22-0.29 the case fails.",
+        "",
+        "| scan | case | foot | bias | rms | p95 | arch | floor tilt (wedge: heel-toe / side) | length | inner side | noise read | generic | warnings |",
+        "|---|---|---|---|---|---|---|---|---|---|---|---|---|",
         *[row(m) if "error" not in m else f"| {m['kind']} | {m['name']} | {m['foot']} | FAILED: {m['error']} |" for m in results],
         "",
     ]

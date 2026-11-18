@@ -30,6 +30,7 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
+from footscan.insole import InsoleParams  # noqa: E402
 from footscan.recon import foot_prep  # noqa: E402
 from footscan.recon.imported import load_geometry  # noqa: E402
 
@@ -149,7 +150,9 @@ DAMAGE = {  # name: (cut in the prepared frame: x across from the middle (mm), y
 
 
 def footscan_checks(scan) -> list[str]:
-    ins, _ = foot_prep.insole_from_object_capture(scan, "right", kind="sole_up")
+    # the foot's own outline: what footscan says about the scan, not about how it fits an outline
+    ins, _ = foot_prep.insole_from_object_capture(scan, "right", kind="sole_up",
+                                                  params=InsoleParams(foot_outline=True))
     return ins.report["warnings"]
 
 
