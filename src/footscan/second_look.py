@@ -22,7 +22,7 @@ What it can do, and what it can't:
 - If Claude can't be reached, declines, or answers in another form, the scan is kept, and why is saved with it:
   this studio's own trouble never blocks a scan.
 
-What is sent to Anthropic's API: the six pictures (grey renderings of the 3-D model, no photographs) and the
+What is sent to Anthropic's API: the eight pictures (grey renderings of the 3-D model, no photographs) and the
 measures. Not the capture's name, the person's name, the phone, or the model file.
 
 NOT TRIED ON A REAL SCAN YET (2026-11-19): no API key has been used with it. ``scripts/second_look_eval.py``

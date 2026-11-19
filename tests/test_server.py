@@ -1,3 +1,4 @@
+import io
 import json
 import sys
 import threading
@@ -5,6 +6,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 from footscan.server import PUBLIC_PAIRING_NOTE, STALE_MESSAGES, WEB_DIR, StudioServer, make_handler
@@ -1807,6 +1809,52 @@ def test_no_answer_from_claude_keeps_the_scan_and_says_why(looked_at):
                 {"Content-Type": "application/octet-stream"})[0] == 200
     c = json.loads((data / "captures" / cid / "capture.json").read_text())["completeness"]
     assert c["problems"] == [] and "couldn't reach the API" in c["second_look"]["error"]
+
+
+def test_a_scan_sent_with_z_up_reaches_claude_y_up_like_one_sent_with_y_up(tmp_path):
+    """second_look.pictures draws the model as it arrived assuming Y up: a Z-up file is turned to Y up first."""
+    import trimesh
+
+    shown = []
+
+    def look(placed, scanned, measures, info, kind):
+        shown.append(np.asarray(scanned.bounds))
+        return {"verdict": "keep", "problems": [], "looked_at": "", "model": "stand-in"}
+
+    handler = make_handler(WEB_DIR, tmp_path, local_check=lambda h: True, studio_key=KEY, second_look=look)
+    httpd = StudioServer(("127.0.0.1", 0), handler)
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    op = f"http://127.0.0.1:{httpd.server_address[1]}"
+    try:
+        y_up = trimesh.load(io.BytesIO(_sole_up_obj("right")), file_type="obj", process=False)
+        z_up = y_up.copy()
+        V = np.asarray(y_up.vertices)
+        z_up.vertices = np.c_[V[:, 0], -V[:, 2], V[:, 1]]           # the same scan, written Z up
+        for mesh, up in ((y_up, "y"), (z_up, "z")):
+            cid = _new_sole_capture(op, "right")
+            st, raw, _ = call(f"{op}/api/captures/{cid}/mesh?ext=obj&up={up}", "PUT",
+                              mesh.export(file_type="obj").encode(), {"Content-Type": "application/octet-stream"})
+            assert st == 200, raw
+    finally:
+        httpd.shutdown()
+    assert len(shown) == 2 and np.allclose(shown[0], shown[1], atol=1e-3)
+
+
+def test_a_scan_measured_again_keeps_what_claude_said_of_it(looked_at):
+    op, data, _, _ = looked_at
+    cid = _new_sole_capture(op, "right")
+    assert call(f"{op}/api/captures/{cid}/mesh?ext=obj&up=y", "PUT", _sole_up_obj("right"),
+                {"Content-Type": "application/octet-stream"})[0] == 200
+    f = data / "captures" / cid / "capture.json"
+    meta = json.loads(f.read_text())
+    meta["completeness"]["measures"]["measured_as"] = "an older preparation"   # measured again on the next upload
+    f.write_text(json.dumps(meta))
+    other = _new_sole_capture(op, "left")
+    assert call(f"{op}/api/captures/{other}/mesh?ext=obj&up=y", "PUT", _sole_up_obj("left"),
+                {"Content-Type": "application/octet-stream"})[0] == 200
+    c = json.loads(f.read_text())["completeness"]
+    assert c["measures"]["measured_as"] != "an older preparation"
+    assert c["second_look"]["looked_at"] == "A whole foot."
 
 
 def test_without_the_flag_no_scan_is_shown_to_claude(servers):

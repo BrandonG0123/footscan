@@ -2055,6 +2055,8 @@ def other_scans(captures_dir: Path, meta: dict) -> list[dict]:
             else:
                 c = dict(measures=measures, problems=completeness.refusals(measures, info),
                          checked=now_iso())
+                if (m.get("completeness") or {}).get("second_look"):
+                    c["second_look"] = m["completeness"]["second_look"]  # what Claude said of this same model
             # saved under that capture's own lock, re-read inside it, so an insole build or a model upload
             # there doesn't lose its write or this one; if it's busy, it's measured again next time
             # (and only if its model is still the one just measured: a new one may have come in meanwhile)
@@ -2104,8 +2106,15 @@ def check_completeness(captures_dir: Path, folder: Path, meta: dict, second_look
     problems = completeness.refusals(measures, info) + completeness.against_others(measures, other_scans(captures_dir, meta))
     out = dict(measures=measures, problems=problems, checked=now_iso())
     if second_look is not None and not problems:
+        import numpy as np
+
         try:
             scanned = load_geometry(folder / "mesh.ply")
+            if (meta.get("mesh") or {}).get("up", "y") == "z":
+                # second_look.pictures takes the model as Object Capture makes it, Y up: a file sent with Z up
+                # is turned that way first (x, y, z) -> (x, z, -y), or "as it arrived" is drawn on its side
+                V = np.asarray(scanned.vertices)
+                scanned.vertices = np.c_[V[:, 0], V[:, 2], -V[:, 1]]
         except Exception as e:  # noqa: BLE001 - our own failure never blocks a scan
             answer = dict(error=f"the model couldn't be read again for Claude ({type(e).__name__}: {e}). It was kept.")
         else:
