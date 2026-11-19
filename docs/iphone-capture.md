@@ -97,6 +97,9 @@ studio's `completeness.retake_advice`, with its full findings folded away
 under *What the studio found*), and a **Scan again** button. That opens the
 get-ready list with the steps on top, then the camera; until capture starts,
 the camera shows "Last time: ..." and the checks to make before Start.
+Where the studio was started with `--check-scans-with-claude`, a sole scan
+that passes its checks is also looked at by Claude, and a *scan again* from
+it comes back the same way (docs/insole.md, *Claude's look on arrival*).
 
 Scan *Whole right foot* / *Whole left foot* the same way (sit, foot flat on the mat,
 keep still; someone else holds the phone). There is no ground truth for a

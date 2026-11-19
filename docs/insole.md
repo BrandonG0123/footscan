@@ -367,6 +367,39 @@ scan kept before this check still lists the same problems as warnings. To see
 what the check makes of the scans already in the studio, without changing
 them: `.venv/bin/python scripts/check_completeness.py`.
 
+### Claude's look on arrival (off unless asked for)
+
+The checks above only catch what someone thought to measure. Object Capture
+usually closes a part it never saw with a smooth guessed surface, which none
+of them sees. Started with `footscan serve --check-scans-with-claude` (and
+`pip install anthropic`, `ANTHROPIC_API_KEY` on that computer), the studio
+then shows Claude each sole scan that passes them
+(`src/footscan/second_look.py`): the prepared foot drawn from six sides, the
+model as it arrived from two, and the measures above. Claude answers *keep*
+or *scan again*, naming each problem from a fixed list (the ones above, plus
+*parts of the sole look guessed* and *this doesn't look like a sole scan*)
+with one short sentence on what it saw. A *scan again* is refused exactly
+like the studio's own refusals: the phone shows *Scan again* with the
+studio's own steps for each problem (`completeness.RETAKE_STEPS`), so the app
+needs no update for it. Claude never changes the shape and makes no insole:
+Make insole still makes it, with the generator, from the scan as it is. It
+is told to judge the scan, never the foot (its shape, arch or health).
+
+If Claude can't be reached, declines, or answers in another form, the scan is
+kept and why is saved under `completeness.second_look`. Every look, kept or
+refused, is one line in `data/second-looks.jsonl` (never committed), so how
+often it refuses, and for what, can be checked. A scan it refuses can't be
+taken anyway: start the studio without the flag to keep one.
+
+What is sent to Anthropic: the eight pictures (grey renderings of the 3-D
+model, no photographs) and the measures. Not the capture's name, the
+person's, the phone's, or the model file.
+
+**Not tried on a real scan yet (2026-11-19).** No API key has been used with
+it: the tests use a stand-in for Claude. Before trusting a refusal, run
+`scripts/second_look_eval.py` on a real sole scan (it cuts known damage into
+it), and send scans known good and bad through a studio with the flag on.
+
 Before either is rested, scan noise is measured and, if there is any, blurred
 out (over about 4 mm), and on a noisy scan the floor is set from smooth fits
 under the heel and both sides of the ball of the foot rather than from the

@@ -79,6 +79,10 @@ cd ios/FootscanCapture && xcodebuild test -project FootscanCapture.xcodeproj -sc
   it): safety requirements, don't narrow them. Tests: `tests/test_footwear_fit.py`.
 - `src/footscan/recon/foot_prep.py`: turns an Object Capture model (metres, Y up) into a foot on a flat floor, per
   scan kind (`foot`, `sole_up`, `sole_hanging`, `impression`), plus the plausibility warnings.
+- `src/footscan/second_look.py`: Claude's look at a sole scan that passed the studio's arrival checks (`footscan serve
+  --check-scans-with-claude`): pictures + measures in, keep or scan again out, problems and their steps from fixed
+  lists. It can only refuse a scan; it never changes a shape or makes an insole. Not tried on a real scan yet.
+  `src/footscan/pictures.py`: the shaded renderer it shares with the clog's views. Tests: `tests/test_second_look.py`.
 - `src/footscan/recon/shoe.py`: a shoe's own insole scan → outline, handedness, fit round the foot.
 - `src/footscan/recon/compare.py`: two scans of one foot → how much they agree (repeatability).
 - `src/footscan/server.py`, `web/`: the studio (`footscan serve`). `src/footscan/cli.py`: the `footscan` command.

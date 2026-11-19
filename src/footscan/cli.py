@@ -384,7 +384,8 @@ def cmd_serve(args) -> int:
         threading.Thread(target=review.watch, args=(data,), kwargs=dict(log=lambda m: print(m, flush=True)),
                          daemon=True, name="review-packets").start()
     serve(args.host, args.port, args.https, args.public, data_dir=Path(args.data) if args.data else None,
-          allow_indexing=True if args.allow_indexing else None, describe_with_claude=args.describe_with_claude)
+          allow_indexing=True if args.allow_indexing else None, describe_with_claude=args.describe_with_claude,
+          check_scans_with_claude=args.check_scans_with_claude)
     return 0
 
 
@@ -587,6 +588,11 @@ def main(argv=None) -> int:
                     help="Make shoe: send a typed description of a shoe to Anthropic's API to be read into settings "
                          "(the typed words only; needs `pip install anthropic` and ANTHROPIC_API_KEY). Without "
                          "this it is read on this computer, by looking for known words")
+    sv.add_argument("--check-scans-with-claude", action="store_true",
+                    help="each sole scan that passes the studio's own checks on arrival: draw the 3-D model from all "
+                         "sides and send the pictures and its measures to Anthropic's API, for Claude to say keep it "
+                         "or scan again (a scan again is refused like the studio's own checks). Needs `pip install "
+                         "anthropic` and ANTHROPIC_API_KEY; without either, every scan is kept")
     sv.set_defaults(func=cmd_serve)
 
     rv = sub.add_parser("review", help="review packets for new insoles: plain checks + pictures, for a person or "

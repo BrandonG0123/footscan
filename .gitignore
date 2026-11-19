@@ -12,6 +12,7 @@ data/captures/
 data/submissions/
 data/reviews/
 data/server.log
+data/second-looks.jsonl
 .demo-data/
 
 # Xcode
