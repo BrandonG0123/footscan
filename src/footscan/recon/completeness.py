@@ -253,6 +253,17 @@ RETAKE_STEPS = (
         "side and the little-toe side should both touch it.",
         "If one side doesn't, turn the foot gently until it does. Then take the book away and keep still.",
     ]),
+    # Claude's look on arrival (second_look.py) uses the headlines above for what they also catch, and these two
+    # for what only a look at pictures of the model can.
+    ("PARTS OF THE SOLE LOOK GUESSED", "guessed_surface", "Parts of the sole were guessed", [
+        "Scan in even, bright light, with no strong shadow over the sole.",
+        "Move the phone slowly and keep the sole in view the whole way round.",
+        "Go all the way round until the ring is full, then a second lap, closer, over the toes and the heel.",
+    ]),
+    ("THIS DOESN'T LOOK LIKE A SOLE SCAN", "not_a_sole", "The scan didn't look like the sole of a foot", [
+        "Choose the scan for what you're scanning: Right sole or Left sole for a foot, sole to the ceiling.",
+        "Drag the box's edges in so it holds only this foot and a hand's width of the leg.",
+    ]),
     ("THE STUDIO COULDN'T FIND THE WHOLE FOOT", "foot_not_found", "The studio couldn't find the whole foot", [
         "Keep the whole foot inside the box, with a hand's width of the leg.",
         "Go all the way round until the ring is full.",

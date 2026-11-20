@@ -26,9 +26,7 @@ from __future__ import annotations
 
 import json
 import re
-import struct
 import time
-import zlib
 from pathlib import Path
 
 import numpy as np
@@ -247,18 +245,13 @@ def outline_length(fit: dict) -> float:
 
 
 # ---------------------------------------------------------------------------
-# pictures (plain numpy + zlib: no plotting library needed on the server)
+# pictures (plain numpy: no plotting library needed on the server)
 # ---------------------------------------------------------------------------
 def write_png(path: Path, rgb: np.ndarray) -> None:
-    """An 8-bit RGB PNG, written by hand (each row: filter byte 0, then the pixels)."""
-    h, w, _ = rgb.shape
-    raw = b"".join(b"\x00" + rgb[r].astype(np.uint8).tobytes() for r in range(h))
+    """An 8-bit RGB PNG (pictures.png_bytes)."""
+    from .pictures import png_bytes
 
-    def chunk(tag, data):
-        return struct.pack(">I", len(data)) + tag + data + struct.pack(">I", zlib.crc32(tag + data) & 0xFFFFFFFF)
-
-    Path(path).write_bytes(b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 2, 0, 0, 0))
-                           + chunk(b"IDAT", zlib.compress(raw, 6)) + chunk(b"IEND", b""))
+    Path(path).write_bytes(png_bytes(rgb))
 
 
 def _points(mesh, per_mm2: float = 40.0) -> tuple[np.ndarray, np.ndarray]:

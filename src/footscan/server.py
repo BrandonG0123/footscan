@@ -185,8 +185,10 @@ class ScreenedOut(Exception):
 class IncompleteScan(Exception):
     """A foot scan with part of the foot missing (recon/completeness.py): refused, with what to do instead."""
 
-    def __init__(self, problems: list[str]):
-        super().__init__("The studio didn't keep this scan, because part of the foot is missing. " + " ".join(problems))
+    def __init__(self, problems: list[str], by_claude: bool = False):
+        lead = ("The studio didn't keep this scan: Claude looked at pictures of it and found a problem. " if by_claude
+                else "The studio didn't keep this scan, because part of the foot is missing. ")
+        super().__init__(lead + " ".join(problems))
         self.problems = problems
         from .recon import completeness
 
@@ -501,7 +503,10 @@ def own_network(host: str) -> bool:
 def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check=is_loopback,
                  studio_key: str | None = None, secure_cookie: bool = False,
                  submissions_per_hour: int = SUBMISSIONS_PER_HOUR, allow_indexing: bool = True,
-                 public: bool = False, cert_fingerprint: str | None = None, describe_with_claude: bool = False):
+                 public: bool = False, cert_fingerprint: str | None = None, describe_with_claude: bool = False,
+                 second_look=None):
+    """``second_look``: None, or what looks at each sole scan that passes the studio's own checks
+    (second_look.look where the studio was started with --check-scans-with-claude): see check_completeness."""
     runner = recon_jobs.ReconRunner()
     # This computer's Tailscale address, asked of the tailscale command at most once a minute: a stuck
     # tailscaled costs 3 s a try (on Windows up to 5 s more reading Tailscale's adapter), and each "Show the
@@ -1504,13 +1509,13 @@ def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check
                         # A sole scan missing its toes or heel is refused here, whoever sends it (the phone,
                         # Import 3D): the answer says what to scan again. A capture made just for this
                         # upload (nothing in it but its capture.json) is removed; any other keeps what it had.
-                        check = check_completeness(captures_dir, staged, meta)
+                        check = check_completeness(captures_dir, staged, meta, second_look=second_look)
                         if check and check.get("problems"):
                             if not [f for f in d.iterdir()
                                     if f.name != "capture.json" and f != staged
                                     and not atomic.is_temporary(f, left_behind=True)]:
                                 shutil.rmtree(d, ignore_errors=True)
-                            raise IncompleteScan(check["problems"])
+                            raise IncompleteScan(check["problems"], by_claude="second_look" in check)
                         new = {f.name for f in staged.iterdir()}
                         for f in staged.iterdir():  # kept: the new model takes the old one's place
                             atomic.replace(f, d / f.name)  # while a download reads the old one, on Windows
@@ -1534,7 +1539,8 @@ def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check
                     if meta.get("condition") == "calibration":
                         meta["accuracy"] = score_imported(d, up)
                     write_json(d / "capture.json", meta)
-                    return self.send_json({"ok": True, "mesh": stats, "accuracy": meta.get("accuracy")})
+                    return self.send_json({"ok": True, "mesh": stats, "accuracy": meta.get("accuracy"),
+                                           "second_look": (check or {}).get("second_look")})
             if p[1:] == ["accuracy"] and method == "GET":
                 f = d / "accuracy.json"
                 if not f.is_file():
@@ -2057,6 +2063,11 @@ def other_scans(captures_dir: Path, meta: dict) -> list[dict]:
                 try:
                     if source_stamp(folder / "mesh.ply") == model:
                         full = read_json(folder / "capture.json")
+                        # what Claude said of this model, read here: under the lock, capture.json goes with the
+                        # model just measured (one uploaded meanwhile brings its own answer, and fails the check)
+                        said = (full.get("completeness") or {}).get("second_look")
+                        if said and "error" not in c:
+                            c = dict(c, second_look=said)
                         full["completeness"] = c
                         write_json(folder / "capture.json", full)
                 finally:
@@ -2068,19 +2079,27 @@ def other_scans(captures_dir: Path, meta: dict) -> list[dict]:
     return list(newest.values())
 
 
-def check_completeness(captures_dir: Path, folder: Path, meta: dict) -> dict | None:
+def check_completeness(captures_dir: Path, folder: Path, meta: dict, second_look=None) -> dict | None:
     """Is the whole foot in a sole scan that has just arrived? None for the kinds that aren't checked.
 
     Returns {"measures", "problems", "checked"}. Any problem (plain words, each ending with what to do)
     means the scan is refused. A scan whose preparation fails can't make an insole either: refused too.
     If the check itself breaks, it says so under "error" and refuses nothing (Make insole then reports
-    the scan's trouble in full)."""
+    the scan's trouble in full).
+
+    ``second_look``: where the studio was started with --check-scans-with-claude, a scan that passes all of
+    that is then looked at by Claude (``second_look.look(placed, scanned, measures, info, kind)``; the
+    argument is that function, or a stand-in for it in tests). Its answer is saved under "second_look", and
+    a scan_again from it is refused like the studio's own problems (second_look.refusals)."""
+    from . import second_look as look_mod
     from .recon import completeness, foot_prep
+    from .recon.imported import load_geometry
 
     if not _checked(meta):
         return None
     try:
-        measures, info = scan_measures(folder, meta)
+        placed, info = _prepare_imported(folder, meta)
+        measures = completeness.measure(placed, meta.get("scan_kind"))
     except foot_prep.FootPrepError as e:
         return dict(problems=[f"THE STUDIO COULDN'T FIND THE WHOLE FOOT: {e} Scan again with the whole foot in view."],
                     checked=now_iso())
@@ -2088,7 +2107,38 @@ def check_completeness(captures_dir: Path, folder: Path, meta: dict) -> dict | N
         return dict(error=f"the completeness check couldn't run ({type(e).__name__}: {e})",
                     measured_as=foot_prep.prep_version(meta.get("scan_kind")), checked=now_iso())
     problems = completeness.refusals(measures, info) + completeness.against_others(measures, other_scans(captures_dir, meta))
-    return dict(measures=measures, problems=problems, checked=now_iso())
+    out = dict(measures=measures, problems=problems, checked=now_iso())
+    if second_look is not None and not problems:
+        import numpy as np
+
+        try:
+            scanned = load_geometry(folder / "mesh.ply")
+            if (meta.get("mesh") or {}).get("up", "y") == "z":
+                # second_look.pictures takes the model as Object Capture makes it, Y up: a file sent with Z up
+                # is turned that way first (x, y, z) -> (x, z, -y), or "as it arrived" is drawn on its side
+                V = np.asarray(scanned.vertices)
+                scanned.vertices = np.c_[V[:, 0], V[:, 2], -V[:, 1]]
+        except Exception as e:  # noqa: BLE001 - our own failure never blocks a scan
+            answer = dict(error=f"the model couldn't be read again for Claude ({type(e).__name__}: {e}). It was kept.")
+        else:
+            answer = second_look(placed, scanned, measures, info, meta.get("scan_kind"))
+        out["second_look"] = dict(answer, checked=now_iso())
+        out["problems"] = look_mod.refusals(answer)
+        log_second_look(captures_dir, meta, out)
+    return out
+
+
+def log_second_look(captures_dir: Path, meta: dict, check: dict) -> None:
+    """One line per look in data/second-looks.jsonl (never committed): the capture, Claude's answer and the
+    measures, kept even when the scan is refused and its capture removed, so how often Claude asks for a scan
+    again, and for what, can be checked against scans known good and bad. No pictures, no model."""
+    line = dict(capture_id=meta.get("capture_id"), foot=meta.get("foot"), scan_kind=meta.get("scan_kind"),
+                refused=bool(check["problems"]), second_look=check["second_look"], measures=check["measures"])
+    try:
+        with (captures_dir.parent / "second-looks.jsonl").open("a", encoding="utf-8") as f:
+            f.write(json.dumps(line) + "\n")
+    except OSError:
+        pass  # a log that can't be written (a full disk) never blocks a scan
 
 
 def compare_captures(captures_dir: Path, a: str, b: str) -> dict:
@@ -2355,14 +2405,23 @@ def lan_ip() -> str | None:
     return None
 
 
+def _second_look_by_claude(placed, scanned, measures, info, kind):
+    from . import second_look
+
+    return second_look.look(placed, scanned, measures, info, kind)
+
+
 def serve(host: str = "127.0.0.1", port: int = 8765, https: bool = False, public: bool = False,
           data_dir: Path | None = None, allow_indexing: bool | None = None,
-          describe_with_claude: bool = False) -> None:
+          describe_with_claude: bool = False, check_scans_with_claude: bool = False) -> None:
     """Run the site. ``public``: reachable from the internet through a tunnel or
     proxy, so nothing is trusted for being "local" and only the studio key
     opens the studio. ``describe_with_claude``: a description of a shoe typed in
     the studio is sent to Anthropic's API to be read into settings (the typed
-    words only; footwear_choices.py); without it, it is read on this computer."""
+    words only; footwear_choices.py); without it, it is read on this computer.
+    ``check_scans_with_claude``: each sole scan that passes the studio's own checks
+    on arrival is drawn from all sides and the pictures, with its measures, sent
+    to Anthropic's API for Claude to say keep or scan again (second_look.py)."""
     def read_only_checkout(what: Path) -> SystemExit:
         return SystemExit(f"can't write {what}: this account may only read the checkout (the Windows service "
                           f"runs as Local Service). Start footscan serve{' --https' if https else ''} once as "
@@ -2390,7 +2449,8 @@ def serve(host: str = "127.0.0.1", port: int = 8765, https: bool = False, public
     handler = make_handler(data_dir=(data_dir or DATA_DIR).resolve(), studio_key=studio_key,
                            secure_cookie=https or public, local_check=never_local if public else is_loopback,
                            allow_indexing=allow_indexing, public=public, cert_fingerprint=cert_fp,
-                           describe_with_claude=describe_with_claude)
+                           describe_with_claude=describe_with_claude,
+                           second_look=_second_look_by_claude if check_scans_with_claude else None)
     ctx = None
     if https:
         ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
@@ -2398,6 +2458,10 @@ def serve(host: str = "127.0.0.1", port: int = 8765, https: bool = False, public
     httpd = StudioServer((host, port), handler, ssl_context=ctx)
     scheme = "https" if https else "http"
     print("footscan - NOT a medical device", flush=True)
+    if check_scans_with_claude:
+        print("Claude looks at each sole scan that passes the studio's checks (--check-scans-with-claude)"
+              + ("" if os.environ.get("ANTHROPIC_API_KEY") else ": no ANTHROPIC_API_KEY is set here, so unless the "
+                 "anthropic package finds another sign-in, every scan is kept without a look"), flush=True)
     if public:
         print("PUBLIC MODE: the studio opens only with the studio key, even on this computer.")
         print(f"studio link (keep private): <your public address>/studio/?key={studio_key}")

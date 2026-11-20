@@ -1247,64 +1247,28 @@ VIEWS = {   # name: (turn about the upright axis, tilt of the camera above level
 def _surface_points(mesh):
     """Points spread evenly over the surface (about 16 per square millimetre), each with its face's outward
     direction, about the middle of the shoe."""
-    import trimesh
+    from .pictures import surface_points
 
-    n = int(min(max(mesh.area * 16.0, 50_000), 6_000_000))
-    pts, face = trimesh.sample.sample_surface(mesh, n, seed=0)
-    return pts - mesh.bounds.mean(0), mesh.face_normals[face]
+    return surface_points(mesh, per_mm2=16.0)
 
 
 def picture(mesh, view: str, foot: str = "right", points=None) -> np.ndarray:
     """One shaded picture of the shoe (RGB, 0.5 mm per pixel), as ``VIEWS`` names them.
 
-    Drawn without a 3-D library: points are spread densely over the surface, the camera's view of each is
-    worked out, and each pixel keeps the nearest point that faces the camera. Its brightness is how squarely
-    that point's surface faces a lamp up and to the left (Lambert's cosine law), plus some light from
-    everywhere. A pixel no point of the near surface happened to land in (so it is empty, or shows something
-    several millimetres behind), with nearer drawn pixels nearly all round it, takes their average, which
-    closes the pinholes. A left shoe is drawn from its own outer side, so the pair's pictures mirror each other.
+    Drawn without a 3-D library (pictures.shaded_view): points are spread densely over the surface, and each
+    pixel keeps the nearest point that faces the camera, lit by a lamp up and to the left. A left shoe is drawn
+    from its own outer side, so the pair's pictures mirror each other.
     """
+    from .pictures import shaded_view
+
     P, N = _surface_points(mesh) if points is None else points
     turn, tilt = np.radians(VIEWS[view])
     if foot == "left":
         turn = np.pi - turn if view != "top" else turn
-    # camera axes in the shoe's own frame: `right` and `upward` span the picture, `toward` points at the camera
+    # camera axes in the shoe's own frame: `right` spans the picture's width, `toward` points at the camera
     toward = np.array([np.sin(turn) * np.cos(tilt), -np.cos(turn) * np.cos(tilt), np.sin(tilt)])
     right = np.array([np.cos(turn), np.sin(turn), 0.0])
-    upward = np.cross(toward, right)
-    keep = N @ toward > 0.02
-    u, v, depth = P[keep] @ right, P[keep] @ upward, P[keep] @ toward
-    Nk = N[keep]
-    pad = 24
-    lo_u, lo_v = (P @ right).min(), (P @ upward).min()
-    w = int(np.ceil(((P @ right).max() - lo_u) / PICTURE_MM_PER_PX)) + 2 * pad
-    h = int(np.ceil(((P @ upward).max() - lo_v) / PICTURE_MM_PER_PX)) + 2 * pad
-    col = np.clip(((u - lo_u) / PICTURE_MM_PER_PX).astype(int) + pad, 0, w - 1)
-    row = np.clip(h - 1 - (((v - lo_v) / PICTURE_MM_PER_PX).astype(int) + pad), 0, h - 1)
-    order = np.argsort(depth)                      # nearest last, so it is the one a pixel ends up with
-    nearest = np.full(h * w, -1)
-    nearest[(row * w + col)[order]] = order
-    nearest = nearest.reshape(h, w)
-    lamp = -0.45 * right + 0.55 * upward + 0.70 * toward
-    lamp /= np.linalg.norm(lamp)
-    lit = np.clip(Nk @ lamp, 0.0, 1.0)
-    d = (depth - depth.min()) / max(np.ptp(depth), 1e-6)       # a little darker further away, to tell front from back
-    shade = (0.30 + 0.70 * lit) * (0.72 + 0.28 * d)
-    hit = nearest >= 0
-    grey = np.where(hit, shade[np.clip(nearest, 0, None)], 0.0)
-    deep = np.where(hit, depth[np.clip(nearest, 0, None)], -np.inf)
-    for _ in range(2):                             # pinholes
-        pg, pd = np.pad(grey, 1), np.pad(deep, 1, constant_values=-np.inf)
-        nearer = [(pd[1 + a:h + 1 + a, 1 + b:w + 1 + b] > deep + 2.0, pg[1 + a:h + 1 + a, 1 + b:w + 1 + b],
-                   pd[1 + a:h + 1 + a, 1 + b:w + 1 + b]) for a in (-1, 0, 1) for b in (-1, 0, 1) if a or b]
-        around = sum(n.astype(int) for n, _, _ in nearer)
-        fill = around >= 6
-        grey = np.where(fill, sum(np.where(n, g, 0.0) for n, g, _ in nearer) / np.maximum(around, 1), grey)
-        deep = np.where(fill, sum(np.where(n, d, 0.0) for n, _, d in nearer) / np.maximum(around, 1), deep)
-        hit = hit | fill
-    img = np.ones((h, w, 3))
-    img[hit] = grey[hit][:, None] * np.array(PICTURE_COLOUR)
-    return (np.clip(img, 0, 1) * 255).astype(np.uint8)
+    return shaded_view(P, N, toward, right, PICTURE_MM_PER_PX, PICTURE_COLOUR)
 
 
 def _side_by_side(images, cell: int | None = None, standing: bool = False) -> np.ndarray:

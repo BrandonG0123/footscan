@@ -1,3 +1,4 @@
+import io
 import json
 import sys
 import threading
@@ -5,6 +6,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 from footscan.server import PUBLIC_PAIRING_NOTE, STALE_MESSAGES, WEB_DIR, StudioServer, make_handler
@@ -1735,6 +1737,164 @@ def test_kinds_the_check_doesnt_read_are_kept_as_before(servers):
     assert call(f"{op}/api/captures/{cid}/mesh?ext=obj&up=y", "PUT", _object_capture_foot("right"),
                 {"Content-Type": "application/octet-stream"})[0] == 200
     assert "completeness" not in json.loads((data / "captures" / cid / "capture.json").read_text())
+
+
+# ---- Claude's look on arrival (second_look.py; Claude is a stand-in here) ---------------------------------------
+
+@pytest.fixture
+def looked_at(tmp_path):
+    """A studio started with --check-scans-with-claude, whose Claude says what ``answer`` holds and notes each
+    scan it was shown: (studio address, data dir, answer, what it was shown)."""
+    answer = {"verdict": "keep", "problems": [], "looked_at": "A whole foot.", "model": "stand-in"}
+    shown = []
+
+    def look(placed, scanned, measures, info, kind):
+        shown.append(dict(length_mm=measures["length_mm"], kind=kind, faces=len(placed.faces)))
+        return dict(answer)
+
+    handler = make_handler(WEB_DIR, tmp_path, local_check=lambda h: True, studio_key=KEY, second_look=look)
+    httpd = StudioServer(("127.0.0.1", 0), handler)
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    yield f"http://127.0.0.1:{httpd.server_address[1]}", tmp_path, answer, shown
+    httpd.shutdown()
+
+
+def test_a_sole_scan_claude_keeps_is_kept_with_its_answer(looked_at):
+    op, data, _, shown = looked_at
+    cid = _new_sole_capture(op, "right")
+    st, raw, _ = call(f"{op}/api/captures/{cid}/mesh?ext=obj&up=y", "PUT", _sole_up_obj("right"),
+                      {"Content-Type": "application/octet-stream"})
+    assert st == 200, raw
+    assert json.loads(raw)["second_look"]["verdict"] == "keep"          # the phone gets the answer too
+    c = json.loads((data / "captures" / cid / "capture.json").read_text())["completeness"]
+    assert c["problems"] == [] and c["second_look"]["looked_at"] == "A whole foot." and c["second_look"]["checked"]
+    assert shown == [dict(length_mm=c["measures"]["length_mm"], kind="sole_up", faces=shown[0]["faces"])]
+    logged = [json.loads(x) for x in (data / "second-looks.jsonl").read_text().splitlines()]
+    assert [(x["capture_id"], x["refused"], x["second_look"]["verdict"]) for x in logged] == [(cid, False, "keep")]
+
+
+def test_a_sole_scan_claude_asks_for_again_is_refused_with_the_studios_steps(looked_at):
+    op, data, answer, _ = looked_at
+    answer.update(verdict="scan_again", problems=[{"code": "guessed_surface",
+                                                    "seen": "In picture 1 the heel is a smooth dome."}])
+    cid = _new_sole_capture(op, "right")
+    st, raw, _ = call(f"{op}/api/captures/{cid}/mesh?ext=obj&up=y", "PUT", _sole_up_obj("right"),
+                      {"Content-Type": "application/octet-stream"})
+    assert st == 422, raw
+    r = json.loads(raw)
+    assert r["error"].startswith("The studio didn't keep this scan: Claude looked at pictures of it")
+    assert r["incomplete"] == ["PARTS OF THE SOLE LOOK GUESSED: Claude looked at pictures of the scan and saw this: "
+                               "In picture 1 the heel is a smooth dome. Scan again, following the steps."]
+    assert [a["code"] for a in r["retake"]] == ["guessed_surface"] and r["retake"][0]["steps"]
+    assert not (data / "captures" / cid).exists()                       # refused like the studio's own refusals
+    logged = json.loads((data / "second-looks.jsonl").read_text().splitlines()[-1])
+    assert logged["capture_id"] == cid and logged["refused"] is True     # kept in the log, to check later
+
+
+def test_claude_is_not_asked_about_a_scan_the_studio_refuses_itself(looked_at):
+    op, data, _, shown = looked_at
+    cid = _new_sole_capture(op, "left")
+    st, raw, _ = call(f"{op}/api/captures/{cid}/mesh?ext=obj&up=y", "PUT", _sole_up_obj("left", x_to=200.0),
+                      {"Content-Type": "application/octet-stream"})
+    assert st == 422 and json.loads(raw)["incomplete"][0].startswith("THE TOES ARE MISSING")
+    assert shown == [] and not (data / "second-looks.jsonl").exists()
+
+
+def test_no_answer_from_claude_keeps_the_scan_and_says_why(looked_at):
+    op, data, answer, _ = looked_at
+    answer.clear()
+    answer["error"] = "Claude couldn't look at this scan: the studio's computer couldn't reach the API. It was kept."
+    cid = _new_sole_capture(op, "right")
+    assert call(f"{op}/api/captures/{cid}/mesh?ext=obj&up=y", "PUT", _sole_up_obj("right"),
+                {"Content-Type": "application/octet-stream"})[0] == 200
+    c = json.loads((data / "captures" / cid / "capture.json").read_text())["completeness"]
+    assert c["problems"] == [] and "couldn't reach the API" in c["second_look"]["error"]
+
+
+def test_a_scan_sent_with_z_up_reaches_claude_y_up_like_one_sent_with_y_up(tmp_path):
+    """second_look.pictures draws the model as it arrived assuming Y up: a Z-up file is turned to Y up first."""
+    import trimesh
+
+    shown = []
+
+    def look(placed, scanned, measures, info, kind):
+        shown.append(np.asarray(scanned.bounds))
+        return {"verdict": "keep", "problems": [], "looked_at": "", "model": "stand-in"}
+
+    handler = make_handler(WEB_DIR, tmp_path, local_check=lambda h: True, studio_key=KEY, second_look=look)
+    httpd = StudioServer(("127.0.0.1", 0), handler)
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    op = f"http://127.0.0.1:{httpd.server_address[1]}"
+    try:
+        y_up = trimesh.load(io.BytesIO(_sole_up_obj("right")), file_type="obj", process=False)
+        z_up = y_up.copy()
+        V = np.asarray(y_up.vertices)
+        z_up.vertices = np.c_[V[:, 0], -V[:, 2], V[:, 1]]           # the same scan, written Z up
+        for mesh, up in ((y_up, "y"), (z_up, "z")):
+            cid = _new_sole_capture(op, "right")
+            st, raw, _ = call(f"{op}/api/captures/{cid}/mesh?ext=obj&up={up}", "PUT",
+                              mesh.export(file_type="obj").encode(), {"Content-Type": "application/octet-stream"})
+            assert st == 200, raw
+    finally:
+        httpd.shutdown()
+    assert len(shown) == 2 and np.allclose(shown[0], shown[1], atol=1e-3)
+
+
+def test_a_scan_measured_again_keeps_what_claude_said_of_it(looked_at):
+    op, data, _, _ = looked_at
+    cid = _new_sole_capture(op, "right")
+    assert call(f"{op}/api/captures/{cid}/mesh?ext=obj&up=y", "PUT", _sole_up_obj("right"),
+                {"Content-Type": "application/octet-stream"})[0] == 200
+    f = data / "captures" / cid / "capture.json"
+    meta = json.loads(f.read_text())
+    meta["completeness"]["measures"]["measured_as"] = "an older preparation"   # measured again on the next upload
+    f.write_text(json.dumps(meta))
+    other = _new_sole_capture(op, "left")
+    assert call(f"{op}/api/captures/{other}/mesh?ext=obj&up=y", "PUT", _sole_up_obj("left"),
+                {"Content-Type": "application/octet-stream"})[0] == 200
+    c = json.loads(f.read_text())["completeness"]
+    assert c["measures"]["measured_as"] != "an older preparation"
+    assert c["second_look"]["looked_at"] == "A whole foot."
+
+
+def test_a_scan_measured_again_keeps_the_answer_saved_with_its_model_now_not_the_one_read_before(looked_at,
+                                                                                                    monkeypatch):
+    """The list of captures is read without the lock: what Claude said is taken from capture.json as it is under
+    the lock, where it goes with the model just measured, never from that earlier read."""
+    from footscan import server
+
+    op, data, _, _ = looked_at
+    cid = _new_sole_capture(op, "right")
+    assert call(f"{op}/api/captures/{cid}/mesh?ext=obj&up=y", "PUT", _sole_up_obj("right"),
+                {"Content-Type": "application/octet-stream"})[0] == 200
+    f = data / "captures" / cid / "capture.json"
+    meta = json.loads(f.read_text())
+    meta["completeness"]["measures"]["measured_as"] = "an older preparation"
+    f.write_text(json.dumps(meta))
+    measure = server.scan_measures
+
+    def meanwhile(folder, m):     # while it's measured, capture.json gets another answer (with its model)
+        if folder.name == cid:
+            saved = json.loads(f.read_text())
+            saved["completeness"]["second_look"] = {"verdict": "keep", "problems": [], "looked_at": "Said later."}
+            f.write_text(json.dumps(saved))
+        return measure(folder, m)
+
+    monkeypatch.setattr(server, "scan_measures", meanwhile)
+    other = _new_sole_capture(op, "left")
+    assert call(f"{op}/api/captures/{other}/mesh?ext=obj&up=y", "PUT", _sole_up_obj("left"),
+                {"Content-Type": "application/octet-stream"})[0] == 200
+    assert json.loads(f.read_text())["completeness"]["second_look"]["looked_at"] == "Said later."
+
+
+def test_without_the_flag_no_scan_is_shown_to_claude(servers):
+    op, _, data = servers
+    cid = _new_sole_capture(op, "right")
+    st, raw, _ = call(f"{op}/api/captures/{cid}/mesh?ext=obj&up=y", "PUT", _sole_up_obj("right"),
+                      {"Content-Type": "application/octet-stream"})
+    assert st == 200 and json.loads(raw)["second_look"] is None
+    assert "second_look" not in json.loads((data / "captures" / cid / "capture.json").read_text())["completeness"]
+    assert not (data / "second-looks.jsonl").exists()
 
 
 def test_a_refused_upload_still_gets_its_answer_when_the_body_is_large(servers):
