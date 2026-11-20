@@ -210,8 +210,8 @@ def ask(views, measures: dict, info: dict, kind: str, client=None) -> dict:
     Raises ``Unavailable`` where there's no usable answer."""
     from .footwear_choices import _why
 
-    client = client or _client()
     try:
+        client = client or _client()
         response = client.beta.messages.create(
             model=MODEL,
             max_tokens=8000,
@@ -232,17 +232,23 @@ def ask(views, measures: dict, info: dict, kind: str, client=None) -> dict:
         answer = json.loads(next(b.text for b in response.content if b.type == "text"))
     except (StopIteration, json.JSONDecodeError):
         raise Unavailable("its answer wasn't the form it was asked for") from None
-    if not isinstance(answer, dict) or answer.get("verdict") not in ("keep", "scan_again"):
+    # every field there and of its type, as the schema asks (an answer that isn't keeps the scan): the API is
+    # asked for that schema, but a fallback model's answer is checked the same way as any other
+    well_formed = (isinstance(answer, dict) and answer.get("verdict") in ("keep", "scan_again")
+                   and isinstance(answer.get("looked_at"), str) and isinstance(answer.get("problems"), list)
+                   and all(isinstance(p, dict) and isinstance(p.get("code"), str) and isinstance(p.get("seen"), str)
+                           for p in answer["problems"]))
+    if not well_formed:
         raise Unavailable("its answer wasn't the form it was asked for")
     found, codes = [], set()
-    for p in answer.get("problems") if isinstance(answer.get("problems"), list) else []:
-        if isinstance(p, dict) and p.get("code") in HEADLINE and p["code"] not in codes:
+    for p in answer["problems"]:
+        if p["code"] in HEADLINE and p["code"] not in codes:   # a code not on the list is dropped
             codes.add(p["code"])
-            found.append(dict(code=p["code"], seen=_said(p.get("seen", ""))))
+            found.append(dict(code=p["code"], seen=_said(p["seen"])))
     if answer["verdict"] == "scan_again" and not found:
         raise Unavailable("it asked for the scan again without naming a problem it may name")
     return dict(verdict=answer["verdict"], problems=found if answer["verdict"] == "scan_again" else [],
-                looked_at=_said(answer.get("looked_at", "")), model=MODEL)
+                looked_at=_said(answer["looked_at"]), model=MODEL)
 
 
 def look(placed, scanned, measures: dict, info: dict, kind: str, client=None) -> dict:

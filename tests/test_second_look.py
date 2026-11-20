@@ -90,6 +90,27 @@ def test_no_usable_answer_says_why(answer, kw, why):
         ask(answer, **kw)
 
 
+@pytest.mark.parametrize("answer", [
+    dict(verdict="scan_again", problems=[dict(code="torn", seen=None)], looked_at="x"),       # "saw this: None."
+    dict(verdict="scan_again", problems=[dict(code=[], seen="A hole.")], looked_at="x"),     # not a code at all
+    dict(verdict="scan_again", problems=[dict(code="torn", seen="A hole.")]),                 # no looked_at
+    dict(verdict="keep", problems=None, looked_at="x"),
+])
+def test_an_answer_missing_a_field_or_of_the_wrong_type_is_no_answer(answer):
+    """The schema asks for every field, each a string; an answer that isn't so keeps the scan (no refusal from it)."""
+    with pytest.raises(sl.Unavailable, match="wasn't the form"):
+        ask(answer)
+
+
+def test_trouble_making_the_client_is_no_answer(monkeypatch):
+    def broken():
+        raise RuntimeError("bad profile")
+
+    monkeypatch.setattr(sl, "_client", broken)
+    with pytest.raises(sl.Unavailable, match="RuntimeError"):
+        sl.ask(VIEWS, MEASURES, INFO, "sole_up")
+
+
 def test_what_claude_saw_is_one_line_cut_at_a_word():
     long = "The front of the scan " + "is a smooth rounded lump " * 20
     answer, _ = ask(dict(verdict="scan_again", looked_at="x", problems=[dict(code="toes_missing", seen=long)]))

@@ -2055,8 +2055,6 @@ def other_scans(captures_dir: Path, meta: dict) -> list[dict]:
             else:
                 c = dict(measures=measures, problems=completeness.refusals(measures, info),
                          checked=now_iso())
-                if (m.get("completeness") or {}).get("second_look"):
-                    c["second_look"] = m["completeness"]["second_look"]  # what Claude said of this same model
             # saved under that capture's own lock, re-read inside it, so an insole build or a model upload
             # there doesn't lose its write or this one; if it's busy, it's measured again next time
             # (and only if its model is still the one just measured: a new one may have come in meanwhile)
@@ -2065,6 +2063,11 @@ def other_scans(captures_dir: Path, meta: dict) -> list[dict]:
                 try:
                     if source_stamp(folder / "mesh.ply") == model:
                         full = read_json(folder / "capture.json")
+                        # what Claude said of this model, read here: under the lock, capture.json goes with the
+                        # model just measured (one uploaded meanwhile brings its own answer, and fails the check)
+                        said = (full.get("completeness") or {}).get("second_look")
+                        if said and "error" not in c:
+                            c = dict(c, second_look=said)
                         full["completeness"] = c
                         write_json(folder / "capture.json", full)
                 finally:

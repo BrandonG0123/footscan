@@ -1857,6 +1857,36 @@ def test_a_scan_measured_again_keeps_what_claude_said_of_it(looked_at):
     assert c["second_look"]["looked_at"] == "A whole foot."
 
 
+def test_a_scan_measured_again_keeps_the_answer_saved_with_its_model_now_not_the_one_read_before(looked_at,
+                                                                                                    monkeypatch):
+    """The list of captures is read without the lock: what Claude said is taken from capture.json as it is under
+    the lock, where it goes with the model just measured, never from that earlier read."""
+    from footscan import server
+
+    op, data, _, _ = looked_at
+    cid = _new_sole_capture(op, "right")
+    assert call(f"{op}/api/captures/{cid}/mesh?ext=obj&up=y", "PUT", _sole_up_obj("right"),
+                {"Content-Type": "application/octet-stream"})[0] == 200
+    f = data / "captures" / cid / "capture.json"
+    meta = json.loads(f.read_text())
+    meta["completeness"]["measures"]["measured_as"] = "an older preparation"
+    f.write_text(json.dumps(meta))
+    measure = server.scan_measures
+
+    def meanwhile(folder, m):     # while it's measured, capture.json gets another answer (with its model)
+        if folder.name == cid:
+            saved = json.loads(f.read_text())
+            saved["completeness"]["second_look"] = {"verdict": "keep", "problems": [], "looked_at": "Said later."}
+            f.write_text(json.dumps(saved))
+        return measure(folder, m)
+
+    monkeypatch.setattr(server, "scan_measures", meanwhile)
+    other = _new_sole_capture(op, "left")
+    assert call(f"{op}/api/captures/{other}/mesh?ext=obj&up=y", "PUT", _sole_up_obj("left"),
+                {"Content-Type": "application/octet-stream"})[0] == 200
+    assert json.loads(f.read_text())["completeness"]["second_look"]["looked_at"] == "Said later."
+
+
 def test_without_the_flag_no_scan_is_shown_to_claude(servers):
     op, _, data = servers
     cid = _new_sole_capture(op, "right")
