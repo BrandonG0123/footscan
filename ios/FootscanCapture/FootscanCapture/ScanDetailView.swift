@@ -59,6 +59,8 @@ struct ScanDetailView: View {
             Text(rec?.studioCaptureID == nil ? "Its photos and model will be gone." : "The copy in the studio stays.")
         }
         .onAppear { if let l = rec?.loadKg { loadText = String(l) } }
+        // a scan built before the phone checked models (or by an older check) is checked when it's opened
+        .task { await library.check(scan) }
     }
 
     // MARK: the model
@@ -122,6 +124,12 @@ struct ScanDetailView: View {
             StepRow(state: studioState(rec), title: "Studio", detail: studioDetail(rec), isLast: true) {
                 studioActions(rec)
             }
+            // what the phone's check found that doesn't mean scanning again
+            ForEach(rec?.phoneCheck?.notes ?? [], id: \.self) { note in
+                Label(note.detail, systemImage: "info.circle.fill")
+                    .font(.footnote).foregroundStyle(Color.fsMuted)
+                    .padding(.top, 8)
+            }
             if let problem = library.problems[scan.folder] {
                 Label(problem, systemImage: "exclamationmark.triangle.fill")
                     .font(.footnote).foregroundStyle(Color.fsWarn)
@@ -148,6 +156,7 @@ struct ScanDetailView: View {
         switch library.work[scan.folder] {
         case .building(let f): return "Building on the phone… \(Int(f * 100))%"
         case .converting: return "Saving a copy for the studio…"
+        case .checking: return "Checking the model…"
         default:
             if scan.hasModel && !scan.hasOBJ { return "Built, but the copy for the studio wasn't saved" }
             if scan.hasModel { return rec?.modelSeconds.map { "Built on the phone in \(Int($0)) s" } ?? "Built on the phone" }
@@ -158,7 +167,7 @@ struct ScanDetailView: View {
     private func studioState(_ rec: ScanRecord?) -> StepState {
         if library.work[scan.folder] == .sending { return .working }
         if rec?.studioCaptureID != nil { return .done }
-        if rec?.retake != nil { return .failed }
+        if rec?.retake != nil || rec?.heldByPhoneCheck == true { return .failed }
         return .todo
     }
 
@@ -171,6 +180,11 @@ struct ScanDetailView: View {
             return "Sent to \(rec?.studioHost ?? "the studio")\(when)"
         }
         if rec?.retake != nil { return "Not kept: this scan won't make a good insole. Scan this foot again." }
+        if library.work[scan.folder] == .checking { return "Checking the model first…" }
+        if rec?.heldByPhoneCheck == true {
+            return rec?.subject.isFoot == true ? "Not sent: the phone found a problem with this scan. Scan this foot again."
+                : "Not sent: the phone found a problem with this scan. Scan it again."
+        }
         if studio.client == nil { return "Not connected to a studio" }
         if rec?.subject.needsScale == true && rec?.loadKg == nil { return "Add the scale reading, then send" }
         if scan.hasOBJ { return "Ready to send" }
@@ -201,6 +215,34 @@ struct ScanDetailView: View {
                             .padding(.top, 6)
                         }
                         .font(.footnote.weight(.semibold))
+                    }
+                }
+            } else if let check = rec.phoneCheck, rec.heldByPhoneCheck {
+                // the phone's own check: what to change, a new scan one tap away, and the way to send it anyway
+                VStack(alignment: .leading, spacing: 12) {
+                    RetakeSteps(advice: rec.nextTime, heading: "What to change")
+                    if let onScanAgain {
+                        Button { onScanAgain(scan) } label: {
+                            Label("Scan again", systemImage: "camera.viewfinder")
+                        }
+                        .buttonStyle(PrimaryButtonStyle())
+                    }
+                    DisclosureGroup("What the phone found") {
+                        VStack(alignment: .leading, spacing: 6) {
+                            ForEach(check.scanAgain, id: \.self) { Text($0.detail).font(.footnote).foregroundStyle(Color.fsMuted) }
+                            Text("The phone's check is quick and rough. The studio checks every scan again when it arrives.")
+                                .font(.footnote).foregroundStyle(Color.fsMuted)
+                        }
+                        .padding(.top, 6)
+                    }
+                    .font(.footnote.weight(.semibold))
+                    // a quiet way past it: the studio still checks the scan, and refuses it if it's no good
+                    if studio.client != nil && scan.hasOBJ && !(rec.subject.needsScale && parsedLoad == nil) {
+                        Button("Send anyway") {
+                            Task { await library.sendAnyway(scan, studio: studio, loadKg: parsedLoad) }
+                        }
+                        .font(.footnote.weight(.semibold))
+                        .buttonStyle(.borderless)
                     }
                 }
             } else if studio.client == nil {

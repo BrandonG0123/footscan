@@ -60,6 +60,16 @@ enum Subject: String, CaseIterable, Identifiable, Codable {
         }
     }
 
+    /// How the phone checks the model it built, before it's sent (ScanCheck); nil: not checked on the phone.
+    var checkKind: ScanCheck.Kind? {
+        switch self {
+        case .rightSole, .leftSole: .soleUp
+        case .shoeInsole: .shoeInsole
+        case .calibration: .calibration
+        default: nil
+        }
+    }
+
     /// Sole and foam-print scans use Apple's 3D capture (the printed mat can't go under a raised sole or a foam box).
     var needs3DCapture: Bool {
         switch self {
@@ -158,6 +168,9 @@ struct ScanRecord: Codable {
     /// With `retake`: what to change on the next scan, as the studio worded it (title and steps per problem).
     /// Missing from records made before the studio sent it, and from studios that don't: see `nextTime`.
     var retakeAdvice: [RetakeAdvice]?
+    /// What the phone's own check (ScanCheck) found once the model was built. A scan it says to scan again isn't
+    /// sent by itself; it goes only if the person taps Send anyway.
+    var phoneCheck: PhoneCheck?
     var units = "metres, Y up (Apple Object Capture's own frame). The studio's Import 3D converts to millimetres."
     var note = "Footscan LiDAR test capture. Not a medical device."
 }
@@ -165,11 +178,37 @@ struct ScanRecord: Codable {
 extension ScanRecord {
     /// What to change on the next scan of this kind, if the studio refused this one: its own steps, or for
     /// a refusal that came without them, each line's headline as the title and its "Scan again ..." ending
-    /// as the one step (the same fallback as the studio's completeness.retake_advice).
+    /// as the one step (the same fallback as the studio's completeness.retake_advice). If the studio hasn't
+    /// refused it, what the phone's own check said to change.
     var nextTime: [RetakeAdvice] {
         if let retakeAdvice, !retakeAdvice.isEmpty { return retakeAdvice }
-        return (retake ?? []).map(RetakeAdvice.init(line:))
+        if let retake { return retake.map(RetakeAdvice.init(line:)) }
+        return phoneCheck?.scanAgain.map { RetakeAdvice(code: $0.code, title: $0.title, steps: $0.steps) } ?? []
     }
+
+    /// The phone's check said scan again, and nobody chose to send it anyway: held back, not sent by itself.
+    var heldByPhoneCheck: Bool {
+        guard let phoneCheck, phoneCheck.sentAnyway == nil else { return false }
+        return !phoneCheck.scanAgain.isEmpty
+    }
+}
+
+/// The phone's own check of a scan's model (ScanCheck), as kept in its record.
+struct PhoneCheck: Codable {
+    /// ScanCheck.version that made it: a scan checked by an older one is checked again, until it's sent.
+    var version: Int
+    var findings: [ScanCheck.Finding]
+    /// What it measured (angles in degrees, lengths in mm), for tuning the check on real scans.
+    var measures: [String: Double]
+    /// Set if the check couldn't run (the model couldn't be read). Nothing is held back then.
+    var error: String?
+    /// When the person chose to send it even so.
+    var sentAnyway: Date?
+
+    /// The findings that mean the scan won't make a good insole.
+    var scanAgain: [ScanCheck.Finding] { findings.filter(\.scanAgain) }
+    /// Worth knowing, but the scan can still be used.
+    var notes: [ScanCheck.Finding] { findings.filter { !$0.scanAgain } }
 }
 
 /// What to change on the next scan after the studio refused one (its completeness.retake_advice): a short
