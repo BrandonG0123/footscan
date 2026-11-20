@@ -517,8 +517,14 @@ the review packet's `bed` check) is that same search, so it names the angle
 the file lies at and its `margin_mm`, the room left at the tightest point;
 an outline that can't fit says how far it is short there (`short_by_mm`). Both
 are at one point: centred between two edges, an insole 20 mm too long is short
-by about 10 mm at each end. Full
-detail in `src/footscan/insole.py`.
+by about 10 mm at each end. When two angles leave the same room (an outline
+too long for the bed is held by the bed's edges, and the other diagonal
+reaches them just as far), the one further from the no-print corner wins,
+so a file that can't fit at least doesn't lie in the wipe corner. The review
+packet's `bed` check takes the bed and its no-print area together from
+`review-spec.json` (`bed_mm`, `bed_exclude`), the printer actually used; the
+clog takes them from its own `bed_mm` and `bed_exclude`. Full detail in
+`src/footscan/insole.py`.
 
 ## What's been checked
 

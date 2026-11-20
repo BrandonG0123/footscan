@@ -671,8 +671,12 @@ def place_on_bed(xy, lo, hi, exclude=None, clearance: float = 3.0) -> dict:
     middle. Never scaled.
 
     Straight (0 degrees) when that leaves ``clearance`` all round, as that's easiest to check by eye;
-    otherwise the half-degree turn that leaves the most room. -> angle_deg, cos/sin, shift (x, y) to apply
-    after turning, room_mm (the gap left; below ``clearance`` when nothing fits)."""
+    otherwise the half-degree turn that leaves the most room. Turns that leave the same room (a footprint too
+    long for the bed is held by the bed's edges, and its half turn reaches them just as far) are told apart by
+    how far each keeps from the no-print area: the closest the bed's edges allow would otherwise go to
+    whichever was tried first, even with its toe in the corner the printer wipes its nozzle in. -> angle_deg,
+    cos/sin, shift (x, y) to apply after turning, room_mm (the gap left; below ``clearance`` when nothing
+    fits)."""
     outline0 = _bed_outline(xy)
     lo, hi = np.asarray(lo, float), np.asarray(hi, float)
     centre = (lo + hi) / 2
@@ -684,13 +688,23 @@ def place_on_bed(xy, lo, hi, exclude=None, clearance: float = 3.0) -> dict:
         c, s = np.cos(a), np.sin(a)
         turned = outline0 @ np.array([[c, s], [-s, c]])
         shift = centre - (turned.min(0) + turned.max(0)) / 2
-        room = _room_on_bed(turned + shift, lo, hi, area)
-        if best is None or room > best["room_mm"]:
+        placed = turned + shift
+        room = _room_on_bed(placed, lo, hi, area)
+        tie = best is not None and abs(room - best["room_mm"]) <= 1e-6
+        if tie and area is not None:   # the same room: the one further from the no-print area
+            clear = _room_on_bed(placed, lo - BIG_MM, hi + BIG_MM, area)
+            if best["area_mm"] is None:
+                best["area_mm"] = _room_on_bed(best["placed"], lo - BIG_MM, hi + BIG_MM, area)
+        if best is None or (room > best["room_mm"] and not tie) or (tie and area is not None and clear > best["area_mm"]):
             best = dict(angle_deg=float(deg), cos=float(c), sin=float(s), shift=(float(shift[0]), float(shift[1])),
-                        room_mm=float(room))
+                        room_mm=float(room), placed=placed, area_mm=clear if tie and area is not None else None)
         if deg == 0.0 and room >= clearance:
             break
+    del best["placed"], best["area_mm"]
     return best
+
+
+BIG_MM = 1e6   # a bed far bigger than any footprint: _room_on_bed then measures the gap to the no-print area alone
 
 
 def write_3mf(mesh, path: Path, title: str, notes: str, bed_mm: float = 256.0, exclude=None,

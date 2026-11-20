@@ -1152,6 +1152,21 @@ def test_the_plain_3mf_is_placed_by_the_reports_own_search_not_a_second_one(tmp_
     assert fit["angle_deg"] == pytest.approx(np.degrees(np.arctan2(s, c)) % 360, abs=0.01)
 
 
+def test_a_footprint_too_long_for_the_bed_isnt_left_in_the_no_print_corner_when_a_turn_as_good_keeps_clear():
+    """Too long, the bed's edges set the room, and the turn along the other diagonal reaches them just as far: the
+    file must go there, not stay at the first one tried with its end in the X1's wipe corner. SYNTHETIC egg,
+    400 mm long, 110 mm across one end and 60 across the other."""
+    t = np.linspace(0, 2 * np.pi, 400, endpoint=False)
+    egg = np.c_[200 * np.cos(t), np.where(np.cos(t) > 0, 55, 30) * np.sin(t)]
+    lo, hi = np.array([0.0, 0.0]), np.array([256.0, 256.0])
+    at = insole.place_on_bed(egg, lo, hi, insole.BAMBU_NO_PRINT_CORNER)
+    assert at["room_mm"] < 0                                             # too long: it doesn't fit either way
+    a = np.radians(at["angle_deg"])
+    turned = insole._bed_outline(egg) @ np.array([[np.cos(a), np.sin(a)], [-np.sin(a), np.cos(a)]])
+    area = insole._no_print_area(insole.BAMBU_NO_PRINT_CORNER)
+    assert insole._room_on_bed(turned + at["shift"], lo - 1e6, hi + 1e6, area) > 50   # well clear of the corner
+
+
 def test_a_footprint_lying_right_over_a_no_print_area_overlaps_it():
     """No outline point is inside the area when the footprint covers it whole; that is still an overlap."""
     t = np.linspace(0, 2 * np.pi, 400, endpoint=False)

@@ -6,6 +6,7 @@ make_insole, so the packets read exactly what the studio writes.
 
 import json
 import plistlib
+import re
 import shutil
 import sys
 import zipfile
@@ -340,6 +341,32 @@ def test_the_bed_is_checked_against_the_printer_in_the_spec(data):
     _only(data, "R275")
     [p] = review.run_once(data, dict(SPEC, bed_mm=150.0))
     assert not _check(p, "bed")["ok"] and "150 mm bed" in _check(p, "bed")["found"]
+
+
+def test_the_beds_no_print_area_comes_from_the_spec_with_its_bed(data):
+    """The spec names one printer: its bed and its no-print area are checked together, not the spec's bed with
+    the corner the insole happened to be built for. A no-print area over most of the bed leaves no room."""
+    _only(data, "R275")
+    [p] = review.run_once(data, dict(SPEC, bed_mm=256.0, bed_exclude=[[0, 0], [256, 0], [256, 200], [0, 200]]))
+    assert not _check(p, "bed")["ok"]
+    shutil.rmtree(data / "reviews")   # one packet per build: clear it to check the same build again
+    [p] = review.run_once(data, dict(SPEC, bed_mm=256.0, bed_exclude=[]))
+    assert _check(p, "bed")["ok"]
+
+
+def test_a_3mf_with_no_placement_on_its_build_item_is_checked_as_placed_where_it_is(data):
+    """3MF allows a build item without a transform (the identity). The size check must read it, not fail."""
+    _only(data, "R275")
+    f = data / "captures" / "R275" / "insole" / "insole.3mf"
+    with zipfile.ZipFile(f) as z:
+        parts = {n: z.read(n) for n in z.namelist()}
+    parts["3D/3dmodel.model"] = re.sub(rb' transform="[^"]*"', b"", parts["3D/3dmodel.model"])
+    with zipfile.ZipFile(f, "w") as z:
+        for n, b in parts.items():
+            z.writestr(n, b)
+    [p] = review.run_once(data, SPEC)
+    c = _check(p, "3mf_size")
+    assert c["ok"] and "turns and moves only" in c["found"]
 
 
 def test_a_3mf_placed_with_a_stretch_is_flagged(data):

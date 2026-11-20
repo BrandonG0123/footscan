@@ -39,7 +39,9 @@ DEFAULT_SPEC = dict(shoe="ASICS Gel Resolution X", size="US men's 9.5", target_l
                     target_length_source="size-chart insole length, not a ruler measurement",
                     length_tolerance_mm=1.0, pair_tolerance_mm=1.0, shoe_length_tolerance_mm=5.0,
                     tolerances_source="a judgment, not measured", slicer="Bambu Studio",
-                    slicer_scale_percent=100, bed_mm=256.0)
+                    slicer_scale_percent=100, bed_mm=256.0,
+                    # the same printer's no-print area ((x, y) points, mm): the X1/P1's wipe corner; [] for none (an A1)
+                    bed_exclude=[[0.0, 0.0], [18.0, 0.0], [18.0, 28.0], [0.0, 28.0]])
 
 # Questions only a look at the pictures can answer. The packet asks them; the reader answers in
 # claude-review.md. Each says what a wrong answer would look like, so it can be checked, not felt.
@@ -191,18 +193,20 @@ def checks(ins_dir: Path, meta: dict, report: dict, mesh, spec: dict, other: dic
     add("fill_cap", float(report["max_fill_mm"]) <= cap + 0.01,
         f"highest fill {report['max_fill_mm']} mm (cap {cap:g} mm)")
 
-    # The bed from the spec (the printer actually used), not the generator's default
+    # The bed and its no-print area both from the spec (the printer actually used), not the generator's
+    # defaults: one printer's bed with another's corner would answer for neither
     from .insole import bed_fit_shape
 
     bed = bed_fit_shape(np.asarray(mesh.vertices)[:, :2], float(spec["bed_mm"]),
-                        exclude=report["params"].get("bed_exclude"))  # the printer's no-print area, as built
+                        exclude=[tuple(map(float, pt)) for pt in spec.get("bed_exclude") or ()])
     add("bed", bed["fits"], f"{bed['how']} on a {spec['bed_mm']:g} mm bed")
 
     # The 3MF is what Bambu Studio opens: millimetres, a placement that only turns and moves it (no
     # scale or mirror), and the same length as the STL and insole.json. A file that passes this
     # prints at the right size at 100%.
     m = read_3mf(ins_dir / "insole.3mf")
-    R = np.asarray(m["transform"][:9]).reshape(3, 3)
+    # no transform on the build item: 3MF places it as it is (the identity), which only turns and moves it
+    R = np.asarray(m["transform"][:9]).reshape(3, 3) if m["transform"] else np.eye(3)
     turn_only = bool(np.allclose(R @ R.T, np.eye(3), atol=1e-4) and abs(np.linalg.det(R) - 1) < 1e-4)
     tm_len = float(np.ptp(m["vertices"][:, 0])) if len(m["vertices"]) else 0.0
     stl_len = float(np.ptp(np.asarray(mesh.vertices)[:, 0]))

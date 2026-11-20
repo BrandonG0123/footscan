@@ -236,7 +236,10 @@ def project_config(profiles: Path, printer: str, process: str, filament: str, *,
 # placing it on the bed
 # ---------------------------------------------------------------------------
 def _poly(points) -> np.ndarray:
-    return np.array([[float(c) for c in str(pt).split("x")] for pt in points], dtype=float)
+    """A profile's list of "XxY" points -> (n, 2) array, mm. Blank entries are skipped: a printer with no
+    no-print area lists its bed_exclude_area as [""] (or a lone "0x0", which _no_print_area counts as none)."""
+    pts = [str(pt).strip() for pt in points]
+    return np.array([[float(c) for c in pt.split("x")] for pt in pts if pt], dtype=float).reshape(-1, 2)
 
 
 def place_on_bed(vertices, printable_area, bed_exclude_area=(), clearance: float = 3.0) -> dict:
@@ -251,7 +254,8 @@ def place_on_bed(vertices, printable_area, bed_exclude_area=(), clearance: float
     V = np.asarray(vertices, float)
     bed = _poly(printable_area)
     # the area itself, not a box round it: some profiles' areas are L-shaped (a corner and a strip beside it)
-    exclude = _poly(bed_exclude_area) if len(bed_exclude_area) else None
+    exclude = _poly(bed_exclude_area)
+    exclude = exclude if len(exclude) >= 3 else None   # fewer than three points cover no area
     at = search(V[:, :2], bed.min(0), bed.max(0), exclude, clearance)
     if at["room_mm"] < clearance:
         raise ValueError(f"doesn't fit this bed: best turn {at['angle_deg']:g} degrees leaves {at['room_mm']:.1f} mm "
@@ -425,6 +429,8 @@ def _load_insole(mesh_path: Path):
     import xml.etree.ElementTree as ET
 
     mesh_path = Path(mesh_path)
+    if not mesh_path.is_file():   # said as it is, not as "a 3MF this can't read"
+        raise FileNotFoundError(f"{mesh_path}: no such file")
     if mesh_path.suffix.lower() == ".3mf":
         from .insole import read_3mf
 

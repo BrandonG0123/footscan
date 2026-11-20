@@ -251,6 +251,9 @@ class ShoeParams:
     upper_mm: float = 2.4                 # the upper's thickness (six 0.4 mm lines). A judgment for TPU 95A
     tread: bool = True
     bed_mm: float = 256.0                 # printer bed (Bambu X1/P1/A1); for the fit check and the 3MF's placing
+    # the printer's no-print area (its profile's bed_exclude_area, (x, y) points, mm), kept clear of by the fit
+    # check and the 3MF's placing: the X1/P1's wipe corner by default, () for a printer without one (an A1)
+    bed_exclude: tuple = insole_mod.InsoleParams.bed_exclude
 
 
 class FootwearError(ValueError):
@@ -1217,14 +1220,16 @@ def build(foot: str, params: ShoeParams | None = None, footbed=None) -> Shoe:
             posting_deg=dict(rearfoot=footbed.params.posting_rearfoot_deg, forefoot=footbed.params.posting_forefoot_deg),
             sole_seen=footbed.report.get("sole"), scan=footbed.report.get("scan"), prep=footbed.report.get("prep"),
             insole_warnings=list(footbed.report.get("warnings", []))),
-        bed_fit=insole_mod.bed_fit_shape(np.asarray(mesh.vertices)[:, :2], p.bed_mm),
+        bed_fit=insole_mod.bed_fit_shape(np.asarray(mesh.vertices)[:, :2], p.bed_mm, exclude=p.bed_exclude),
         warnings=warnings,
         frame="mm; x forward from the back of the shoe, y toward the foot's left, z up; bottom at z = 0",
     )
     if bed is None:
         report["warnings"].append("no sole scan: the footbed is flat (no arch fill, no heel cup shaped to the foot).")
     if not report["bed_fit"]["fits"]:
-        report["warnings"].append(f"too long for a {p.bed_mm:.0f} mm bed even turned (by {report['bed_fit']['short_by_mm']} mm): "
+        # short_by_mm is measured at the one closest point (an end, or the no-print corner), not the whole length
+        report["warnings"].append(f"too long for a {p.bed_mm:.0f} mm bed even turned (at its tightest it comes "
+                                  f"{report['bed_fit']['short_by_mm']} mm closer to the bed's edge than the 3 mm it needs): "
                                   "it needs a bigger printer.")
     return Shoe(mesh=mesh, foot=foot, params=p, report=report)
 
@@ -1320,7 +1325,7 @@ def mirrored(shoe: Shoe) -> Shoe:
                  f"not the {other} foot's. Two feet differ in length and width; measure the {other} foot and make it "
                  "again before relying on it.")
     report["warnings"] = [first] + report["warnings"]
-    report["bed_fit"] = insole_mod.bed_fit_shape(V[:, :2], shoe.params.bed_mm)
+    report["bed_fit"] = insole_mod.bed_fit_shape(V[:, :2], shoe.params.bed_mm, exclude=shoe.params.bed_exclude)
     return Shoe(mesh=mesh, foot=other, params=shoe.params, report=report)
 
 
@@ -1513,11 +1518,11 @@ Walking under the break-in below does not wait for a signature. <b>This shoe is 
 </body></html>"""
 
 
-def _write_solid(mesh, out: Path, stem: str, title: str, notes: str, bed_mm: float) -> tuple:
+def _write_solid(mesh, out: Path, stem: str, title: str, notes: str, bed_mm: float, exclude=None) -> tuple:
     """One solid's two files in ``out``: <stem>.3mf (its title and notes inside, placed on the bed) and
     <stem>.stl (the shape alone: an STL has nowhere to carry a note). -> (the 3MF's path, the STL's)."""
     threemf, stl = out / f"{stem}.3mf", out / f"{stem}.stl"
-    insole_mod.write_3mf(mesh, threemf, title=title, notes=notes, bed_mm=bed_mm)
+    insole_mod.write_3mf(mesh, threemf, title=title, notes=notes, bed_mm=bed_mm, exclude=exclude)
     mesh.export(stl)
     return threemf, stl
 
@@ -1534,7 +1539,7 @@ def write_outputs(shoe: Shoe, out_dir: Path, name: str, label: str, synthetic: b
     tag = SYNTHETIC_TAG if synthetic else ""
     notes = (f"{tag}Footscan clog ({shoe.foot} foot). NOT A MEDICAL DEVICE. Walking and casual wear only, not sport. "
              "Break-in as on the summary sheet.")
-    threemf, stl = _write_solid(shoe.mesh, out, name, f"{tag}{name}", notes, shoe.params.bed_mm)
+    threemf, stl = _write_solid(shoe.mesh, out, name, f"{tag}{name}", notes, shoe.params.bed_mm, shoe.params.bed_exclude)
     files = dict(threemf=threemf, stl=stl, summary=out / f"{name}-summary.html",
                  notes=out / f"{name}-print-notes.txt", json=out / f"{name}.json")
     files["summary"].write_text(summary_html(shoe, label, synthetic), encoding="utf-8")
@@ -1881,7 +1886,7 @@ def write_trials(shoe: Shoe, out_dir: Path, name: str, label: str, synthetic: bo
         files[f"{piece.name}_threemf"], files[f"{piece.name}_stl"] = _write_solid(
             piece.mesh, out, f"{name}-trial-{piece.name}", f"{tag}{name} trial: {title}",
             f"{tag}Footscan clog ({shoe.foot} foot), print trial: {title}. NOT A MEDICAL DEVICE. {TRIAL_WARNING}",
-            shoe.params.bed_mm)
+            shoe.params.bed_mm, shoe.params.bed_exclude)
         views.append(picture(piece.mesh, "quarter", shoe.foot))
     files["notes"] = out / f"{name}-trials.txt"
     files["notes"].write_text(tag + trial_notes(shoe, pieces, left_out, made), encoding="utf-8")

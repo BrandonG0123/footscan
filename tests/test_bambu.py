@@ -153,6 +153,26 @@ def test_the_printers_no_print_corner_is_kept_clear(profiles):
     assert placement["room_mm"] >= 3.0
 
 
+def test_a_printer_that_lists_its_no_print_area_as_blank_or_one_point_has_none(profiles):
+    """A profile without a no-print area may still carry the key: [""] or a lone "0x0". Neither is an area, and
+    neither should stop the project being made."""
+    V, bed = _insole_like().vertices, ["0x0", "256x0", "256x256", "0x256"]
+    none = bambu.place_on_bed(V, bed, [])
+    for listed in ([""], ["0x0"], ["", " "]):
+        at = bambu.place_on_bed(V, bed, listed)
+        assert at["angle_deg"] == none["angle_deg"] and at["room_mm"] == none["room_mm"]
+
+
+def test_an_insole_file_that_isnt_there_is_called_missing_not_unreadable(tmp_path, profiles, capsys):
+    gone = tmp_path / "right-insole.3mf"
+    with pytest.raises(FileNotFoundError, match="no such file"):
+        bambu.tpu_project(gone, tmp_path / "p.3mf", profiles, bed_type="High Temp Plate", **X1C)
+    with pytest.raises(SystemExit):
+        bambu.main([str(gone), "-o", str(tmp_path / "p.3mf"), "--profiles", str(profiles)])
+    err = capsys.readouterr().err
+    assert "no such file" in err and "not a 3MF file this can read" not in err
+
+
 def test_a_pair_goes_on_two_plates_of_one_project_each_insole_unchanged(tmp_path, profiles):
     """Left on plate 1, right on plate 2: Bambu puts an object on a plate by where it lies, plates a bed + 1/5 apart."""
     left, right = _insole_like(), _insole_like(length=270.0)
