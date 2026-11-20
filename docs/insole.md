@@ -187,6 +187,22 @@ scan's card). How (`src/footscan/recon/shoe.py`):
 
 Not yet tried on a real shoe's insole.
 
+## When the scan reads the foot short: the ruler's length
+
+A phone scan can get the foot's size wrong. The first real right-foot scan, `LIDAR_nwb_relaxed_R_20261027-151404-2349`,
+read the foot 243.7 mm long; the same foot by ruler, standing in the same sock, is 260 mm. The outline doesn't
+care (it is the shoe's, or the generic one at the shoe's length), but the arch does: with the scan's own size, the
+arch's highest point sits about 6% nearer the heel than on the real foot.
+
+`footscan insole --foot-length 260` (the foot's length by ruler, standing) scales the scanned foot to that length
+before anything else is made, about the back of the heel and the same along and across, so the arch, the ball
+and the heel cup sit where they are on the real foot. Heights are not scaled: the fill is never made higher than
+the scan says. The sheet says how much the scan was scaled. A ruler length more than 15% from the scan's is
+refused (not the same foot in millimetres), as the printed shoe's `--length` is.
+
+SYNTHETIC check (`tests/test_insole.py`): a curved foot read 6% short has its arch peak more than 4 mm toward the
+heel; scaled to the full-size foot's length, the peak is within 2 mm of the full-size foot's.
+
 ## From the iPhone app
 
 The insole is the shape of the bottom of the foot, so the app's first
