@@ -106,29 +106,37 @@ def damage(m, rng, noise=0.0, grain=2.0, wavy=0.0, jitter=0.0, holes=0, junk=0):
 
 
 TOES_BEND_FROM, TOES_BEND_BLEND = 185.0, 12.0  # synth.bend_toes' hinge (x, foot coordinates) and blend, mm
+TIPS_BEND_FROM = 220.0  # a second bend, nearer the tips (the toes' own joints), for toes that curl as well
 
 
-def _bent(foot, toes_up):
-    """The synthetic foot, its toes bent up ``toes_up`` degrees (synth.bend_toes) if any. Split to 2 mm
-    triangles first, so the bend is smooth (it adds points, not shape)."""
+def _bent(foot, toes_up, tips_up=0.0):
+    """The synthetic foot, its toes bent up ``toes_up`` degrees (synth.bend_toes) if any, and their tips a
+    further ``tips_up`` degrees from ``TIPS_BEND_FROM`` (bent first, so the toes' bend carries it). Split to
+    2 mm triangles first, so the bend is smooth (it adds points, not shape)."""
     m = synth.curved_foot(foot)
-    return synth.bend_toes(synth.refined(m), toes_up, x_from=TOES_BEND_FROM, blend=TOES_BEND_BLEND) if toes_up else m
+    if not toes_up and not tips_up:
+        return m
+    m = synth.refined(m)
+    if tips_up:
+        m = synth.bend_toes(m, tips_up, x_from=TIPS_BEND_FROM, blend=TOES_BEND_BLEND)
+    return synth.bend_toes(m, toes_up, x_from=TOES_BEND_FROM, blend=TOES_BEND_BLEND) if toes_up else m
 
 
-def _truth(foot, toes_up):
+def _truth(foot, toes_up, tips_up=0.0):
     """The true sole height at x, y; with the toes bent, only behind the bend (NaN past it: the toes are
     laid flat by the preparation, which isn't a rigid move, so there they can't be mapped back exactly)."""
-    if not toes_up:
+    if not toes_up and not tips_up:
         return lambda x, y: synth.curved_sole(x, y, foot)
-    behind = TOES_BEND_FROM - TOES_BEND_BLEND / 2 - EDGE_MM
+    behind = (TOES_BEND_FROM if toes_up else TIPS_BEND_FROM) - TOES_BEND_BLEND / 2 - EDGE_MM
     return lambda x, y: np.where(np.asarray(x) < behind, synth.curved_sole(x, y, foot), np.nan)
 
 
-def sole_up_case(foot, rng, tip=25.0, roll=0.0, yaw=63.0, gravity_tilt=0.0, bed=True, toes_up=0.0, **dmg):
+def sole_up_case(foot, rng, tip=25.0, roll=0.0, yaw=63.0, gravity_tilt=0.0, bed=True, toes_up=0.0, tips_up=0.0,
+                 **dmg):
     """Lying face down, knee bent: the foot (with leg) turned sole-up, tipped by its relaxed ankle."""
     import trimesh
 
-    m = damage(_bent(foot, toes_up), rng, **dmg)
+    m = damage(_bent(foot, toes_up, tips_up), rng, **dmg)
     P = np.diag([1.0, -1, -1, 1]) @ _rot(roll, [1, 0, 0], [0, 45, 0]) @ _rot(tip, [0, 1, 0], [0, 45, 0])
     m.apply_transform(P)
     if bed:
@@ -138,14 +146,14 @@ def sole_up_case(foot, rng, tip=25.0, roll=0.0, yaw=63.0, gravity_tilt=0.0, bed=
     S = to_object_capture(yaw, gravity_tilt)
     m.apply_transform(S)
     # synthetic foot coordinates <- scan as handed over; the true sole there is curved_sole, floor z = 0
-    return m, np.linalg.inv(S @ P), _truth(foot, toes_up), 0.0
+    return m, np.linalg.inv(S @ P), _truth(foot, toes_up, tips_up), 0.0
 
 
-def legs_flat_case(foot, rng, yaw=63.0, gravity_tilt=0.0, bed=True, toes_up=0.0, **dmg):
+def legs_flat_case(foot, rng, yaw=63.0, gravity_tilt=0.0, bed=True, toes_up=0.0, tips_up=0.0, **dmg):
     """Face down, legs straight, the foot just past the end of the bed: the sole faces back."""
     import trimesh
 
-    m = damage(_bent(foot, toes_up), rng, **dmg)
+    m = damage(_bent(foot, toes_up, tips_up), rng, **dmg)
     W = np.eye(4)
     W[:3, :3] = np.c_[[0, 0, -1.0], [0, -1.0, 0], [-1.0, 0, 0]]  # standing -> lying: up -> -x, front -> down
     m.apply_transform(W)
@@ -157,7 +165,7 @@ def legs_flat_case(foot, rng, yaw=63.0, gravity_tilt=0.0, bed=True, toes_up=0.0,
         m = trimesh.util.concatenate([m, b])
     S = to_object_capture(yaw, gravity_tilt)
     m.apply_transform(S)
-    return m, np.linalg.inv(S @ W), _truth(foot, toes_up), 0.0
+    return m, np.linalg.inv(S @ W), _truth(foot, toes_up, tips_up), 0.0
 
 
 def print_case(foot, rng, depth=30.0, yaw=63.0, gravity_tilt=0.0, **dmg):
@@ -188,12 +196,15 @@ CASES = [
     ("toes bent up 20", "sole_up", sole_up_case, dict(toes_up=20.0)),
     ("toes bent up 35", "sole_up", sole_up_case, dict(toes_up=35.0)),
     ("toes bent up 35 + speckle 0.6", "sole_up", sole_up_case, dict(toes_up=35.0, noise=0.6)),
+    ("toes up 20, tips 30 more", "sole_up", sole_up_case, dict(toes_up=20.0, tips_up=30.0)),
+    ("toes up 30, tips 40 more", "sole_up", sole_up_case, dict(toes_up=30.0, tips_up=40.0)),
     ("clean", "sole_hanging", legs_flat_case, {}),
     ("no bed in the scan", "sole_hanging", legs_flat_case, dict(bed=False)),
     ("phone level off 4", "sole_hanging", legs_flat_case, dict(gravity_tilt=4.0)),
     ("speckle 0.6", "sole_hanging", legs_flat_case, dict(noise=0.6)),
     ("jitter 0.5", "sole_hanging", legs_flat_case, dict(jitter=0.5)),
     ("toes bent up 35", "sole_hanging", legs_flat_case, dict(toes_up=35.0)),
+    ("toes up 20, tips 30 more", "sole_hanging", legs_flat_case, dict(toes_up=20.0, tips_up=30.0)),
     ("clean", "impression", print_case, {}),
     ("shallow 18", "impression", print_case, dict(depth=18.0)),
     ("deep 45", "impression", print_case, dict(depth=45.0)),
@@ -217,9 +228,13 @@ def measure(name, kind, builder, kw, foot, seed=0):
     rng = np.random.default_rng(seed)
     scan, to_synth, truth, floor0 = builder(foot, rng, **kw)
     t = time.time()
-    ins, placed = foot_prep.insole_from_object_capture(scan, foot, kind=kind)
+    # the foot's own outline: this measures how the scan is read, and a shoe's or the generic outline would add its
+    # own warnings (where a synthetic foot hangs over it) and move the highest fill to inside it
+    ins, placed = foot_prep.insole_from_object_capture(scan, foot, kind=kind,
+                                                       params=insole.InsoleParams(foot_outline=True))
     secs = time.time() - t
     r = ins.report
+    generic = generic_shape(placed, foot, ins.params)
     to_mat = np.array(r["prep"]["to_mat"])
 
     # the sole the generator reads: the same steps as insole.build
@@ -280,13 +295,32 @@ def measure(name, kind, builder, kw, foot, seed=0):
     shaped = np.minimum(smooth, raw + insole.SMOOTH_MAY_RAISE_MM)
     arch_read = float(np.max(shaped[seen][interior]))
     arch_true = float(np.max(true_z - floor0))
-    inner_side = (r["max_fill_at_mm"]["y"] > 0) == (foot == "right")
+    inner_side = (r["foot_max_fill_at_mm"]["y"] > 0) == (foot == "right")
     return dict(
         name=name, kind=kind, foot=foot, secs=round(secs, 1), points=int(interior.sum()),
         bias=float(np.mean(err)), rms=float(np.sqrt(np.mean(err ** 2))), p95=float(np.percentile(np.abs(err), 95)),
         arch=arch_read - arch_true, tilt=tilt, pitch=wedge_pitch, roll=wedge_roll, length=_longest(sil) - _longest(synth.curved_plan()),
         surface_rms=float(np.sqrt(np.mean(surface_err ** 2))), side=inner_side, noise=r["prep"].get("surface_noise_mm"), warnings=r["warnings"],
+        generic=generic,
     )
+
+
+# The default insole (the generic insole outline, with no saved shoe) made from every case: the default build path
+# runs on every damaged scan, and its plan shape has to stay a shoe insole's (insole.INSOLE_BALL_SHARE and
+# INSOLE_HEEL_SHARE, a judgment) wherever the outline was placed. A case outside them fails.
+def generic_shape(placed, foot, params):
+    """The insole as made by default from this scan (the generic outline, sized from the foot): its width across the
+    ball and across the heel as shares of its length. Raises past the bounds."""
+    from dataclasses import replace
+
+    g = insole.from_scan(placed, foot, replace(params, foot_outline=False))
+    length, heel, ball = insole.plan_widths(g.mesh.vertices, g.report["shoe_fit"]["turned_deg"])
+    ball, heel = ball / length, heel / length
+    (b0, b1), (h0, h1) = insole.INSOLE_BALL_SHARE, insole.INSOLE_HEEL_SHARE
+    if not (b0 <= ball <= b1 and h0 <= heel <= h1):
+        raise ValueError(f"the default (generic outline) insole isn't an insole's shape: {ball:.3f} of its length "
+                         f"across the ball, {heel:.3f} across the heel")
+    return round(ball, 3), round(heel, 3)
 
 
 def _longest(poly) -> float:
@@ -302,7 +336,7 @@ def row(m):
     w = "; ".join(x.split(":")[0][:48] for x in m["warnings"]) or "-"
     return (f"| {m['kind']} | {m['name']} | {m['foot']} | {m['bias']:+.2f} | {m['rms']:.2f} | {m['p95']:.2f} | "
             f"{m['arch']:+.2f} | {m['tilt']:.2f} ({m['pitch']:.2f} / {m['roll']:.2f}) | {m['length']:+.1f} | "
-            f"{'yes' if m['side'] else 'NO'} | {m['noise']} | {w} |")
+            f"{'yes' if m['side'] else 'NO'} | {m['noise']} | {m['generic'][0]:.3f} / {m['generic'][1]:.3f} | {w} |")
 
 
 def main(argv=None) -> int:
@@ -324,7 +358,8 @@ def main(argv=None) -> int:
             else:
                 print(f"{kind:10s} {name:22s} {foot:5s} bias {m['bias']:+.2f} rms {m['rms']:.2f} p95 {m['p95']:.2f} "
                       f"arch {m['arch']:+.2f} tilt {m['tilt']:.2f} len {m['length']:+.1f} side {m['side']} "
-                      f"noise {m['noise']} warn {len(m['warnings'])} ({m['secs']}s)", flush=True)
+                      f"noise {m['noise']} warn {len(m['warnings'])} generic {m['generic'][0]:.3f}/{m['generic'][1]:.3f} "
+                      f"({m['secs']}s)", flush=True)
             results.append(m)
 
     ok = [m for m in results if "error" not in m]
@@ -335,8 +370,11 @@ def main(argv=None) -> int:
         "the processing adds, not the accuracy of a real phone scan of a real foot. Made by",
         "`scripts/benchmark_prep.py`; heights in mm, tilt in degrees.",
         "",
-        "| scan | case | foot | bias | rms | p95 | arch | floor tilt (wedge: heel-toe / side) | length | inner side | noise read | warnings |",
-        "|---|---|---|---|---|---|---|---|---|---|---|---|",
+        "The generic column is the default insole's (the generic outline, sized from the foot) width across the ball /",
+        "across the heel, as shares of its length; outside 0.33-0.42 / 0.22-0.29 the case fails.",
+        "",
+        "| scan | case | foot | bias | rms | p95 | arch | floor tilt (wedge: heel-toe / side) | length | inner side | noise read | generic | warnings |",
+        "|---|---|---|---|---|---|---|---|---|---|---|---|---|",
         *[row(m) if "error" not in m else f"| {m['kind']} | {m['name']} | {m['foot']} | FAILED: {m['error']} |" for m in results],
         "",
     ]

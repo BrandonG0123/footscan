@@ -39,7 +39,7 @@ Save a shoe once, from a scan of its own stock insole lying flat (the app's
 ```bash
 .venv/bin/footscan shoe add stock-insole.obj --name "ASICS Gel Resolution X" --size "US men's 9.5" --default
 .venv/bin/footscan shoe list            # * marks the default
-.venv/bin/footscan shoe default none    # back to the foot's own outline
+.venv/bin/footscan shoe default none    # back to the generic insole outline
 ```
 
 In the studio: *Save as a shoe* on the shoe's-insole scan's card, then the
@@ -55,8 +55,8 @@ or `--foot-outline`; in the studio, the outline menu). The outline is placed
 round the foot exactly as a scanned shoe's insole is (below) and keeps its
 shape. On SYNTHETIC test feet (`tests/test_shoes.py`, 2026-11-04), a foot and
 the same foot scaled to 93% got insole outlines of 22,847 mm2 each in the same
-saved shoe; with their own outlines, 20,144 and 17,532 mm2 (13.0% less). Without any shoe the outline is the foot's own, and
-the summary sheet and the studio say so: trim it to the stock insole.
+saved shoe; with their own outlines, 20,144 and 17,532 mm2 (13.0% less). Without any saved shoe the outline is the generic insole
+outline (below).
 
 Saving a shoe again (a better scan of it) makes insoles made from the old
 outline stale in the studio, as a re-scanned foot does, and the studio says
@@ -94,10 +94,68 @@ differently, still replaces it.
 
 No saved shoe exists yet: the stock ASICS insole hasn't been scanned.
 
-`--length 270` lengthens the insole to a shoe's insole length (mm): only the
-flat front reaches further, the shape under the heel, arch and ball stays
-where the foot is, and it's never made shorter than the foot. In the studio
-it's the *Shoe insole length* box on the scan's card.
+## Without a saved shoe: the generic insole outline
+
+With no saved shoe (and no shoe's-insole scan), the outline is the
+**generic insole outline** (`insole.generic_outline`), not the foot's. It's
+one fixed shoe-insole shape, the same for every foot: a rounded heel, the
+widest part across the ball, the big-toe end furthest forward, and an inner
+side that runs nearly straight from the heel to the ball (a flat foot's arch
+reaches the floor there, and the arch support has to sit on the insole, not
+past its edge). Its proportions are a judgment, not measured from a shoe:
+drawn to a men's running-shoe sock liner, 275 mm long, 78 mm across the heel
+(the first real foot scan's heel was 71 mm across near the floor, 74 mm at
+the cup's height: below) and about 103 mm across the ball (0.38 of the
+length). For comparison, Menz
+et al. 2014 (J Foot Ankle Res 7:3) measured shoe lasts 278.7 mm long and
+95.6 mm across the ball (0.343); an insole is a little wider than its last's
+bottom. A saved shoe (a scan of the real stock insole) replaces it for that
+shoe.
+
+It's sized, never stretched: the whole shape is scaled to the length, so
+a 300 mm insole is the 275 mm one made 9% bigger every way. The length is:
+
+- `--length 275` (in the studio, the *shoe insole, mm* box): the shoe's
+  insole length. Use this: the outline is then the shoe's size whatever the
+  scan reads.
+- nothing: the foot's length as scanned plus 12 mm past the toes (a
+  judgment: the owner's right foot, 260 mm standing by ruler on 2026-11-05, in its 275 mm chart
+  insole leaves 15). The sheet and the studio say it was sized from the
+  scan and ask for the shoe's length: a scan that reads short makes it short
+  too (the right-foot sole-up scan LIDAR_nwb_relaxed_R_20261027-151404-2349,
+  243.7 mm, read about 12 mm, 5%, short of the owner's careful ruler
+  measurement of 2026-11-05, 256 mm seated in the same sock; the rough
+  reading of 2026-11-01, 10.5 in, made it 8.4%).
+
+It's placed round the foot as a saved shoe's outline is (below); where the
+foot is wider than it, the insole stops at its edge and the sheet says where
+and by how much. A length shorter than the foot is refused. On the SYNTHETIC
+test foot (synth.curved_foot, unusually wide at 0.40 of its length) the
+foot is over the edge by 4-6 mm, and 17-22 mm when made 25% wider
+(2026-11-09): a foot that wide needs its shoe's own outline (a saved shoe).
+The highest fill given everywhere (sheet, studio, review, command line) is
+the printed one; when the foot's own is past the outline's edge, the sheet
+and the studio give that too (SYNTHETIC, 25% wider at 275 mm: 11.71 mm
+printed, 13.99 mm under the foot).
+
+Why: the foot's own outline gave insoles the foot's proportions, and worse
+ones when lengthened. On SYNTHETIC test feet (`tests/test_insole_shape.py`,
+synth.curved_foot, 2026-11-09): a foot 25% longer at the same width got an
+insole 0.33 of its length across the ball; the same foot at 80% size,
+lengthened to 275 mm at the front, 0.28 (76 mm across the ball: the "french
+fry"). With the generic outline every one of them is 0.375-0.381 (and 0.284-0.287
+across the heel), left or right, sized from the foot or at 275 mm; the tests
+hold every outline to 0.33-0.42 across the ball and 0.22-0.29 across the
+heel (a judgment of a normal insole's plan shape).
+
+`--foot-outline` (in the studio, *Outline: the foot's own*) still cuts the
+insole to the foot's own outline, and with `--length` lengthens only its
+flat front: the shape under the heel, arch and ball stays where the foot
+is. Insoles made before the generic outline was the default and cut to the
+foot's own outline show as stale in the studio ("made again, it gets the
+generic insole outline"), lengthened to a shoe's length or not: that was
+the only outline there was, and lengthened it made the long, thin insoles
+this fixes. Made again with *the foot's own* chosen, they keep it.
 
 `--shoe shoe-insole.obj` goes further: the insole takes the outline of the
 shoe's own insole, from a scan of it lying flat on a table (the app's
@@ -263,7 +321,18 @@ measurement). Laid flat, the same foot reads -4.1 to +6.6 mm at 35 degrees.
 The table of runs is beside `TOES_JOINT_UP_MM` in `foot_prep.py`; the
 decision is recorded as `toes_laid_flat` (angle, pivot, joint, length before
 and after). A front rising more than 60 degrees isn't laid flat and gets a
-warning. With the toes hung up, the floor's heel and ball are also placed
+warning. Toes that curl as well as bend (their tips still rising after
+that) are laid flat again from where the first joint left them on the
+floor, up to three joints in all, as a toe has (`TOES_JOINTS`). SYNTHETIC
+(scripts/benchmark_prep.py, curved_foot, sole up, right foot), toes bent up
+20 degrees and their tips 30 more: 7.9 mm short with one joint, 5.3 mm with
+up to three. Toes bent once about a line well above the skin are laid
+flat at two joints too, and read long (SYNTHETIC: 60 degrees about a line
+18 mm up, 11.9 mm long); two bends close together at the skin look the same
+from underneath and need both (docs/benchmark.md). If the toes' tip is still more than 8 mm
+off the floor after all that, Make insole warns that the insole may be
+short and the arrival check refuses the scan (`TOES_STILL_UP_MM`). Curls that start near the tip or are much steeper still read
+short with no warning (docs/benchmark.md). With the toes hung up, the floor's heel and ball are also placed
 along the whole underside, toes included: along the contact areas alone,
 which end at the ball, the "ball" was the arch and tipped the floor
 (SYNTHETIC, toes bent up 20 degrees: 1.6 degrees across the left foot).
@@ -342,6 +411,39 @@ A standing foot and a foam print aren't checked. Make insole on a
 scan kept before this check still lists the same problems as warnings. To see
 what the check makes of the scans already in the studio, without changing
 them: `.venv/bin/python scripts/check_completeness.py`.
+
+### Claude's look on arrival (off unless asked for)
+
+The checks above only catch what someone thought to measure. Object Capture
+usually closes a part it never saw with a smooth guessed surface, which none
+of them sees. Started with `footscan serve --check-scans-with-claude` (and
+`pip install anthropic`, `ANTHROPIC_API_KEY` on that computer), the studio
+then shows Claude each sole scan that passes them
+(`src/footscan/second_look.py`): the prepared foot drawn from six sides, the
+model as it arrived from two, and the measures above. Claude answers *keep*
+or *scan again*, naming each problem from a fixed list (the ones above, plus
+*parts of the sole look guessed* and *this doesn't look like a sole scan*)
+with one short sentence on what it saw. A *scan again* is refused exactly
+like the studio's own refusals: the phone shows *Scan again* with the
+studio's own steps for each problem (`completeness.RETAKE_STEPS`), so the app
+needs no update for it. Claude never changes the shape and makes no insole:
+Make insole still makes it, with the generator, from the scan as it is. It
+is told to judge the scan, never the foot (its shape, arch or health).
+
+If Claude can't be reached, declines, or answers in another form, the scan is
+kept and why is saved under `completeness.second_look`. Every look, kept or
+refused, is one line in `data/second-looks.jsonl` (never committed), so how
+often it refuses, and for what, can be checked. A scan it refuses can't be
+taken anyway: start the studio without the flag to keep one.
+
+What is sent to Anthropic: the eight pictures (grey renderings of the 3-D
+model, no photographs) and the measures. Not the capture's name, the
+person's, the phone's, or the model file.
+
+**Not tried on a real scan yet (2026-11-19).** No API key has been used with
+it: the tests use a stand-in for Claude. Before trusting a refusal, run
+`scripts/second_look_eval.py` on a real sole scan (it cuts known damage into
+it), and send scans known good and bad through a studio with the flag on.
 
 Before either is rested, scan noise is measured and, if there is any, blurred
 out (over about 4 mm), and on a noisy scan the floor is set from smooth fits

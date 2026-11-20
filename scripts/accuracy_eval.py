@@ -74,7 +74,9 @@ def measure_scan(folder: Path, meta: dict) -> tuple[dict, object]:
     up = (meta.get("mesh") or {}).get("up", "y")
     mesh = load_geometry(folder / "mesh.ply")
     t0 = time.time()
-    ins, placed = foot_prep.insole_from_object_capture(mesh, meta["foot"], up, kind=kind)
+    # the foot's own outline: this measures the scan (comparable with earlier runs), not the insole's outline
+    ins, placed = foot_prep.insole_from_object_capture(mesh, meta["foot"], up, kind=kind,
+                                                       params=insole.InsoleParams(foot_outline=True))
     info = ins.report["prep"]
     m = info.get("completeness") or completeness.measure(placed, kind)
     sides = info.get("ball_sides_above_floor_mm")

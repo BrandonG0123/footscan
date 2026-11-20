@@ -48,6 +48,13 @@ def serve_args(data_dir: Path, port: int = 8765, review: bool = True) -> list[st
     return args + (["--review"] if review else [])
 
 
+def made_on_windows() -> bool:
+    """Are these commands being made on a Windows computer (so this Python is the one the tank's .venv runs on)?
+    A function of its own so a test can say "made on the Mac" without changing os.name, which pathlib also
+    reads: on Windows that turns every Path into a PosixPath it then can't make."""
+    return os.name == "nt"
+
+
 def render(system: str, root: Path, data_dir: Path | None = None, port: int = 8765, review: bool = True,
            python_home: Path | str | None = None) -> dict:
     """{"path": where the file goes (or None), "content": the file or commands, "steps": what to run}.
@@ -71,7 +78,7 @@ def render(system: str, root: Path, data_dir: Path | None = None, port: int = 87
     if any(" " in a for a in args):
         # NSSM takes the arguments as one quoted string; a quoted path inside it can't survive PowerShell
         raise ValueError("on Windows, choose a data folder without spaces in its path (e.g. C:\\srv\\footscan-data)")
-    if python_home is None and os.name == "nt":
+    if python_home is None and made_on_windows():
         python_home = sys.base_prefix  # footscan service runs from the checkout's .venv: its Python is this one
     return _nssm(root, exe, args, log, port, Path(python_home) if python_home else None, data_dir)
 

@@ -1,3 +1,4 @@
+import io
 import json
 import sys
 import threading
@@ -5,6 +6,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 from footscan.server import PUBLIC_PAIRING_NOTE, STALE_MESSAGES, WEB_DIR, StudioServer, make_handler
@@ -1054,7 +1056,8 @@ def test_studio_makes_a_first_fit_insole_from_an_imported_foot(servers):
     assert call(f"{op}/api/captures/{cid}/mesh?ext=obj&up=y", "PUT", _object_capture_foot("left"),
                 {"Content-Type": "application/octet-stream"})[0] == 200
     assert call(f"{phone}/api/captures/{cid}/insole", "POST", {})[0] == 403  # studio only
-    st, raw, _ = call(f"{op}/api/captures/{cid}/insole", "POST", {})
+    # the block foot is a rectangle, square toes and all: the foot's own outline, so the whole sole is on it
+    st, raw, _ = call(f"{op}/api/captures/{cid}/insole", "POST", {"foot_outline": True})
     assert st == 200, raw
     r = json.loads(raw)
     assert r["foot"] == "left" and r["max_fill_mm"] == pytest.approx(11.0, abs=0.6) and r["warnings"] == []
@@ -1086,7 +1089,8 @@ def test_studio_makes_an_insole_from_a_foam_print_without_a_scale_reading(server
     st, raw, _ = call(f"{op}/api/captures/{cid}/insole", "POST", {})
     assert st == 200, raw
     r = json.loads(raw)
-    assert r["max_fill_mm"] == pytest.approx(11.0, abs=0.1) and r["warnings"] == []
+    assert r["max_fill_mm"] == pytest.approx(11.0, abs=0.1) and r["outline_shape"] == "generic"
+    assert [w for w in r["warnings"] if "wider than the generic insole outline" not in w] == []
     assert b"foam print" in call(f"{op}/api/captures/{cid}/insole/summary.html")[1]
     for name in ("insole-preview.bin", "insole-preview-sole.bin"):  # the studio's 3-D preview
         st, data, _ = call(f"{op}/api/captures/{cid}/insole/{name}")
@@ -1192,7 +1196,8 @@ def test_a_failed_save_counts_as_a_failed_build(servers, monkeypatch):
 
 
 def test_make_insole_can_lengthen_to_a_shoe(servers):
-    """POST {length_mm}: the insole reaches the shoe's length; nonsense lengths are refused."""
+    """POST {length_mm}: the generic insole outline at the shoe's length (scaled as a whole); with
+    {foot_outline: true} too, the foot's own outline lengthened at the front; nonsense lengths are refused."""
     op, _, _ = servers
     cid = body(call(f"{op}/api/captures", "POST", {"condition": "swb", "foot": "right", "session": "LIDAR",
                                                     "load_kg": 30, "method": "imported_mesh"}))["id"]
@@ -1201,8 +1206,17 @@ def test_make_insole_can_lengthen_to_a_shoe(servers):
     st, raw, _ = call(f"{op}/api/captures/{cid}/insole", "POST", {"length_mm": 275})
     assert st == 200, raw
     r = json.loads(raw)
-    assert r["length_mm"] == pytest.approx(275, abs=0.6) and r["shoe_length_mm"] == 275
-    assert any("lengthened to 275 mm" in w for w in r["warnings"])
+    # a length alone: the generic outline at that length, recorded as no outline chosen (a default saved later
+    # takes over); asked for by name, recorded as chosen
+    assert r["shoe_length_mm"] == 275 and r["outline"] == "default" and r["outline_shape"] == "generic"
+    assert r["generic"]["length_mm"] == pytest.approx(275, abs=0.1) and r["shoe"] is None
+    assert r["length_mm"] == pytest.approx(275, abs=6)  # along the foot: the outline may be turned a few degrees
+    assert not any("lengthened to" in w for w in r["warnings"])
+    named = body(call(f"{op}/api/captures/{cid}/insole", "POST", {"length_mm": 275, "generic": True}))
+    assert named["outline"] == "generic" and named["generic"]["length_mm"] == r["generic"]["length_mm"]
+    own = body(call(f"{op}/api/captures/{cid}/insole", "POST", {"length_mm": 275, "foot_outline": True}))
+    assert own["length_mm"] == pytest.approx(275, abs=0.6) and own["outline"] == "foot" and own["generic"] is None
+    assert any("lengthened to 275 mm" in w for w in own["warnings"])
     assert call(f"{op}/api/captures/{cid}/insole", "POST", {"length_mm": 9})[0] == 400
     assert call(f"{op}/api/captures/{cid}/insole", "POST", {"length_mm": "nine"})[0] == 400
 
@@ -1280,10 +1294,11 @@ def test_a_saved_shoe_is_the_default_outline_for_every_new_insole(servers):
                 synth.shoe_insole().export(file_type="obj").encode(), {"Content-Type": "application/octet-stream"})[0] == 200
 
     assert body(call(f"{op}/api/shoes")) == {"shoes": [], "default": None, "default_problem": None}
-    plain = body(call(f"{op}/api/captures/{foot}/insole", "POST", {}))  # no saved shoe yet: the foot's outline
+    plain = body(call(f"{op}/api/captures/{foot}/insole", "POST", {}))  # no saved shoe yet: the generic outline
     # recorded as "the default" (there was none), not as a choice of the foot's outline: once a default is
     # saved, this card's menu and Remake follow it instead of cutting the foot's outline again
     assert plain["shoe"] is None and plain["length_mm"] < 265 and plain["outline"] == "default"
+    assert plain["outline_shape"] == "generic" and plain["generic"]["length_mm"] < 265  # sized from the foot
 
     new = {"capture": shoe, "name": "Test Trainer", "size": "US men's 9.5", "default": True}
     st, raw, _ = call(f"{op}/api/shoes", "POST", new)
@@ -1301,8 +1316,17 @@ def test_a_saved_shoe_is_the_default_outline_for_every_new_insole(servers):
     assert r["outline"] == "saved"
     assert r["length_mm"] == pytest.approx(271, abs=2)
     assert "Test Trainer" in call(f"{op}/api/captures/{foot}/insole/summary.html")[1].decode()
+    generic = body(call(f"{op}/api/captures/{foot}/insole", "POST", {"generic": True}))  # chosen over the default
+    assert generic["shoe"] is None and generic["outline"] == "generic" and generic["length_mm"] == plain["length_mm"]
+    # a length alone passes the default saved shoe over for the generic outline at that length: recorded as that,
+    # not as "default", or the menu would show the saved shoe and Remake would cut to it
+    at_len = body(call(f"{op}/api/captures/{foot}/insole", "POST", {"length_mm": 275}))
+    assert at_len["shoe"] is None and at_len["outline"] == "generic"
+    assert at_len["generic"]["length_mm"] == pytest.approx(275, abs=0.5)
+    assert call(f"{op}/api/captures/{foot}/insole", "POST", {"generic": True, "saved_shoe": s["id"]})[0] == 400
+    assert call(f"{op}/api/captures/{foot}/insole", "POST", {"generic": True, "foot_outline": True})[0] == 400
     own = body(call(f"{op}/api/captures/{foot}/insole", "POST", {"foot_outline": True}))
-    assert own["shoe"] is None and own["length_mm"] == plain["length_mm"] and own["outline"] == "foot"
+    assert own["shoe"] is None and own["generic"] is None and own["outline"] == "foot" and own["outline_shape"] == "foot"
     # recorded, so the studio's menu shows "the foot's own" for this card after a reload, not the default shoe
     mine = [c for c in body(call(f"{op}/api/captures")) if c["capture_id"] == foot][0]
     assert mine["insole"]["outline"] == "foot"
@@ -1715,6 +1739,164 @@ def test_kinds_the_check_doesnt_read_are_kept_as_before(servers):
     assert "completeness" not in json.loads((data / "captures" / cid / "capture.json").read_text())
 
 
+# ---- Claude's look on arrival (second_look.py; Claude is a stand-in here) ---------------------------------------
+
+@pytest.fixture
+def looked_at(tmp_path):
+    """A studio started with --check-scans-with-claude, whose Claude says what ``answer`` holds and notes each
+    scan it was shown: (studio address, data dir, answer, what it was shown)."""
+    answer = {"verdict": "keep", "problems": [], "looked_at": "A whole foot.", "model": "stand-in"}
+    shown = []
+
+    def look(placed, scanned, measures, info, kind):
+        shown.append(dict(length_mm=measures["length_mm"], kind=kind, faces=len(placed.faces)))
+        return dict(answer)
+
+    handler = make_handler(WEB_DIR, tmp_path, local_check=lambda h: True, studio_key=KEY, second_look=look)
+    httpd = StudioServer(("127.0.0.1", 0), handler)
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    yield f"http://127.0.0.1:{httpd.server_address[1]}", tmp_path, answer, shown
+    httpd.shutdown()
+
+
+def test_a_sole_scan_claude_keeps_is_kept_with_its_answer(looked_at):
+    op, data, _, shown = looked_at
+    cid = _new_sole_capture(op, "right")
+    st, raw, _ = call(f"{op}/api/captures/{cid}/mesh?ext=obj&up=y", "PUT", _sole_up_obj("right"),
+                      {"Content-Type": "application/octet-stream"})
+    assert st == 200, raw
+    assert json.loads(raw)["second_look"]["verdict"] == "keep"          # the phone gets the answer too
+    c = json.loads((data / "captures" / cid / "capture.json").read_text())["completeness"]
+    assert c["problems"] == [] and c["second_look"]["looked_at"] == "A whole foot." and c["second_look"]["checked"]
+    assert shown == [dict(length_mm=c["measures"]["length_mm"], kind="sole_up", faces=shown[0]["faces"])]
+    logged = [json.loads(x) for x in (data / "second-looks.jsonl").read_text().splitlines()]
+    assert [(x["capture_id"], x["refused"], x["second_look"]["verdict"]) for x in logged] == [(cid, False, "keep")]
+
+
+def test_a_sole_scan_claude_asks_for_again_is_refused_with_the_studios_steps(looked_at):
+    op, data, answer, _ = looked_at
+    answer.update(verdict="scan_again", problems=[{"code": "guessed_surface",
+                                                    "seen": "In picture 1 the heel is a smooth dome."}])
+    cid = _new_sole_capture(op, "right")
+    st, raw, _ = call(f"{op}/api/captures/{cid}/mesh?ext=obj&up=y", "PUT", _sole_up_obj("right"),
+                      {"Content-Type": "application/octet-stream"})
+    assert st == 422, raw
+    r = json.loads(raw)
+    assert r["error"].startswith("The studio didn't keep this scan: Claude looked at pictures of it")
+    assert r["incomplete"] == ["PARTS OF THE SOLE LOOK GUESSED: Claude looked at pictures of the scan and saw this: "
+                               "In picture 1 the heel is a smooth dome. Scan again, following the steps."]
+    assert [a["code"] for a in r["retake"]] == ["guessed_surface"] and r["retake"][0]["steps"]
+    assert not (data / "captures" / cid).exists()                       # refused like the studio's own refusals
+    logged = json.loads((data / "second-looks.jsonl").read_text().splitlines()[-1])
+    assert logged["capture_id"] == cid and logged["refused"] is True     # kept in the log, to check later
+
+
+def test_claude_is_not_asked_about_a_scan_the_studio_refuses_itself(looked_at):
+    op, data, _, shown = looked_at
+    cid = _new_sole_capture(op, "left")
+    st, raw, _ = call(f"{op}/api/captures/{cid}/mesh?ext=obj&up=y", "PUT", _sole_up_obj("left", x_to=200.0),
+                      {"Content-Type": "application/octet-stream"})
+    assert st == 422 and json.loads(raw)["incomplete"][0].startswith("THE TOES ARE MISSING")
+    assert shown == [] and not (data / "second-looks.jsonl").exists()
+
+
+def test_no_answer_from_claude_keeps_the_scan_and_says_why(looked_at):
+    op, data, answer, _ = looked_at
+    answer.clear()
+    answer["error"] = "Claude couldn't look at this scan: the studio's computer couldn't reach the API. It was kept."
+    cid = _new_sole_capture(op, "right")
+    assert call(f"{op}/api/captures/{cid}/mesh?ext=obj&up=y", "PUT", _sole_up_obj("right"),
+                {"Content-Type": "application/octet-stream"})[0] == 200
+    c = json.loads((data / "captures" / cid / "capture.json").read_text())["completeness"]
+    assert c["problems"] == [] and "couldn't reach the API" in c["second_look"]["error"]
+
+
+def test_a_scan_sent_with_z_up_reaches_claude_y_up_like_one_sent_with_y_up(tmp_path):
+    """second_look.pictures draws the model as it arrived assuming Y up: a Z-up file is turned to Y up first."""
+    import trimesh
+
+    shown = []
+
+    def look(placed, scanned, measures, info, kind):
+        shown.append(np.asarray(scanned.bounds))
+        return {"verdict": "keep", "problems": [], "looked_at": "", "model": "stand-in"}
+
+    handler = make_handler(WEB_DIR, tmp_path, local_check=lambda h: True, studio_key=KEY, second_look=look)
+    httpd = StudioServer(("127.0.0.1", 0), handler)
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    op = f"http://127.0.0.1:{httpd.server_address[1]}"
+    try:
+        y_up = trimesh.load(io.BytesIO(_sole_up_obj("right")), file_type="obj", process=False)
+        z_up = y_up.copy()
+        V = np.asarray(y_up.vertices)
+        z_up.vertices = np.c_[V[:, 0], -V[:, 2], V[:, 1]]           # the same scan, written Z up
+        for mesh, up in ((y_up, "y"), (z_up, "z")):
+            cid = _new_sole_capture(op, "right")
+            st, raw, _ = call(f"{op}/api/captures/{cid}/mesh?ext=obj&up={up}", "PUT",
+                              mesh.export(file_type="obj").encode(), {"Content-Type": "application/octet-stream"})
+            assert st == 200, raw
+    finally:
+        httpd.shutdown()
+    assert len(shown) == 2 and np.allclose(shown[0], shown[1], atol=1e-3)
+
+
+def test_a_scan_measured_again_keeps_what_claude_said_of_it(looked_at):
+    op, data, _, _ = looked_at
+    cid = _new_sole_capture(op, "right")
+    assert call(f"{op}/api/captures/{cid}/mesh?ext=obj&up=y", "PUT", _sole_up_obj("right"),
+                {"Content-Type": "application/octet-stream"})[0] == 200
+    f = data / "captures" / cid / "capture.json"
+    meta = json.loads(f.read_text())
+    meta["completeness"]["measures"]["measured_as"] = "an older preparation"   # measured again on the next upload
+    f.write_text(json.dumps(meta))
+    other = _new_sole_capture(op, "left")
+    assert call(f"{op}/api/captures/{other}/mesh?ext=obj&up=y", "PUT", _sole_up_obj("left"),
+                {"Content-Type": "application/octet-stream"})[0] == 200
+    c = json.loads(f.read_text())["completeness"]
+    assert c["measures"]["measured_as"] != "an older preparation"
+    assert c["second_look"]["looked_at"] == "A whole foot."
+
+
+def test_a_scan_measured_again_keeps_the_answer_saved_with_its_model_now_not_the_one_read_before(looked_at,
+                                                                                                    monkeypatch):
+    """The list of captures is read without the lock: what Claude said is taken from capture.json as it is under
+    the lock, where it goes with the model just measured, never from that earlier read."""
+    from footscan import server
+
+    op, data, _, _ = looked_at
+    cid = _new_sole_capture(op, "right")
+    assert call(f"{op}/api/captures/{cid}/mesh?ext=obj&up=y", "PUT", _sole_up_obj("right"),
+                {"Content-Type": "application/octet-stream"})[0] == 200
+    f = data / "captures" / cid / "capture.json"
+    meta = json.loads(f.read_text())
+    meta["completeness"]["measures"]["measured_as"] = "an older preparation"
+    f.write_text(json.dumps(meta))
+    measure = server.scan_measures
+
+    def meanwhile(folder, m):     # while it's measured, capture.json gets another answer (with its model)
+        if folder.name == cid:
+            saved = json.loads(f.read_text())
+            saved["completeness"]["second_look"] = {"verdict": "keep", "problems": [], "looked_at": "Said later."}
+            f.write_text(json.dumps(saved))
+        return measure(folder, m)
+
+    monkeypatch.setattr(server, "scan_measures", meanwhile)
+    other = _new_sole_capture(op, "left")
+    assert call(f"{op}/api/captures/{other}/mesh?ext=obj&up=y", "PUT", _sole_up_obj("left"),
+                {"Content-Type": "application/octet-stream"})[0] == 200
+    assert json.loads(f.read_text())["completeness"]["second_look"]["looked_at"] == "Said later."
+
+
+def test_without_the_flag_no_scan_is_shown_to_claude(servers):
+    op, _, data = servers
+    cid = _new_sole_capture(op, "right")
+    st, raw, _ = call(f"{op}/api/captures/{cid}/mesh?ext=obj&up=y", "PUT", _sole_up_obj("right"),
+                      {"Content-Type": "application/octet-stream"})
+    assert st == 200 and json.loads(raw)["second_look"] is None
+    assert "second_look" not in json.loads((data / "captures" / cid / "capture.json").read_text())["completeness"]
+    assert not (data / "second-looks.jsonl").exists()
+
+
 def test_a_refused_upload_still_gets_its_answer_when_the_body_is_large(servers):
     """A request refused before its body is read (here: too large) is answered and then the connection closes.
     Closing with the body still arriving makes the computer reset the connection, which can throw away the
@@ -1874,7 +2056,8 @@ def test_an_insole_whose_source_cant_be_read_is_not_downloadable_and_the_review_
         d = tmp_path / "captures" / cid
         (d / "insole").mkdir(parents=True)
         (d / "insole" / "insole.json").write_text("{}", encoding="utf-8")
-        server.write_json(d / "capture.json", {"capture_id": cid, "insole": {"made": "x", "source": "m"}})
+        server.write_json(d / "capture.json", {"capture_id": cid, "insole": {"made": "x", "source": "m",
+                                                                             "outline_shape": "generic"}})
 
     def source(folder, meta):
         if folder.name == "A":
@@ -2109,3 +2292,217 @@ def test_a_studio_that_cant_write_its_key_says_how_to_make_it(monkeypatch):
     monkeypatch.setattr(server, "load_studio_key", read_only)
     with pytest.raises(SystemExit, match="Start footscan serve once as yourself"):
         server.serve()
+
+
+# ---- what the customer's scan page sends, and who it is from --------------------------------------------------
+
+def test_a_customers_scan_summary_keeps_only_numbers_and_short_words(servers):
+    """The scan page sends its summary without the studio key, and the studio page shows it: markup sent in it
+    (here, a script tag in a number's place) is not kept, while what scanner.js really sends is."""
+    op, phone, _ = servers
+    sub = body(call(f"{phone}/api/submissions", "POST", PERSON))
+    tok = {"X-Upload-Token": sub["upload_token"]}
+    key = sub["plan"][0]["key"]
+    base = f"{phone}/api/submissions/{sub['id']}/scans/{key}"
+    assert call(f"{base}/start", "POST", {}, tok)[0] == 200
+    assert call(f"{base}/frames/1", "PUT", JPEG, {**tok, "Content-Type": "image/jpeg"})[0] == 200
+    bad = "<img src=x onerror=alert(1)>" + "x" * 40
+    summary = {"frames_kept": 1, "duration_s": bad, "rejected_blur": 0, "mat_paper": "a4",
+               "view_sources": {"sensor": 1}, "focal_px_median": None, "orientation_source": {"no": [bad]},
+               "short_tag": "<b onclick=x>", "quoted": 'a"b', "papers": ["a4", "<i>"],
+               bad: 1, "coverage_completeness": 0.5}
+    assert call(f"{base}/complete", "POST", {"frames": [], "summary": summary}, tok)[0] == 200
+    kept = body(call(f"{op}/api/submissions/{sub['id']}"))["scans"][key]["summary"]
+    assert kept == {"frames_kept": 1, "rejected_blur": 0, "mat_paper": "a4", "view_sources": {"sensor": 1},
+                    "focal_px_median": None, "coverage_completeness": 0.5}
+
+
+def test_the_submission_page_escapes_every_scan_summary_figure():
+    """Summaries saved before the server cleaned them are still shown: the page itself escapes each one."""
+    import re
+
+    page = (WEB_DIR / "studio" / "submission.html").read_text(encoding="utf-8")
+    raw = re.findall(r"\$\{\s*\(?\s*(?:sum\.|scan\.load_kg|s\.feet)", page)
+    assert raw == []
+
+
+def test_rate_limit_counts_a_direct_request_by_its_own_address_whatever_header_it_sends():
+    from footscan.server import client_of
+
+    spoof = {"CF-Connecting-IP": "203.0.113.5", "X-Forwarded-For": "203.0.113.6"}
+    assert client_of("100.70.1.2", spoof) == "100.70.1.2"       # straight from Tailscale or the Wi-Fi
+    assert client_of("127.0.0.1", spoof) == "203.0.113.5"       # the tunnel on this computer names the client
+    assert client_of("127.0.0.1", {"X-Forwarded-For": "198.51.100.1, 10.0.0.1"}) == "198.51.100.1"
+    assert client_of("127.0.0.1", {}) == "127.0.0.1"
+
+
+def test_rate_limiter_forgets_clients_with_nothing_in_the_last_hour(monkeypatch):
+    import time
+
+    from footscan import server
+
+    monkeypatch.setattr(server, "RATE_LIMIT_CLIENTS_KEPT", 3)
+    limiter = server.RateLimiter(per_hour=1)
+    now = [1000.0]
+    monkeypatch.setattr(time, "monotonic", lambda: now[0])
+    for c in ("a", "b", "c", "d"):
+        assert limiter.allow(c)
+    now[0] += 3601
+    assert limiter.allow("e") and set(limiter.hits) == {"e"}
+    assert not limiter.allow("e")  # the limit itself still holds
+
+
+def test_an_insole_cut_to_the_foots_outline_by_default_is_stale_now_that_the_default_is_the_generic_outline():
+    """Made before the generic insole outline was the default: cut to the foot's own outline without asking (or
+    lengthened at the front for a shoe's length), it can be the long thin shape the generic outline replaces."""
+    from footscan.server import STALE_MESSAGES, _old_default_outline
+
+    assert _old_default_outline({"made": "x"})                                  # before outlines were recorded
+    assert _old_default_outline({"outline": "default"})                         # nothing asked, no saved shoe
+    assert _old_default_outline({"outline": "foot", "shoe_length_mm": 275.0})   # the foot's, lengthened
+    assert not _old_default_outline({"outline": "foot", "shoe_length_mm": None})  # the foot's own, chosen
+    assert not _old_default_outline({"outline": "saved", "shoe": {"saved": "x"}})
+    assert not _old_default_outline({"outline": "default", "outline_shape": "generic"})
+    assert "generic insole outline" in STALE_MESSAGES["outline"]
+
+
+# ---- uploads that end early, a full disk, the log, and two requests at once (Codex review, 2026-11-17) -----
+
+def _raw_request(url: str, head: str, body: bytes, close_early: bool = False):
+    """Send a request by hand (for a body shorter than it says) -> the answer's status code."""
+    import socket
+    from urllib.parse import urlsplit
+
+    u = urlsplit(url)
+    s = socket.create_connection((u.hostname, u.port))
+    s.sendall(head.encode() + body)
+    if close_early:
+        s.shutdown(socket.SHUT_WR)
+    answer = s.recv(65536).decode("latin-1")
+    s.close()
+    return int(answer.split()[1])
+
+
+def _new_scan(phone):
+    sub = body(call(f"{phone}/api/submissions", "POST", PERSON))
+    tok = {"X-Upload-Token": sub["upload_token"]}
+    key = sub["plan"][0]["key"]
+    base = f"{phone}/api/submissions/{sub['id']}/scans/{key}"
+    assert call(f"{base}/start", "POST", {}, tok)[0] == 200
+    return sub, tok, key, base
+
+
+def test_a_photo_upload_that_ends_early_is_refused_and_keeps_the_photo_that_was_there(servers):
+    _, phone, data = servers
+    sub, tok, key, base = _new_scan(phone)
+    good = JPEG + b"good"
+    assert call(f"{base}/frames/1", "PUT", good, {**tok, "Content-Type": "image/jpeg"})[0] == 200
+    path = urlsplit_path(f"{base}/frames/1")
+    head = (f"PUT {path} HTTP/1.1\r\nHost: x\r\nX-Upload-Token: {sub['upload_token']}\r\n"
+            f"Content-Type: image/jpeg\r\nContent-Length: 1000\r\n\r\n")
+    assert _raw_request(base, head, JPEG[:10], close_early=True) == 400
+    frame = data / "submissions" / sub["id"] / key / "frame_0001.jpg"
+    assert frame.read_bytes() == good
+    assert [f.name for f in frame.parent.iterdir()] == ["frame_0001.jpg"]  # no part-file left behind
+
+
+def urlsplit_path(url):
+    from urllib.parse import urlsplit
+
+    return urlsplit(url).path
+
+
+def test_a_submission_takes_no_more_photos_than_its_quota(servers, monkeypatch):
+    from footscan import server
+
+    _, phone, data = servers
+    sub, tok, key, base = _new_scan(phone)
+    room = server.folder_bytes(data / "submissions" / sub["id"]) + 2 * len(JPEG)  # its submission.json + 2 photos
+    monkeypatch.setattr(server, "MAX_SUBMISSION_BYTES", room)
+    for n in (1, 2):
+        assert call(f"{base}/frames/{n}", "PUT", JPEG, {**tok, "Content-Type": "image/jpeg"})[0] == 200
+    status, raw, _ = call(f"{base}/frames/3", "PUT", JPEG, {**tok, "Content-Type": "image/jpeg"})
+    assert status == 400 and b"as many photos" in raw
+
+
+def test_no_photo_is_kept_when_the_disk_is_nearly_full(servers, monkeypatch):
+    from footscan import server
+
+    _, phone, data = servers
+    sub, tok, key, base = _new_scan(phone)
+    monkeypatch.setattr(server, "MIN_FREE_BYTES", 10 ** 18)
+    assert call(f"{base}/frames/1", "PUT", JPEG, {**tok, "Content-Type": "image/jpeg"})[0] == 507
+    assert not (data / "submissions" / sub["id"] / key / "frame_0001.jpg").exists()
+
+
+def test_the_studio_key_and_upload_tokens_in_a_url_never_reach_the_log(servers, capfd):
+    op, _, _ = servers
+    call(f"{op}/api/studio?key={KEY}")
+    call(f"{op}/api/submissions/sub-x/rescan?t=secret-token")
+    err = capfd.readouterr().err
+    assert "/api/studio?key=…" in err and KEY not in err and "secret-token" not in err
+
+
+def test_a_slow_request_doesnt_undo_another_scans_finishing(servers):
+    """Two scans of one submission finished at once, the first one's body arriving slowly: both stay
+    finished (the slow one reads submission.json only once its body is in, under the submission's lock)."""
+    import socket
+    import time
+    from urllib.parse import urlsplit
+
+    _, phone, data = servers
+    sub = body(call(f"{phone}/api/submissions", "POST", PERSON))
+    tok = {"X-Upload-Token": sub["upload_token"]}
+    keys = [p["key"] for p in sub["plan"]][:2]
+    for key in keys:
+        base = f"{phone}/api/submissions/{sub['id']}/scans/{key}"
+        assert call(f"{base}/start", "POST", {}, tok)[0] == 200
+        assert call(f"{base}/frames/1", "PUT", JPEG, {**tok, "Content-Type": "image/jpeg"})[0] == 200
+    slow = json.dumps({"frames": []}).encode()
+    u = urlsplit(phone)
+    s = socket.create_connection((u.hostname, u.port))
+    s.sendall((f"POST /api/submissions/{sub['id']}/scans/{keys[0]}/complete HTTP/1.1\r\nHost: x\r\n"
+               f"X-Upload-Token: {sub['upload_token']}\r\nContent-Type: application/json\r\n"
+               f"Content-Length: {len(slow)}\r\n\r\n").encode() + slow[:3])
+    time.sleep(0.5)  # the slow request has started
+    assert call(f"{phone}/api/submissions/{sub['id']}/scans/{keys[1]}/complete", "POST", {"frames": []}, tok)[0] == 200
+    s.sendall(slow[3:])
+    assert int(s.recv(65536).decode().split()[1]) == 200
+    s.close()
+    scans = json.loads((data / "submissions" / sub["id"] / "submission.json").read_text())["scans"]
+    assert [scans[k]["status"] for k in keys] == ["complete", "complete"]
+
+
+def test_rate_limit_counts_an_ipv6_client_by_its_slash_64():
+    from footscan.server import RateLimiter
+
+    limiter = RateLimiter(per_hour=2)
+    assert limiter.allow("2001:db8:1:2::1") and limiter.allow("2001:db8:1:2::abcd")
+    assert not limiter.allow("2001:db8:1:2:ffff::9")      # a new address in the same /64
+    assert limiter.allow("2001:db8:1:3::1")                # another network
+    assert limiter.allow("::ffff:198.51.100.7") and limiter.allow("198.51.100.7")
+    assert not limiter.allow("198.51.100.7")               # the same IPv4 client, written either way
+
+
+def test_rate_limiter_is_safe_to_use_from_many_threads_while_it_forgets(monkeypatch):
+    import threading
+
+    from footscan import server
+
+    monkeypatch.setattr(server, "RATE_LIMIT_CLIENTS_KEPT", 5)
+    limiter = server.RateLimiter(per_hour=1000)
+    errors = []
+
+    def hammer(k):
+        try:
+            for i in range(3000):
+                limiter.allow(f"10.{k}.{i // 250}.{i % 250}")
+        except Exception as e:  # noqa: BLE001
+            errors.append(e)
+
+    threads = [threading.Thread(target=hammer, args=(k,)) for k in range(8)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert errors == []

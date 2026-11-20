@@ -5,6 +5,11 @@ block_foot: a 240 x 90 mm foot with a 12 mm-high arch tunnel under the inner
 there, on the inner side only, and 0 where the foot rests on the floor.
 Insole coordinates: x forward from the back of the heel, y toward the foot's
 left, the foot centred on y = 0 (so a right foot's inner side is y 9..45).
+
+The block foot is a rectangle, not a foot (its heel is as wide as its ball), so the tests of the top surface on it
+cut the insole to the foot's own outline (foot_outline). The default outline, the generic insole outline, is
+tested in test_insole_shape.py; scans prepared from the other synthetic feet keep it, and only the outline's own
+warning (where a synthetic foot is wider than it) is set aside.
 """
 
 from pathlib import Path
@@ -16,9 +21,17 @@ import synth
 from footscan import insole
 
 
+FOOT_OUTLINE = insole.InsoleParams(foot_outline=True)
+
+
 @pytest.fixture(scope="module")
 def right():
-    return insole.from_scan(synth.block_foot(37.0, "right"), "right")
+    return insole.from_scan(synth.block_foot(37.0, "right"), "right", FOOT_OUTLINE)
+
+
+def _besides_the_outline(warnings):
+    """The warnings other than the outline's own (the foot hangs over a shoe's or the generic outline's edge)."""
+    return [w for w in warnings if "wider than the generic insole outline" not in w]
 
 
 def _top(ins, x, y):
@@ -74,8 +87,8 @@ def test_the_heel_is_held_where_it_stands_not_where_it_bulges_higher_up():
     bulge = m3.Manifold.cylinder(10.0, 40.0, 40.0, 96).translate((32.0, 45.0, 16.0))
     mm = (f + bulge).to_mesh()
     m = trimesh.Trimesh(np.asarray(mm.vert_properties)[:, :3], np.asarray(mm.tri_verts), process=True)
-    ins = insole.from_scan(m, "right")
-    plain = insole.from_scan(foot, "right")
+    ins = insole.from_scan(m, "right", FOOT_OUTLINE)
+    plain = insole.from_scan(foot, "right", FOOT_OUTLINE)
     p = ins.params
 
     def across_heel(i):  # the insole's width across the heel's widest point
@@ -122,7 +135,7 @@ def test_a_heel_cup_outline_inside_the_foot_raises_nothing_under_the_foot(monkey
 
 
 def test_left_is_the_mirror_of_right(right):
-    left = insole.from_scan(synth.block_foot(37.0, "left"), "left")
+    left = insole.from_scan(synth.block_foot(37.0, "left"), "left", FOOT_OUTLINE)
     assert left.mesh.volume == pytest.approx(right.mesh.volume, rel=0.01)
     # the arch is on the other side: a left foot's inner side is its right (-y)
     p = left.params
@@ -218,7 +231,7 @@ def test_object_capture_foot_is_levelled_trimmed_and_makes_the_right_insole(foot
     m.apply_transform(np.block([[imported.UP["y"].T, np.zeros((3, 1))], [np.zeros((1, 3)), np.ones((1, 1))]]))
     m.apply_scale(0.001)
 
-    ins, placed = foot_prep.insole_from_object_capture(m, foot)
+    ins, placed = foot_prep.insole_from_object_capture(m, foot, params=FOOT_OUTLINE)
     prep = ins.report["prep"]
     assert prep["heel_from"] == "the leg stands over it"
     assert placed.vertices[:, 2].max() <= foot_prep.LEG_TRIM_MM + 0.5  # leg trimmed
@@ -292,7 +305,7 @@ def test_a_sole_up_scan_is_turned_over_rested_and_makes_the_right_insole(foot):
     assert r["sole"]["seen_under_arch"] > 0.95 and r["sole"]["holes"] < 0.01
     assert r["max_fill_mm"] == pytest.approx(11.0, abs=0.1)
     assert (r["max_fill_at_mm"]["y"] > 0) == (foot == "right")  # inner side
-    assert r["warnings"] == []
+    assert _besides_the_outline(r["warnings"]) == []
 
 
 @pytest.mark.parametrize("foot", ["right", "left"])
@@ -377,6 +390,63 @@ def test_toes_raised_steeply_from_further_forward_are_still_judged_not_skipped_a
     assert completeness.measure(placed)["length_mm"] > 240.0  # 235.1 when skipped
 
 
+def test_toes_that_curl_as_well_as_bend_are_laid_flat_at_a_second_joint():
+    """Toes bent up 20 degrees at 185 mm and their tips 30 more at 220 mm (as the real legs-flat scan 2190's toe
+    tips still rose 14 mm after one joint, 29 Oct): with one joint the tips stayed 10.7 mm up and the outline
+    read 7.9 mm short (SYNTHETIC); a second joint, from where the first left the toes on the floor, lays them."""
+    from footscan.recon import completeness, foot_prep
+
+    mesh = synth.bend_toes(synth.bend_toes(synth.curved_foot("right"), 30.0, x_from=220.0), 20.0, x_from=185.0)
+    placed, info = foot_prep.prepare_sole_up(synth.sole_up_capture(mesh), foot="right")
+    joints = info["toes_laid_flat"]["joints"]
+    assert len(joints) == 2 and joints[1]["pivot_from_heel_mm"] > joints[0]["pivot_from_heel_mm"] + 20.0
+    m = completeness.measure(placed)
+    assert m["toe_tip_above_floor_mm"] < 4.0
+    assert m["length_mm"] > 250.0 - 6.5
+    assert placed.vertices[:, 2].min() > -0.3
+
+
+def test_toes_that_curl_at_three_places_are_laid_flat_at_all_three():
+    """Toes bent up 20 degrees at 180 mm, 20 more at 205 and 20 more at 225 (found by a Codex review, 1 Nov): with
+    two joints their tips stayed about 6 mm up (SYNTHETIC); the third lays them."""
+    from footscan.recon import completeness, foot_prep
+
+    mesh = synth.refined(synth.curved_foot("right"))
+    for at in (225.0, 205.0, 180.0):
+        mesh = synth.bend_toes(mesh, 20.0, x_from=at)
+    placed, info = foot_prep.prepare_sole_up(synth.sole_up_capture(mesh), foot="right")
+    assert len(info["toes_laid_flat"]["joints"]) == 3
+    assert completeness.measure(placed)["toe_tip_above_floor_mm"] < 4.0
+
+
+def test_toes_bent_twice_close_together_are_laid_flat_at_both():
+    """Toes bent up 20 degrees at 185 mm and 30 more at 195: the second pivot is 4 mm past the first. A rule that
+    skipped joints closer than 12 mm (tried 1 Nov, for toes bent once about a line 18 mm up, which read the same
+    way) left these tips 15.7 mm up and the outline 7.8 mm short; both joints leave them 1.3 mm up (SYNTHETIC)."""
+    from footscan.recon import completeness, foot_prep
+
+    mesh = synth.bend_toes(synth.bend_toes(synth.refined(synth.curved_foot("right")), 30.0, x_from=195.0), 20.0,
+                           x_from=185.0)
+    placed, info = foot_prep.prepare_sole_up(synth.sole_up_capture(mesh), foot="right")
+    assert len(info["toes_laid_flat"]["joints"]) == 2
+    m = completeness.measure(placed)
+    assert m["toe_tip_above_floor_mm"] < 4.0
+    assert m["length_mm"] > 243.0
+
+
+def test_toes_left_well_off_the_floor_after_laying_flat_are_warned_about_and_refused_on_arrival():
+    """Toes bent up 15 degrees at 200 mm and 65 more at 215: only the first bend was laid, nothing judged the
+    second too steep, and the tip stayed 10.6 mm up with the outline 224.2 mm
+    of 250 and nothing said (found by a Codex review, 1 Nov; SYNTHETIC)."""
+    from footscan.recon import completeness, foot_prep
+
+    mesh = synth.bend_toes(synth.bend_toes(synth.refined(synth.curved_foot("right")), 65.0, x_from=215.0), 15.0,
+                           x_from=200.0)
+    placed, info = foot_prep.prepare_sole_up(synth.sole_up_capture(mesh), foot="right")
+    assert info["toes_warning"].startswith("THE TOES ARE STILL 11 MM OFF THE FLOOR")
+    assert info["toes_warning"] in completeness.from_prep(info)
+
+
 def test_toes_already_flat_are_left_exactly_as_scanned(monkeypatch):
     """A sole scan whose toes lie along the sole: nothing is laid flat, and the prepared foot is the same,
     point for point, as with laying toes flat turned off."""
@@ -405,8 +475,9 @@ def test_a_foam_print_is_found_flipped_rested_and_makes_the_right_insole(foot):
     assert r["sole"]["seen"] > 0.95 and r["sole"]["holes"] < 0.01
     assert r["max_fill_mm"] == pytest.approx(11.0, abs=0.1)
     assert (r["max_fill_at_mm"]["y"] > 0) == (foot == "right")
-    assert r["length_mm"] == pytest.approx(255.0, abs=1.0)  # 250 mm foot + 2 mm at the toe + the 3 mm heel-cup wall
-    assert r["warnings"] == []
+    # the generic outline, sized from the 250 mm foot: + the 3 mm heel-cup wall + 12 mm past the toes
+    assert r["shoe_fit"]["outline_length_mm"] == pytest.approx(250.0 + 3.0 + insole.GENERIC_ROOM_MM, abs=1.0)
+    assert _besides_the_outline(r["warnings"]) == []
 
 
 def test_a_print_of_the_other_foot_is_noticed():
@@ -438,7 +509,7 @@ def test_a_densely_meshed_foam_print_on_a_tilted_table_reads_the_same(tilt):
     r = ins.report
     assert r["prep"]["foam_top_tilt_deg"] == pytest.approx(tilt, abs=0.1)
     assert r["prep"]["print_deepest_mm"] == pytest.approx(30.0, abs=0.2)
-    assert r["max_fill_mm"] == pytest.approx(11.0, abs=0.1) and r["warnings"] == []
+    assert r["max_fill_mm"] == pytest.approx(11.0, abs=0.1) and _besides_the_outline(r["warnings"]) == []
 
 
 def _sole_up_scan(foot, noise_mm=0.0, wavy=False):
@@ -550,9 +621,13 @@ def test_if_the_exact_outline_fails_the_insole_still_covers_the_whole_foot(monke
     def boom(*a, **k):
         raise shapely.errors.GEOSException("forced")
 
+    whole = insole.from_scan(synth.block_foot(37.0, "right"), "right").report
     monkeypatch.setattr(shapely, "concave_hull", boom)
     ins = insole.from_scan(synth.block_foot(37.0, "right"), "right")
-    assert ins.report["length_mm"] > 240 and ins.report["width_mm"] > 90
+    # the same insole as with the exact outline (a fragment would be shorter or narrower); 255 x 89.8 mm
+    assert ins.report["length_mm"] > 240
+    assert ins.report["length_mm"] == pytest.approx(whole["length_mm"], abs=1.0)
+    assert ins.report["width_mm"] == pytest.approx(whole["width_mm"], abs=1.0)
     assert any("convex outline" in w for w in ins.report["warnings"])
 
 
@@ -648,8 +723,10 @@ def test_the_insole_comes_with_a_3d_preview_and_the_sheet_says_how_the_foot_was_
     calipers' reading of the print's depth."""
     from footscan.recon import foot_prep, viewer_data
 
+    # the foot's own outline: the check below runs right out to 8 mm inside the sole's edge, and a narrower outline
+    # bevels its edge down under the foot there
     ins, _ = foot_prep.insole_from_object_capture(_as_object_capture(synth.foam_print("right", shape="curved")),
-                                                  "right", kind="impression")
+                                                  "right", kind="impression", params=FOOT_OUTLINE)
     files = insole.write_outputs(ins, tmp_path, "insole", "test print", synthetic=True)
     pv = viewer_data.read(files["preview_insole"])
     sole = viewer_data.read(files["preview_sole"])
@@ -694,17 +771,19 @@ def test_the_insole_comes_with_a_3d_preview_and_the_sheet_says_how_the_foot_was_
 
 
 def test_lengthening_for_a_shoe_keeps_the_foot_shaped_part_and_extends_only_the_front():
-    """A shoe's insole is longer than the foot: the heel, arch and ball stay where the foot is; only the
-    flat front reaches further. Never shorter than the foot."""
-    base = insole.from_scan(synth.block_foot(37.0, "right"), "right")
-    long = insole.from_scan(synth.block_foot(37.0, "right"), "right", insole.InsoleParams(target_length_mm=275.0))
+    """The foot's own outline lengthened to a shoe's insole length: the heel, arch and ball stay where the foot is;
+    only the flat front reaches further. Never shorter than the foot."""
+    base = insole.from_scan(synth.block_foot(37.0, "right"), "right", FOOT_OUTLINE)
+    long = insole.from_scan(synth.block_foot(37.0, "right"), "right", insole.InsoleParams(target_length_mm=275.0,
+                                                                                          foot_outline=True))
     assert long.report["length_mm"] == pytest.approx(275.0, abs=0.6)
     assert long.report["max_fill_mm"] == base.report["max_fill_mm"]
     for x, y in [(30, 0), (110, 25), (150, 0)]:  # heel, arch, ball: the same height
         assert _top(long, x, y) == pytest.approx(_top(base, x, y), abs=0.05)
     assert any("lengthened to 275 mm" in w for w in long.report["warnings"])
     with pytest.raises(insole.InsoleError):
-        insole.from_scan(synth.block_foot(37.0, "right"), "right", insole.InsoleParams(target_length_mm=200.0))
+        insole.from_scan(synth.block_foot(37.0, "right"), "right", insole.InsoleParams(target_length_mm=200.0,
+                                                                                       foot_outline=True))
 
 
 def test_the_bed_check_uses_the_insoles_own_outline():
@@ -1081,3 +1160,42 @@ def test_a_footprint_lying_right_over_a_no_print_area_overlaps_it():
     assert insole._room_on_bed(ring, np.array([0.0, 0.0]), np.array([256.0, 256.0]), middle) < 0
     corner = insole._no_print_area(insole.BAMBU_NO_PRINT_CORNER)
     assert insole._room_on_bed(ring, np.array([0.0, 0.0]), np.array([256.0, 256.0]), corner) > 0
+
+
+def test_a_lengthened_insoles_preview_lifts_the_sole_by_the_base_the_insole_was_built_with():
+    """The base tapers along the foot's own length. A lengthened outline (or a shoe's) is longer than the
+    foot, and the preview must taper along the foot too, or it shows the sole at the wrong height."""
+    from footscan.recon import viewer_data
+
+    ins = insole.from_scan(synth.block_foot(0.0, "right"), "right", insole.InsoleParams(target_length_mm=290.0))
+    p = ins.params
+    fx0, fx1 = ins.report["base_taper_x_mm"]
+    assert ins.mesh.bounds[1, 0] - ins.mesh.bounds[0, 0] > fx1 - fx0 + 30  # the outline overruns the foot
+
+    def built_base(x):  # build()'s taper
+        t = np.clip((x - (fx0 + p.taper_from * (fx1 - fx0))) / ((1 - p.taper_from) * (fx1 - fx0)), 0, 1)
+        return p.base_mm + (p.toe_base_mm - p.base_mm) * t
+
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as d:
+        files = insole.write_preview(ins, Path(d))
+        sole = viewer_data.read(files["sole"])["vertices"]
+    orig = np.asarray(ins.sole.vertices)
+    for share in (0.75, 0.85, 0.95):
+        x = fx0 + share * (fx1 - fx0)
+        band = np.abs(sole[:, 0] - x) < 1.5
+        obands = np.abs(orig[:, 0] - x) < 1.5
+        assert band.any() and obands.any()
+        lift = sole[band, 2].min() - orig[obands, 2][orig[obands, 2] < 35].min()
+        assert lift == pytest.approx(built_base(x), abs=0.05), share
+
+
+def test_a_shoe_a_few_hundredths_of_a_mm_longer_adds_nothing_so_the_sheet_and_warnings_agree():
+    import shapely
+
+    outline = shapely.box(0, 0, 250, 90)
+    same, added = insole._to_length(outline, 175.0, 250.03)
+    assert added == 0.0 and same.equals(outline)
+    _, added = insole._to_length(outline, 175.0, 251.0)
+    assert added == pytest.approx(1.0)

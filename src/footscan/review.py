@@ -26,9 +26,7 @@ from __future__ import annotations
 
 import json
 import re
-import struct
 import time
-import zlib
 from pathlib import Path
 
 import numpy as np
@@ -128,7 +126,20 @@ def checks(ins_dir: Path, meta: dict, report: dict, mesh, spec: dict, other: dic
     tol = float(spec["length_tolerance_mm"])
     length = float(report["length_mm"])
     fit, shoe_name = report.get("shoe_fit"), report.get("shoe_name")
-    if fit:
+    if fit and report.get("outline_from") == "generic":
+        # The generic insole outline (the same shape for every foot, scaled to a length): made at the shoe's length
+        # it matches the spec's chart length. Its own length, not along the foot (it's turned to the foot by up to
+        # 10 degrees, which shortens it along the foot by a few mm). Sized from the foot instead, it misses: rebuild
+        # it with the shoe's length
+        # The file against the outline it was cut to, as placed along the foot, too: a file scaled or built another
+        # way misses that, whatever the outline's own length says
+        target = float(spec["target_length_mm"])
+        own, placed = outline_length(fit), float(fit["shoe_length_mm"])
+        add("length", abs(own - target) <= tol and abs(length - placed) <= tol,
+            f"the generic insole outline is {own:.1f} mm long; {spec['shoe']}, {spec['size']}: {target:.1f} mm "
+            f"({spec['target_length_source']}); the file is {length:.1f} mm along the foot, the outline as placed "
+            f"{placed:.1f} mm; allowed ±{tol:g} mm")
+    elif fit:
         # Cut to a shoe's outline (a saved shoe, or a shoe's-insole scan): the insole is checked against that
         # outline, the one it was made to match, not the spec's size-chart length. A miss means the file was
         # scaled or built another way.
@@ -235,18 +246,13 @@ def outline_length(fit: dict) -> float:
 
 
 # ---------------------------------------------------------------------------
-# pictures (plain numpy + zlib: no plotting library needed on the server)
+# pictures (plain numpy: no plotting library needed on the server)
 # ---------------------------------------------------------------------------
 def write_png(path: Path, rgb: np.ndarray) -> None:
-    """An 8-bit RGB PNG, written by hand (each row: filter byte 0, then the pixels)."""
-    h, w, _ = rgb.shape
-    raw = b"".join(b"\x00" + rgb[r].astype(np.uint8).tobytes() for r in range(h))
+    """An 8-bit RGB PNG (pictures.png_bytes)."""
+    from .pictures import png_bytes
 
-    def chunk(tag, data):
-        return struct.pack(">I", len(data)) + tag + data + struct.pack(">I", zlib.crc32(tag + data) & 0xFFFFFFFF)
-
-    Path(path).write_bytes(b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 2, 0, 0, 0))
-                           + chunk(b"IDAT", zlib.compress(raw, 6)) + chunk(b"IEND", b""))
+    Path(path).write_bytes(png_bytes(rgb))
 
 
 def _points(mesh, per_mm2: float = 40.0) -> tuple[np.ndarray, np.ndarray]:
@@ -451,7 +457,8 @@ def _write_packet(data_dir, folder, meta, made, spec, work, out, read_json) -> N
         synthetic=bool(report.get("synthetic")), spec=spec,
         insole=dict(length_mm=report["length_mm"], width_mm=report["width_mm"], height_mm=report["height_mm"],
                     volume_cm3=report.get("volume_cm3"), max_fill_mm=report["max_fill_mm"],
-                    max_fill_at_mm=report.get("max_fill_at_mm"), sole=report.get("sole"),
+                    max_fill_at_mm=report.get("max_fill_at_mm"), foot_max_fill_mm=report.get("foot_max_fill_mm"),
+                    foot_max_fill_at_mm=report.get("foot_max_fill_at_mm"), sole=report.get("sole"),
                     shoe_fit=report.get("shoe_fit"), shoe_name=report.get("shoe_name"),
                     outline_from=report.get("outline_from"), warnings=report.get("warnings", []),
                     frame=report.get("frame")),
@@ -472,12 +479,17 @@ def outline_line(i: dict) -> str:
     fit = i.get("shoe_fit")
     if not fit:
         return "the foot's own (no shoe's outline): trim it to the shoe's stock insole, or rebuild it with a saved shoe."
+    if i.get("outline_from") == "generic":
+        return (f"the generic insole outline (the same shape for every foot), {outline_length(fit):g} mm long: check it "
+                f"against the shoe's stock insole, or rebuild it with a saved shoe.")
     which = f"the saved shoe {i['shoe_name']}" if i.get("shoe_name") else "a scan of the shoe's own insole"
     return f"{which}, {outline_length(fit):g} mm long{' (mirrored for this foot)' if fit.get('mirrored') else ''}."
 
 
 def packet_markdown(p: dict) -> str:
     """The packet as a page a person or Claude reads top to bottom."""
+    from . import insole as insole_mod
+
     s, i = p["spec"], p["insole"]
     lines = [f"# Insole review: {p['foot']} foot, capture {p['capture']}", ""]
     if p["synthetic"]:
@@ -491,7 +503,7 @@ def packet_markdown(p: dict) -> str:
               f"- review-spec.json: {s['shoe']}, {s['size']}, insole length {s['target_length_mm']:g} mm "
               f"({s['target_length_source']})"
               + (f". An insole cut to a shoe's outline is checked against that outline's length, and the outline against "
-                 f"this length within ±{s['shoe_length_tolerance_mm']:g} mm" if i.get("shoe_fit")
+                 f"this length within ±{s['shoe_length_tolerance_mm']:g} mm" if i.get("shoe_fit") and i.get("outline_from") != "generic"
                  else "."),
               f"- Slice in {s['slicer']} at **{s['slicer_scale_percent']}% scale**. Never rescale the model in the "
               "slicer: if the size is wrong, rebuild the insole with the right length instead.", "",
@@ -499,6 +511,9 @@ def packet_markdown(p: dict) -> str:
               f"- {i['length_mm']} x {i['width_mm']} x {i['height_mm']} mm, {i['volume_cm3']} cm3.",
               f"- Highest fill {i['max_fill_mm']} mm at x {i['max_fill_at_mm']['x']}, y {i['max_fill_at_mm']['y']} mm "
               f"({i['frame']}).",
+              *([f"- The foot's own highest fill is {i['foot_max_fill_mm']} mm, at x {i['foot_max_fill_at_mm']['x']}, "
+                 f"y {i['foot_max_fill_at_mm']['y']} mm: past the outline's edge, so not printed."]
+                if (i.get("foot_max_fill_mm") or 0) > i["max_fill_mm"] + insole_mod.FILL_PAST_EDGE_MM else []),
               f"- Sole seen by the scan: {i['sole']['seen']:.0%} of the footprint, "
               f"{i['sole']['seen_under_arch']:.0%} under the arch." if i.get("sole") else "- Sole coverage: not recorded."]
     if p["other_foot"]:

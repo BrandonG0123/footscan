@@ -127,11 +127,34 @@ def test_an_insole_cut_to_a_saved_shoe_is_checked_against_that_shoe_not_the_char
     assert _check(p, "length")["ok"]
 
 
-def test_an_insole_with_the_foots_own_outline_says_so_in_its_packet(data):
+def test_an_insole_with_the_generic_outline_sized_from_the_foot_is_flagged_for_its_length(data):
+    """No shoe and no length: the generic insole outline, sized from the scan, misses the spec's length and says
+    which outline it is."""
     _only(data, "Lfoot")
     [p] = review.run_once(data, SPEC)
-    assert "the outline is the foot's own" in _check(p, "length")["found"]
-    assert "Outline: the foot's own" in (p / "packet.md").read_text()
+    c = _check(p, "length")
+    assert not c["ok"] and "the generic insole outline is" in c["found"]
+    assert "Outline: the generic insole outline (the same shape for every foot)" in (p / "packet.md").read_text()
+
+
+def test_an_insole_with_the_generic_outline_at_the_specs_length_passes_its_length_check(data):
+    _only(data, "R275")
+    [p] = review.run_once(data, SPEC)
+    c = _check(p, "length")
+    assert c["ok"] and "the generic insole outline is 275.0 mm long" in c["found"]
+
+
+def test_the_packet_gives_the_foots_own_highest_fill_only_when_it_is_past_the_outlines_edge(data):
+    """The packet's highest fill is the printed one; a foot peak higher by more than FILL_PAST_EDGE_MM (hanging
+    over the outline, not printed) is named beside it, so the reviewer has what the sheet has."""
+    _only(data, "R275")
+    [p] = review.run_once(data, SPEC)
+    packet = json.loads((p / "review.json").read_text())
+    assert "past the outline's edge, so not printed" not in review.packet_markdown(packet)
+    i = packet["insole"]
+    i["foot_max_fill_mm"], i["foot_max_fill_at_mm"] = i["max_fill_mm"] + 2.0, dict(x=110.0, y=107.0)
+    assert (f"The foot's own highest fill is {i['foot_max_fill_mm']} mm, at x 110.0, y 107.0 mm: past the outline's "
+            "edge, so not printed") in review.packet_markdown(packet)
 
 
 def test_pictures_are_real_pngs_at_half_a_millimetre_per_pixel(data):
@@ -419,11 +442,20 @@ def test_the_windows_service_runs_nssm_from_where_only_an_administrator_can_chan
 def test_windows_service_commands_made_on_another_computer_ask_the_checkouts_own_python(tmp_path, monkeypatch):
     """Made on the Mac for the tank: the Mac's Python folder is no use there, so the commands ask the
     checkout's .venv for its Python, as DEPLOY-TANK.md does, and grant that."""
-    monkeypatch.setattr(service.os, "name", "posix")
+    monkeypatch.setattr(service, "made_on_windows", lambda: False)
     lines = service.render("windows", tmp_path / "footscan", tmp_path / "data")["content"].splitlines()
     ask = next(i for i, ln in enumerate(lines) if ln.startswith("$py = & "))
     assert "python.exe" in lines[ask] and "sys.base_prefix" in lines[ask]
     assert lines[ask + 1].startswith("icacls $py /grant") and not any(sys.base_prefix in ln for ln in lines)
+
+
+def test_windows_service_commands_made_on_the_windows_computer_grant_this_python(tmp_path, monkeypatch):
+    """Made on the tank itself: this Python is the one the checkout's .venv runs on, so its folder is granted
+    directly. Faked without touching os.name, which pathlib reads too (a PosixPath can't be made on Windows)."""
+    monkeypatch.setattr(service, "made_on_windows", lambda: True)
+    lines = service.render("windows", tmp_path / "footscan", tmp_path / "data")["content"].splitlines()
+    assert any(ln.startswith(f'icacls "{sys.base_prefix}" /grant') for ln in lines)
+    assert not any(ln.startswith("$py = & ") for ln in lines)
 
 
 def test_pasting_the_windows_service_commands_again_leaves_the_running_nssm_alone(tmp_path):

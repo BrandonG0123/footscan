@@ -17,9 +17,9 @@ def _rot(axis, deg):
     return trimesh.transformations.rotation_matrix(np.radians(deg), axis)[:3, :3]
 
 
-def _as_exported(scale=1.0, table=True, tilt_deg=1.5, yaw_deg=38.0):
+def _as_exported(scale=1.0, table=True, tilt_deg=1.5, yaw_deg=38.0, obj=None):
     """The object (mm, Z up) as Object Capture would hand it over: metres, Y up."""
-    parts = [calib.build()]
+    parts = [calib.build() if obj is None else obj]
     if table:
         # just the tabletop's upper surface: a scan only ever sees that side
         x0, x1, y0, y1 = calib.LENGTH / 2 - 200, calib.LENGTH / 2 + 200, calib.WIDTH / 2 - 150, calib.WIDTH / 2 + 150
@@ -48,6 +48,23 @@ def test_a_perfect_model_from_an_app_comes_back_perfect(table):
     dims = {r["key"]: r for r in a["dimensions"]}
     for k in ("length", "width", "terrace_high", "terrace_low", "dome_apex"):
         assert abs(dims[k]["scan_minus_reference_mm"]) < 0.06, k
+    assert abs(a["scale"]["mean_pct"]) < 0.05 and not any("too small" in w or "too big" in w for w in a["warnings"])
+
+
+@pytest.mark.parametrize("scale", [0.95, 1.05])
+def test_a_model_five_percent_off_still_has_its_length_measured_and_its_scale_reported(scale):
+    """SYNTHETIC: the right-foot scan read ~5% short of a ruler (2026-11-05), so the calibration object may too.
+    The rigid alignment lined one end up and left the other wall 7.5 mm out, past the old +-6 mm window: the length,
+    the number that says whether the scan is scaled, came back unmeasured for a model 5% small."""
+    a = imported.evaluate_imported(_as_exported(scale=scale), up="y")
+    dims = {r["key"]: r for r in a["dimensions"]}
+    assert dims["length"]["scan_minus_reference_mm"] == pytest.approx(150.0 * (scale - 1), abs=0.15)
+    assert a["scale"]["length_pct"] == pytest.approx(100 * (scale - 1), abs=0.1)
+    assert a["scale"]["width_pct"] == pytest.approx(100 * (scale - 1), abs=0.15)
+    assert a["scale"]["same_way"]
+    assert any(f"the scan reads 5.0% too {'small' if scale < 1 else 'big'}" in w and "whole scan is scaled" in w
+               for w in a["warnings"])
+    assert imported.summarize(a)["scale_pct"] == a["scale"]["mean_pct"]
 
 
 def test_a_model_one_percent_too_big_reports_one_percent_too_big():
@@ -56,6 +73,83 @@ def test_a_model_one_percent_too_big_reports_one_percent_too_big():
     assert dims["length"]["scan_minus_reference_mm"] == pytest.approx(1.5, abs=0.1)
     assert dims["terrace_high"]["scan_minus_reference_mm"] == pytest.approx(0.35, abs=0.06)
     assert a["surface_deviation"]["median_mm"] > 0.1
+
+
+def _with_made_up_underside(depth=30.0, extra=None):
+    """The object with what Object Capture invented under a real scan of it (17 Nov 2026): a solid wedge,
+    ``depth`` mm deep under the dome end and nothing under the terrace end. ``extra`` is cut from the object
+    first (a manifold3d solid). Synthetic."""
+    import manifold3d as m3
+
+    M = m3.Manifold
+    ref = calib.build()
+    solid = M(m3.Mesh(vert_properties=np.ascontiguousarray(ref.vertices, np.float32),
+                      tri_verts=np.ascontiguousarray(ref.faces, np.uint32)))
+    if extra is not None:
+        solid = solid - extra
+    profile = m3.CrossSection([[(0.0, 0.0), (0.0, -depth), (calib.LENGTH, 0.0)]])  # counter-clockwise
+    wedge = profile.extrude(calib.WIDTH).rotate((90.0, 0.0, 0.0)).translate((0.0, calib.WIDTH, 0.0))
+    out = (solid + wedge).to_mesh()
+    return trimesh.Trimesh(np.asarray(out.vert_properties, float)[:, :3], np.asarray(out.tri_verts, np.int64))
+
+
+@pytest.mark.parametrize("tilt_deg", [0.0, 1.5, 3.0])
+def test_a_made_up_wedge_under_the_object_is_cut_away_and_heights_are_measured_from_the_base_slab(tilt_deg):
+    # tilt: the phone's sense of gravity a little out, as it often is
+    a = imported.evaluate_imported(_as_exported(table=False, tilt_deg=tilt_deg, obj=_with_made_up_underside()),
+                                   up="y")
+    assert "made up the underside" in a["imported"]["floor"]
+    assert a["imported"]["underside_made_up_mm"] > 20
+    dims = {r["key"]: r for r in a["dimensions"]}
+    assert dims["base"]["scan_mm"] is None and "not measured" in dims["base"]["note"]
+    for k in ("length", "width", "terrace_high", "terrace_low", "dome_apex"):
+        assert abs(dims[k]["scan_minus_reference_mm"]) < 0.06, k
+    assert a["surface_deviation"]["median_mm"] < 0.01
+    assert any("made up a bottom" in w for w in a["warnings"])
+
+
+def test_next_to_a_made_up_bottom_the_terrace_end_is_measured_above_where_it_bends_in():
+    # The terrace end's lowest 10 mm leans in, 7 mm at the bottom, as the end wall of the
+    # 17 Nov 2026 scan did where it met the made-up wedge.
+    import manifold3d as m3
+
+    lean = m3.CrossSection([[(calib.LENGTH - 7.0, -1.0), (calib.LENGTH + 1.0, -1.0), (calib.LENGTH + 1.0, 10.0),
+                             (calib.LENGTH, 10.0)]])
+    lean = lean.extrude(calib.WIDTH + 2).rotate((90.0, 0.0, 0.0)).translate((0.0, calib.WIDTH + 1, 0.0))
+    a = imported.evaluate_imported(_as_exported(table=False, tilt_deg=0.0, obj=_with_made_up_underside(extra=lean)),
+                                   up="y")
+    dims = {r["key"]: r for r in a["dimensions"]}
+    assert abs(dims["length"]["scan_minus_reference_mm"]) < 0.3
+
+
+def test_a_flat_bottom_where_the_base_slab_puts_it_is_used_and_the_base_is_measured():
+    a = imported.evaluate_imported(_as_exported(table=False, tilt_deg=0.0), up="y")
+    assert "lowest scanned points" in a["imported"]["floor"]
+    dims = {r["key"]: r for r in a["dimensions"]}
+    assert abs(dims["base"]["scan_minus_reference_mm"]) < 0.06
+
+
+@pytest.mark.parametrize("tilt_deg", [1.0, 3.0])
+def test_a_finely_meshed_flat_bottomed_model_a_little_tilted_is_not_taken_for_a_made_up_bottom(tilt_deg):
+    fine = calib.build().subdivide_to_size(3.0)  # a phone's mesh is finer than the design's big flat triangles
+    a = imported.evaluate_imported(_as_exported(table=False, tilt_deg=tilt_deg, obj=fine), up="y")
+    assert "lowest scanned points" in a["imported"]["floor"]
+    assert abs(a["imported"]["underside_below_expected_mm"]) < 1.0
+    assert not any("made up a bottom" in w for w in a["warnings"])
+
+
+def test_a_flat_bottomed_model_that_is_simply_too_big_is_not_taken_for_a_made_up_bottom():
+    a = imported.evaluate_imported(_as_exported(table=False, tilt_deg=0.0, scale=1.35), up="y")
+    assert "lowest scanned points" in a["imported"]["floor"]
+    dims = {r["key"]: r for r in a["dimensions"]}
+    assert dims["dome_apex"]["scan_minus_reference_mm"] == pytest.approx(10.5, abs=0.1)  # the scale error shows
+
+
+def test_when_the_base_slab_cant_be_found_the_report_says_the_bottom_wasnt_checked():
+    turned = calib.build()  # turned 30 degrees: no flat top faces up any more
+    turned.apply_transform(np.block([[_rot([1, 0, 0], 30.0), np.zeros((3, 1))], [np.zeros((1, 3)), np.ones((1, 1))]]))
+    a = imported.evaluate_imported(turned, up="z")
+    assert any("couldn't be checked" in w for w in a["warnings"])
 
 
 def test_millimetres_and_z_up_are_left_alone():
@@ -124,3 +218,24 @@ def test_a_file_with_no_triangles_is_refused(tmp_path):
     (tmp_path / "empty.obj").write_text("v 0 0 0\nv 1 0 0\n")
     with pytest.raises(ValueError):
         imported.load_geometry(tmp_path / "empty.obj")
+
+
+def test_the_table_is_found_under_an_object_whose_flat_top_is_bigger_than_the_table_in_view():
+    """SYNTHETIC: a 300 x 300 x 40 mm box on a table of which only a 30 mm strip round it was scanned. The box's
+    top is the largest flat surface but its sides hang below it; the table under it is the next largest."""
+    box = trimesh.creation.box(extents=[300, 300, 40])
+    box.apply_translation([0, 0, 20])
+    strips = []
+    for x0, x1, y0, y1 in ((-180, 180, 150, 180), (-180, 180, -180, -150), (-180, -150, -150, 150), (150, 180, -150, 150)):
+        q = trimesh.Trimesh([[x0, y0, 0], [x1, y0, 0], [x1, y1, 0], [x0, y1, 0]], [[0, 1, 2], [0, 2, 3]])
+        strips.append(q.subdivide().subdivide().subdivide())
+    m = trimesh.util.concatenate([box] + strips)
+    T = np.eye(4)
+    T[:3, :3] = _rot([1, 0, 0], 1.0)
+    T[:3, 3] = [0, 0, 7.0]
+    m.apply_transform(T)
+    out, floor_pts, info = imported.to_floor_frame(m, up="z")
+    assert "table found" in info["floor"]
+    assert info["floor_tilt_corrected_deg"] == pytest.approx(1.0, abs=0.1)
+    assert np.abs(floor_pts[:, 2]).max() < imported.PLANE_TOL_MM
+    assert out.vertices[:, 2].max() == pytest.approx(40.0, abs=0.5)  # the box's top, 40 mm above the table

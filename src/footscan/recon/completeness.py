@@ -200,6 +200,14 @@ def from_prep(info: dict) -> list[str]:
     return out
 
 
+def refusals(measures: dict | None, info: dict) -> list[str]:
+    """Everything one sole scan is refused for by itself: its ends (``problems``, where they could be measured)
+    and what its preparation found (``from_prep``). The studio's arrival check asks this, and so does the shoe
+    generator, which makes no shoe from such a scan (footwear.unfit_for_a_footbed): one list, so the two can't
+    drift apart. (Compared with the person's other scans, ``against_others``, is the studio's alone.)"""
+    return (problems(measures) if measures else []) + from_prep(info)
+
+
 # What to change on the next scan, for each refusal above (and the preparation's, from_prep): its headline (the
 # capitalised start of the line, which every refusal of that kind shares), a short name for it, a title the phone
 # can show in a sentence, and the steps, in the order to do them. The refusal itself says what was found and
@@ -244,6 +252,17 @@ RETAKE_STEPS = (
         "Before you tap Start, lay a book (anything flat and stiff) across the ball of the foot. The big-toe "
         "side and the little-toe side should both touch it.",
         "If one side doesn't, turn the foot gently until it does. Then take the book away and keep still.",
+    ]),
+    # Claude's look on arrival (second_look.py) uses the headlines above for what they also catch, and these two
+    # for what only a look at pictures of the model can.
+    ("PARTS OF THE SOLE LOOK GUESSED", "guessed_surface", "Parts of the sole were guessed", [
+        "Scan in even, bright light, with no strong shadow over the sole.",
+        "Move the phone slowly and keep the sole in view the whole way round.",
+        "Go all the way round until the ring is full, then a second lap, closer, over the toes and the heel.",
+    ]),
+    ("THIS DOESN'T LOOK LIKE A SOLE SCAN", "not_a_sole", "The scan didn't look like the sole of a foot", [
+        "Choose the scan for what you're scanning: Right sole or Left sole for a foot, sole to the ceiling.",
+        "Drag the box's edges in so it holds only this foot and a hand's width of the leg.",
     ]),
     ("THE STUDIO COULDN'T FIND THE WHOLE FOOT", "foot_not_found", "The studio couldn't find the whole foot", [
         "Keep the whole foot inside the box, with a hand's width of the leg.",
