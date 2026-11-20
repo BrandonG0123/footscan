@@ -90,7 +90,9 @@ final class ScanLibrary {
             guard studio.client != nil, work[scan.folder] == nil, scan.hasOBJ else { continue }
             // a scan made before the phone checked models is checked before it goes
             await check(scan)
-            guard let rec = scan.record, readyToSend(rec) else { continue }
+            // and again after the check, which can take a while: switched off or disconnected meanwhile, it stops
+            guard settings.autoSend else { break }
+            guard studio.client != nil, let rec = scan.record, readyToSend(rec) else { continue }
             await send(scan, studio: studio)
             // the studio isn't answering: don't try every other scan against it too
             if unreachable.contains(scan.folder) { break }
