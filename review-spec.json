@@ -10,5 +10,7 @@
   "tolerances_source": "a judgment, not measured: a file that misses the target by more than this was built without the shoe length or scaled; a shoe's outline more than shoe_length_tolerance_mm off its chart length was scanned at the wrong scale or is another size",
   "slicer": "Bambu Studio",
   "slicer_scale_percent": 100,
-  "bed_mm": 256.0
+  "bed_mm": 256.0,
+  "bed_exclude": [[0.0, 0.0], [18.0, 0.0], [18.0, 28.0], [0.0, 28.0]],
+  "bed_source": "Bambu X1 Carbon: its 256 mm bed and the front-left corner it keeps for the nozzle wipe (bed_exclude_area in its printer profile); [] for a printer with no such corner"
 }

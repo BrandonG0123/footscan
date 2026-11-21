@@ -596,6 +596,27 @@ def test_a_shoe_too_long_for_the_bed_says_so(plain):
     assert any("bigger printer" in w for w in big["warnings"])
 
 
+def test_the_too_long_warning_says_its_number_is_at_the_tightest_point_not_the_whole_length():
+    # bed_fit's short_by_mm is the shortfall at the one closest point (an insole centred on the bed runs out of
+    # room at both ends), so the warning mustn't read it as how much too long the whole shoe is
+    big = fw.build("right", fw.ShoeParams(style="stone", foot_length_mm=320.0, foot_width_mm=118.0)).report
+    short = big["bed_fit"]["short_by_mm"]
+    [w] = [w for w in big["warnings"] if "bigger printer" in w]
+    assert f"comes {short} mm closer to the bed's edge than the 3 mm it needs" in w
+    assert f"(by {short} mm)" not in w
+
+
+def test_a_shoe_is_placed_clear_of_its_own_printers_no_print_area(plain, tmp_path):
+    assert plain.report["bed_fit"]["exclude"] == [list(map(float, p)) for p in insole.BAMBU_NO_PRINT_CORNER]
+    bare = fw.build("right", fw.ShoeParams(style="stone", bed_exclude=(), **RULER))   # a printer without one (an A1)
+    assert bare.report["bed_fit"]["exclude"] == []
+    assert fw.mirrored(bare).report["bed_fit"]["exclude"] == []
+    threemf, _ = fw._write_solid(bare.mesh, tmp_path, "bare", "bare", "NOT A MEDICAL DEVICE. test", 256.0, ())
+    t = insole.read_3mf(threemf)["transform"]
+    at = insole.place_on_bed(np.asarray(bare.mesh.vertices)[:, :2], (0.0, 0.0), (256.0, 256.0), ())
+    assert t[0] == pytest.approx(at["cos"], abs=1e-6) and t[1] == pytest.approx(at["sin"], abs=1e-6)
+
+
 def test_what_isnt_a_shoe_is_refused(curved):
     for bad in (dict(style="boot"), dict(fit="tight"), dict(toe="pointed"), dict(cushion="hard"), dict(sole_mm=3.0),
                 dict(drop_mm=30.0), dict(upper_mm=0.8), dict(throat=0.9), dict(heel_rim_mm=5.0), dict(sock_mm=9.0),
