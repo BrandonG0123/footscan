@@ -435,8 +435,11 @@ struct IncompleteScans {
             Issue.record("a plain refusal was misread"); return
         }
         #expect(other == "bad capture id")
-        guard case .refused("HTTP 500") = StudioClient.Failure.from(status: 500, json: [:]) else {
-            Issue.record("an answer without JSON should name its status"); return
+        guard case .troubled("HTTP 500") = StudioClient.Failure.from(status: 500, json: [:]) else {
+            Issue.record("an answer without JSON should name its status, as the studio's own fault"); return
+        }
+        guard case .refused("HTTP 404") = StudioClient.Failure.from(status: 404, json: [:]) else {
+            Issue.record("a 4xx is a no to this scan"); return
         }
     }
 

@@ -19,9 +19,9 @@ final class NetworkWatch {
     /// before anything is tried over it. Changes inside this time count once.
     static let settle: Duration = .seconds(3)
 
-    private let monitor = NWPathMonitor()
-    private var last: Signature?
-    private var pending: Task<Void, Never>?
+    private let monitor = NWPathMonitor() // a let: never observed anyway
+    @ObservationIgnored private var last: Signature?
+    @ObservationIgnored private var pending: Task<Void, Never>?
 
     /// The parts of a network path that matter for reaching the studio.
     struct Signature: Equatable {

@@ -220,8 +220,11 @@ final class ScanLibrary {
             UINotificationFeedbackGenerator().notificationOccurred(.error)
         } catch {
             // a refusal sending into a capture an earlier try made: don't keep going back to it (the next try makes a
-            // new one). A drop keeps it, as does a refusal of a capture made on this try (it's tried once more).
-            let refused = (error as? StudioClient.Failure)?.isUnreachable != true
+            // new one). A drop keeps it, as does a refusal of a capture made on this try (it's tried once more). So
+            // does a fault of the studio's own (HTTP 500 and up) or of the phone's (reading the model): going back to
+            // the same capture is right then, and dropping it would leave it empty in the studio.
+            var refused = false
+            if case StudioClient.Failure.refused = error { refused = true }
             if refused, let reuse, var latest = scan.record, latest.pendingCapture?.id == reuse {
                 latest.pendingCapture = nil
                 scan.save(latest)
