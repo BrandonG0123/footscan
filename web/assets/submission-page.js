@@ -1,5 +1,5 @@
 // Studio: one customer submission (submission.html): its scans, survey, status, rescan link.
-import { STATUS, ask, esc, fmtDate } from "/assets/studio.js";
+import { STATUS, ask, esc, fmtDate, withStudioKey } from "/assets/studio.js";
 const id = new URLSearchParams(location.search).get("id");
 let schema = null;
 const root = document.getElementById("root");
@@ -215,7 +215,7 @@ function render(s) {
   document.getElementById("btn-delete").addEventListener("click", async () => {
     if (!confirm(`Delete everything for ${s.name}? This can't be undone.`)) return;
     const [ok, out] = await ask(`/api/submissions/${encodeURIComponent(s.id)}`, { method: "DELETE" });
-    if (ok) location.href = "/studio/"; else alert(`Couldn't delete it: ${out.error}`);
+    if (ok) location.href = withStudioKey("/studio/"); else alert(`Couldn't delete it: ${out.error}`);
   });
 }
 load();

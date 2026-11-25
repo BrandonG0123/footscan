@@ -1,6 +1,6 @@
 """The studio library's server side: one capture as listed, and the picture of each 3-D model (thumbnails.py)."""
 
-from test_server import _object_capture_foot, body, call, servers  # noqa: F401 - servers is a fixture
+from test_server import _object_capture_foot, body, call, make_capture, servers  # noqa: F401 - servers is a fixture
 
 PNG = b"\x89PNG\r\n\x1a\n"
 
@@ -190,6 +190,30 @@ def test_a_model_replaced_while_its_picture_is_drawn_is_drawn_again_never_kept_u
     assert len(drawn) == 2 and pic == thumbnails.thumb_path(tmp_path, model)
     assert pic.read_bytes() == PNG + b"second version, longer"
     assert [p.name for p in tmp_path.glob("thumb-*.png")] == [pic.name]
+
+
+def test_the_status_says_which_3d_model_is_being_built_while_it_is(servers, monkeypatch):
+    from footscan import recon_jobs
+
+    op, _, _ = servers
+
+    class Building:  # the reconstruction's process, still running until told otherwise
+        done = None
+
+        def __init__(self, *a, **k):
+            pass
+
+        def poll(self):
+            return Building.done
+
+    monkeypatch.setattr(recon_jobs.subprocess, "Popen", Building)
+    cid = make_capture(op)  # with photos
+    working = lambda: body(call(f"{op}/api/studio/status"))["working"]  # noqa: E731
+    assert working() == {"model_being_built": None}
+    assert call(f"{op}/api/captures/{cid}/recon", "POST", {})[0] == 202
+    assert working() == {"model_being_built": f"captures/{cid}"}
+    Building.done = 0  # finished
+    assert working() == {"model_being_built": None}
 
 
 def test_the_status_says_when_the_iphone_app_last_got_in_and_when_it_was_turned_away_for_a_wrong_key(servers):

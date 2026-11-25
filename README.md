@@ -139,7 +139,7 @@ session or notes, and each card's notes can be added or changed (the iPhone
 app's notes say only how it scanned, not which sock or how the foot stood). The top of the library lists
 insoles that need making again, with a button to remake them all (see
 [docs/insole.md](docs/insole.md)). *Status* in the studio's menu shows which
-commit the studio runs, since when, its free disk, what it holds, and which
+commit the studio runs, since when, its free disk, what it holds, the 3D model it is building (one at a time), and which
 options are on (Claude's look, the description reader, whether an API key is
 set; never the key itself), and when the iPhone app last got through and from
 which network (home network or Tailscale), or was turned away for an old key

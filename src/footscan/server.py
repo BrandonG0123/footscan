@@ -597,6 +597,16 @@ def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check
     recent_errors = __import__("collections").deque(maxlen=RECENT_ERRORS_KEPT)  # unexpected ones, for the Status page
     errors_lock = threading.Lock()  # added to by any request's thread while the Status page reads it
 
+    def model_being_built() -> str | None:
+        """The folder whose 3-D model is being built right now, from the data folder, or None."""
+        folder = runner.folder
+        if folder is None or not runner.busy():
+            return None
+        try:
+            return folder.relative_to(data_dir).as_posix()
+        except ValueError:
+            return folder.name
+
     def errors_newest_first() -> list[dict]:
         with errors_lock:
             return list(recent_errors)[::-1]
@@ -1332,6 +1342,8 @@ def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check
                           submissions=len(list_submissions(submissions_dir))),
                 claude=dict(check_scans=second_look is not None, describe_shoes=describe_with_claude,
                             api_key_set=bool(os.environ.get("ANTHROPIC_API_KEY"))),
+                # the one 3-D model built at a time (a second waits for it): which, so a slow page is explained
+                working=dict(model_being_built=model_being_built()),
                 app=app_seen.view(),
                 recent_errors=errors_newest_first(),
                 search_engines="allowed" if allow_indexing else "kept out (noindex)",

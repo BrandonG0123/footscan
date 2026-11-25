@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { appRows, duration, errorsHtml, notes, size } from "../../web/assets/status-page.js";
+import { appRows, duration, errorsHtml, notes, size, statusHtml } from "../../web/assets/status-page.js";
 
 const OK = {
   checkout: { commit: "36cc2ef", branch: "main" },
@@ -64,4 +64,16 @@ test("unexpected errors are listed escaped, and their count is a note", () => {
   const st = structuredClone(OK);
   st.recent_errors = [e, e];
   assert.match(notes(st)[0], /^2 requests hit a problem/);
+});
+
+test("the Status page says which 3-D model is being built, escaped, or that none is", () => {
+  const st = {
+    ...structuredClone(OK), started: "2026-11-25T08:00:00", up_s: 60, python: "3.12", system: "Windows 11",
+    sole_scan_preparation: "sole_up-7", search_engines: "kept out (noindex)",
+    address: { host: "0.0.0.0", port: 8766, https: true, public: false, phones_can_connect: true, tailscale: [] },
+  };
+  Object.assign(st.data, { folder: "C:/srv/footscan/data", captures: 3, sole_scans: 1, insoles: 1, shoes_saved: 0, submissions: 0 });
+  assert.match(statusHtml(st), /3D model being built<\/dt><dd>none \(one is built at a time\)/);
+  st.working = { model_being_built: "captures/<b>" };
+  assert.match(statusHtml(st), /3D model being built<\/dt><dd class="mono">captures\/&#60;b&#62;/);
 });

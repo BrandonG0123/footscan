@@ -62,3 +62,12 @@ test("the answer's status comes back too: 0 when the studio couldn't be reached"
     globalThis.fetch = real;
   }
 });
+
+test("a page that moves on by itself keeps the studio key, before any #", async () => {
+  const { withStudioKey } = await import("../../web/assets/studio.js");
+  assert.equal(withStudioKey("/studio/", "k 1"), "/studio/?key=k%201");
+  assert.equal(withStudioKey("/studio/captures.html#LIDAR_x", "k"), "/studio/captures.html?key=k#LIDAR_x");
+  assert.equal(withStudioKey("/studio/captures.html?attention=1", "k"), "/studio/captures.html?attention=1&key=k");
+  assert.equal(withStudioKey("/studio/?key=old", "k"), "/studio/?key=old");
+  assert.equal(withStudioKey("/studio/", null), "/studio/");
+});

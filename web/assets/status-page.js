@@ -81,6 +81,7 @@ export function statusHtml(st) {
       ["Captures", esc(d.captures)],
       ["Sole scans", esc(d.sole_scans)],
       ["Insoles", `${esc(d.insoles)}${d.insoles_out_of_date ? ` (<a href="/studio/captures.html?attention=1">${esc(d.insoles_out_of_date)} out of date</a>)` : ""}${d.insoles_failed ? ` (${esc(d.insoles_failed)} failed)` : ""}`],
+      ["3D model being built", st.working?.model_being_built ? esc(st.working.model_being_built) : "none (one is built at a time)", !!st.working?.model_being_built],
       ["Saved shoes", esc(d.shoes_saved)],
       ["Submissions", esc(d.submissions)],
     ])}</section>

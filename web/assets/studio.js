@@ -57,6 +57,14 @@ function studioKey() {
   }
 }
 
+// A studio address with the studio key on it (as layout.js puts it on links), for a page that moves on by itself:
+// before the #, so the studio sees it
+export function withStudioKey(href, key = studioKey()) {
+  if (!key || /[?&]key=/.test(href.split("#")[0])) return href;
+  const [path, ...hash] = href.split("#");
+  return `${path}${path.includes("?") ? "&" : "?"}key=${encodeURIComponent(key)}${hash.length ? `#${hash.join("#")}` : ""}`;
+}
+
 /**
  * Send a file with a progress report (fetch can't say how much of an upload has gone): onProgress(0..1) while
  * it goes up, then onSent() while the studio reads it. -> [ok, data, status] as ask() gives them. Carries the

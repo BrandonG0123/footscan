@@ -4,6 +4,7 @@ import { CoverageMap } from "./coverage-map.js";
 import { Scanner, cameraErrorMessage, loadBoards, requestMotionPermission } from "./scanner.js";
 import { createStageView } from "./stage-view.js";
 import { renderSteer, wireSoundToggle } from "./scan-ui.js";
+import { withStudioKey } from "./studio.js";
 
 const TARGET_FRAMES = 60;
 const CONDITION_LABELS = {
@@ -271,7 +272,7 @@ $("btn-save").addEventListener("click", async () => {
     setProgress(kept.length, "Saved.");
     saved = true;
     scanner.close();
-    setTimeout(() => (location.href = `/studio/captures.html#${created.id}`), 600);
+    setTimeout(() => (location.href = withStudioKey(`/studio/captures.html#${created.id}`)), 600);
   } catch (err) {
     $("upload-label").textContent = `Upload failed: ${err.message}`;
     btns.forEach((b) => (b.disabled = false));

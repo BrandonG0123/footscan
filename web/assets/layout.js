@@ -54,8 +54,9 @@ function useStudioKey(key) {
     }
     return fetchWithKey(input, init);
   };
-  const withKey = (a) => {
-    if (!a.href.includes("key=")) a.href += (a.href.includes("?") ? "&" : "?") + `key=${encodeURIComponent(key)}`;
+  const withKey = (a) => {  // before any #, where the studio sees it
+    const u = new URL(a.href);
+    if (!u.searchParams.has("key")) { u.searchParams.set("key", key); a.href = u.href; }
   };
   addEventListener("DOMContentLoaded", () => { for (const a of document.querySelectorAll('a[href^="/studio/"]')) withKey(a); });
   // links a page writes later (library cards, the Status page's counts) get it as they're followed or copied
