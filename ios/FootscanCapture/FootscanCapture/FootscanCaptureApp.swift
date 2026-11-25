@@ -15,6 +15,8 @@ struct FootscanCaptureApp: App {
     @State private var library = ScanLibrary()
     @State private var network = NetworkWatch()
 
+    init() { BatteryCheck.watch() } // read before the first scan: see BatteryCheck.watch
+
     var body: some Scene {
         WindowGroup {
             #if DEBUG
