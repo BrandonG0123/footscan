@@ -180,7 +180,7 @@ the simulator (see *Tests*).
 - **No studio in reach.** A scan waiting on a studio that didn't answer goes
   again by itself when the phone joins a network (a Wi-Fi, or Tailscale
   coming on), every 2 minutes while the app is open, and when the app comes
-  back to the front.
+  back to the front. Pulling the home screen down tries straight away.
 - **How far a send has got.** The card reads *Sending 42%* while the model goes
   up, then *Studio checking* while the studio reads it before it answers.
 - **Short of space.** Settings > Storage can remove Object Capture's working
@@ -217,6 +217,28 @@ the simulator (see *Tests*).
   studio will get.
 - **Delete all.** Settings' *Delete all scans* says how many scans haven't
   been sent to the studio, and so will be gone for good.
+- **A link for another studio.** A `footscan-capture://` link (from the
+  Camera app, say) for a studio other than the connected one opens the studio
+  screen and asks *Connect to a different studio?* first, since waiting scans
+  would go there.
+- **Sharing a model.** A shared .obj or .usdz is named after its scan (its
+  name, or what it is of, and when it was taken), so models AirDropped to the
+  Mac no longer arrive as model.obj, model-1.obj, and so on.
+
+## Accessibility
+
+- **VoiceOver** reads the capture's tips and warnings as they come, and says
+  when an open scan's model or send finishes (or stops, and why). The end of
+  a send can also be felt.
+- **Larger text.** The welcome headline and the home screen's cards and step
+  labels grow with the text size instead of being cut off. At the
+  Accessibility sizes, the welcome screen keeps its not-a-medical-device line
+  on the first screen.
+- **Reduce Motion.** Cards only fade as they scroll, and the welcome scene
+  stands still.
+
+Larger text was looked at in the simulator, at the Accessibility sizes.
+VoiceOver and Reduce Motion are covered by tests only, not yet heard or seen.
 
 ## What this decides
 
