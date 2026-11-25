@@ -114,6 +114,8 @@ struct SettingsView: View {
                 }
             }
             .task(id: library.version) {
+                // the build or send that stopped Remove has finished: the footer goes back to saying what's there
+                if !library.busy { removeRefused = false }
                 let scans = library.scans
                 let folders = scans.map(\.folder)
                 (storage, workingData) = await Task.detached(priority: .utility) {
