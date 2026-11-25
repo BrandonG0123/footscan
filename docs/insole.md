@@ -609,5 +609,12 @@ written. The studio doesn't offer it yet.
   opened in Bambu Studio, not yet printed or worn. Its accuracy against the
   real foot hasn't been measured (see benchmark.md, *Measuring it end to
   end*).
+- The edge rounding, the ball's cap, the heel cup and arch support as
+  printed, the mirrored pair, the paper template and the arch trial
+  (2026-11-25): SYNTHETIC feet in `tests/test_insole_edge.py`,
+  `tests/test_insole_pair.py`, `tests/test_template.py` and
+  `tests/test_insole_trial.py`; their numbers on the right-foot scan above
+  are in the sections on each. None of these files has been printed, opened
+  in Bambu Studio, or laid in a shoe yet.
 - Bambu Studio's command-line mode crashed on every file tried, including a
   plain cube, so the open-in-Bambu check is by hand: open the 3MF.
