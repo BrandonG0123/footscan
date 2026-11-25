@@ -2,6 +2,7 @@
 // Run: xcodebuild test -project FootscanCapture.xcodeproj -scheme FootscanCapture
 //      -destination 'platform=iOS Simulator,name=iPhone 17 Pro'
 import AVFoundation
+import CoreImage
 import Foundation
 import Testing
 import UIKit
@@ -1031,6 +1032,37 @@ struct PhotoPageFailing {
     @Test func aStoppedPageSaysWhatIsKeptAndWhatIsGone() {
         #expect(PhotoPageWords.pageStopped.contains("already saved to the studio are kept"))
         #expect(PhotoPageWords.pageStopped.contains("not yet saved are gone"))
+    }
+}
+
+// MARK: - a connect code read from a picture
+
+@Suite("A connect code read from a picture")
+struct CodeFromAPicture {
+    /// A QR code of `text`, as the studio draws one, scaled up as a screenshot would show it.
+    func qr(_ text: String) -> CIImage {
+        let filter = CIFilter(name: "CIQRCodeGenerator")!
+        filter.setValue(Data(text.utf8), forKey: "inputMessage")
+        filter.setValue("M", forKey: "inputCorrectionLevel")
+        return filter.outputImage!.transformed(by: CGAffineTransform(scaleX: 12, y: 12))
+    }
+
+    @Test func theStudiosCodeIsReadFromAPictureOfIt() {
+        let code = "footscan-capture://connect?url=https%3A%2F%2F192.168.11.233%3A8766&key=SYNTHETIC-test-key"
+        #expect(CodeInPicture.codes(in: qr(code)) == [code])
+    }
+
+    @Test func theStudiosCodeIsReadFromAPictureFilesBytes() async throws {
+        let code = "footscan-capture://connect?url=https%3A%2F%2F192.168.11.233%3A8766&key=SYNTHETIC-test-key"
+        let png = try #require(CIContext().pngRepresentation(of: qr(code), format: .RGBA8,
+                                                              colorSpace: CGColorSpaceCreateDeviceRGB()))
+        #expect(await CodeInPicture.codes(inPicture: png) == [code])
+        #expect(await CodeInPicture.codes(inPicture: Data("not a picture".utf8)) == nil)
+    }
+
+    @Test func aPictureWithNoCodeReadsNothing() {
+        let blank = CIImage(color: .white).cropped(to: CGRect(x: 0, y: 0, width: 400, height: 400))
+        #expect(CodeInPicture.codes(in: blank).isEmpty)
     }
 }
 
