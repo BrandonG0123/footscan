@@ -302,7 +302,8 @@ that) are laid flat again from where the first joint left them on the
 floor, up to three joints in all, as a toe has (`TOES_JOINTS`). SYNTHETIC
 (scripts/benchmark_prep.py, curved_foot, sole up, right foot), toes bent up
 20 degrees and their tips 30 more: 7.9 mm short with one joint, 5.3 mm with
-up to three. Toes bent once about a line well above the skin are laid
+up to three (7.4 since 25 Nov, when the foot's axis moved to the middle of its
+footprint: docs/benchmark.md). Toes bent once about a line well above the skin are laid
 flat at two joints too, and read long (SYNTHETIC: 60 degrees about a line
 18 mm up, 11.9 mm long); two bends close together at the skin look the same
 from underneath and need both (docs/benchmark.md). If the toes' tip is still more than 8 mm

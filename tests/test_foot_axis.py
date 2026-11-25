@@ -47,3 +47,17 @@ def test_a_left_and_a_right_foot_shaped_alike_get_their_insole_outlines_placed_a
     assert left["turned_deg"] == pytest.approx(-r["turned_deg"], abs=0.3)
     assert left["slid_mm"] == pytest.approx(-r["slid_mm"], abs=0.3)
     assert left["room_past_toes_mm"] == pytest.approx(r["room_past_toes_mm"], abs=0.3)
+
+
+@pytest.mark.parametrize("seed", [2, 5, 6])
+def test_the_front_of_flat_toes_speckled_by_the_scan_is_not_read_as_toes_hanging_up(seed):
+    """The underside's lowest point at the last step or two of a toe tip is high up its front, a wall facing
+    forward. Speckled (0.3 mm), with the foot turned down the middle of its footprint, that front was read as toes
+    raised 77-78 degrees (refused on arrival as too steep: seeds 2 and 5) or 47 degrees (laid flat at three joints:
+    258.5 mm of 250, seed 6). The toes are flat: nothing is laid, nothing is warned about, the length is the foot's."""
+    from footscan.recon import completeness, foot_prep
+
+    scan = synth.sole_up_capture(synth.speckle(synth.refined(synth.curved_foot("right")), 0.3, seed=seed))
+    placed, info = foot_prep.prepare_sole_up(scan, foot="right")
+    assert "toes_laid_flat" not in info and "toes_warning" not in info
+    assert completeness.measure(placed, "sole_up")["length_mm"] == pytest.approx(250.0, abs=1.0)

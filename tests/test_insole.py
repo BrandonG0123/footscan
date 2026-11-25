@@ -393,7 +393,9 @@ def test_toes_raised_steeply_from_further_forward_are_still_judged_not_skipped_a
 def test_toes_that_curl_as_well_as_bend_are_laid_flat_at_a_second_joint():
     """Toes bent up 20 degrees at 185 mm and their tips 30 more at 220 mm (as the real legs-flat scan 2190's toe
     tips still rose 14 mm after one joint, 29 Oct): with one joint the tips stayed 10.7 mm up and the outline
-    read 7.9 mm short (SYNTHETIC); a second joint, from where the first left the toes on the floor, lays them."""
+    read 7.9 mm short (SYNTHETIC); a second joint, from where the first left the toes on the floor, lays them.
+    Since the foot is turned down the middle of its footprint (25 Nov) the bends read 21.8 and 31.6 degrees (23.5
+    and 35.3 turned a few degrees off) and the outline 242.5 mm (244.7): one joint leaves the tips 11.1 mm up."""
     from footscan.recon import completeness, foot_prep
 
     mesh = synth.bend_toes(synth.bend_toes(synth.curved_foot("right"), 30.0, x_from=220.0), 20.0, x_from=185.0)
@@ -402,7 +404,7 @@ def test_toes_that_curl_as_well_as_bend_are_laid_flat_at_a_second_joint():
     assert len(joints) == 2 and joints[1]["pivot_from_heel_mm"] > joints[0]["pivot_from_heel_mm"] + 20.0
     m = completeness.measure(placed)
     assert m["toe_tip_above_floor_mm"] < 4.0
-    assert m["length_mm"] > 250.0 - 6.5
+    assert m["length_mm"] > 250.0 - 8.5
     assert placed.vertices[:, 2].min() > -0.3
 
 
@@ -422,7 +424,9 @@ def test_toes_that_curl_at_three_places_are_laid_flat_at_all_three():
 def test_toes_bent_twice_close_together_are_laid_flat_at_both():
     """Toes bent up 20 degrees at 185 mm and 30 more at 195: the second pivot is 4 mm past the first. A rule that
     skipped joints closer than 12 mm (tried 1 Nov, for toes bent once about a line 18 mm up, which read the same
-    way) left these tips 15.7 mm up and the outline 7.8 mm short; both joints leave them 1.3 mm up (SYNTHETIC)."""
+    way) left these tips 15.7 mm up and the outline 7.8 mm short; both joints leave them 1.3 mm up (SYNTHETIC).
+    The outline reads 242.0 mm since the foot is turned down the middle of its footprint (25 Nov; 244.2 before):
+    the bends read nearer their true angles, so less is laid flat (foot_prep.TOES_JOINT_UP_MM)."""
     from footscan.recon import completeness, foot_prep
 
     mesh = synth.bend_toes(synth.bend_toes(synth.refined(synth.curved_foot("right")), 30.0, x_from=195.0), 20.0,
@@ -431,19 +435,22 @@ def test_toes_bent_twice_close_together_are_laid_flat_at_both():
     assert len(info["toes_laid_flat"]["joints"]) == 2
     m = completeness.measure(placed)
     assert m["toe_tip_above_floor_mm"] < 4.0
-    assert m["length_mm"] > 243.0
+    assert m["length_mm"] > 241.5
 
 
 def test_toes_left_well_off_the_floor_after_laying_flat_are_warned_about_and_refused_on_arrival():
     """Toes bent up 15 degrees at 200 mm and 65 more at 215: only the first bend was laid, nothing judged the
     second too steep, and the tip stayed 10.6 mm up with the outline 224.2 mm
-    of 250 and nothing said (found by a Codex review, 1 Nov; SYNTHETIC)."""
+    of 250 and nothing said (found by a Codex review, 1 Nov; SYNTHETIC). Turned down the middle of its footprint
+    (25 Nov) the second bend is judged too steep (63 degrees); turned a few degrees off, as before, the tip still
+    up was what said so. Either way it's said, and the scan refused."""
     from footscan.recon import completeness, foot_prep
 
     mesh = synth.bend_toes(synth.bend_toes(synth.refined(synth.curved_foot("right")), 65.0, x_from=215.0), 15.0,
                            x_from=200.0)
     placed, info = foot_prep.prepare_sole_up(synth.sole_up_capture(mesh), foot="right")
-    assert info["toes_warning"].startswith("THE TOES ARE STILL 11 MM OFF THE FLOOR")
+    assert info["toes_warning"].startswith(("THE TOES ARE STILL 11 MM OFF THE FLOOR",
+                                            "THE FRONT OF THE FOOT RISES 63 DEGREES past the toes' first bend"))
     assert info["toes_warning"] in completeness.from_prep(info)
 
 

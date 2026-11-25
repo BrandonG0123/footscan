@@ -573,6 +573,17 @@ TOES_MIN_LENGTH_MM = 20.0    # less than this past the ball isn't toes: nothing 
                              # underside, not across the floor: toes raised steeply cover little floor)
 TOES_MIN_RAISE_DEG = 5.0     # toes raised less than this are as good as flat: left exactly as they are
 TOES_MAX_RAISE_DEG = 60.0    # past this it isn't toes hanging up, it's something else: left alone, with a warning
+# The underside profile's last step, if it climbs steeper than this from the step before, is the toe tip's front
+# (a wall facing forward), not toes hanging up, and is left out. The foot's front ends partway into that step, so
+# all it holds is whatever bulges furthest forward, high up the front: SYNTHETIC (benchmark_prep "speckle 0.3",
+# right foot, 25 Nov 2026), flat toes whose last 2 mm step read 18.6 mm up (5.8 the step before) were "laid flat"
+# by 47 degrees at three joints and read 23 mm long, with nothing said; tests/test_foot_axis.py has three more
+# (speckled seeds: two refused as "rising 77-78 degrees", one 258.5 mm of 250). Seen only once the foot was turned
+# down the middle of its footprint (plantar.long_axis, the same day); turned a few degrees off, as before, the last
+# step held lower points. Only the last step: toes raised this steeply climb on over two steps or more and must
+# still be judged too steep (SYNTHETIC: bent up 15 degrees at 200 mm and 65 more at 215, 80 off the floor, climb
+# 77 then 80 degrees over the last two steps; cut there, they were neither laid flat nor warned about, 219 mm of 250).
+TOES_FRONT_WALL_DEG = 75.0
 # The radius the toes bend round: their joints sit inside the ball of the foot, this far above the floor, not at
 # the skin under it; how far up isn't measured here. 10 mm is a judgment, to be set from the first ruler
 # measurement of a scanned foot. On SYNTHETIC sole-up scans (tests/synth.py curved_foot, 250 mm, right foot,
@@ -585,6 +596,14 @@ TOES_MAX_RAISE_DEG = 60.0    # past this it isn't toes hanging up, it's somethin
 # (5 mm: +0.7 to -2.7 bent about the skin, +2.9 to +9.7 about a line 12-18 mm up; 15 mm: -1.5 to -11.1 and
 # +0.4 to +3.5.) At 35 degrees and more, as the tips rise past the outline's height, as scanned reads 14.6-38.2
 # mm short; laid flat, -6.4 to +6.6 mm, depending on where the toes really bend.
+# Since 25 Nov 2026 the foot is turned down the middle of its footprint (plantar.long_axis; before, a few degrees
+# off along one side), and the bends read nearer their true angles (20 and 30 degrees, at 185 and 220 mm: 21.8
+# and 31.6, were 23.5 and 35.3), so less is laid flat. Laid flat (10 mm) then, the same feet (refined to 2 mm,
+# completeness.measure, 25 Nov), 10 / 20 / 35 / 50 degrees:
+#   bent about the skin    -1.5 / -2.5 / -6.0 / -9.0      (were -0.4 / -1.5 / -4.1 / -6.4 on the same day's run)
+#   bent about 12 mm up    +1.5 / +1.5 / +2.0 / +2.0      (+1.7 / +2.7 / +3.6 / +4.5)
+#   bent about 18 mm up           +3.5 / +5.5             (+4.5 / +7.5)
+# The same width of uncertainty, about 1-2.5 mm shorter throughout: still a question for a ruler.
 TOES_JOINT_UP_MM = 10.0
 # After laying flat, the toes' tip (the lowest point of the front completeness.END_PROBE_MM of what's under the
 # outline's height) higher than this off the floor: the toes weren't laid flat (a joint too steep, or the ball not
@@ -621,6 +640,8 @@ def _lay_toes_flat(placed, info):
     3. The raise: the smallest angle, seen from the pivot, of any point of the
        profile at least ``TOES_ANGLE_FROM_MM`` further forward: the line from
        the pivot at that angle runs under all of the toes and touches one.
+       The profile's last step is left out if it alone climbs steeper than
+       ``TOES_FRONT_WALL_DEG``: that's the toe tip's front, facing forward.
     4. The toes bend round their joints, not round the skin: a circle
        ``TOES_JOINT_UP_MM`` across that touches both the floor and that line,
        just behind the pivot. Everything ahead of its centre whose direction
@@ -721,6 +742,7 @@ def _lay_one_joint(W, y0, after, n, info):
     while i + 1 < len(z) and (not have[i + 1] or z[i + 1] <= zb + TOES_ON_FLOOR_MM):
         i += 1
     yp = float(ys[i])
+    have = have & ~_toe_front_wall(ys, z, have, i)
     # how far the underside reaches from the pivot, straight-line: the horizontal reach alone would let toes raised
     # steeply (SYNTHETIC: 50 mm of toes bent up 65 degrees reach 21 mm across the floor) skip both the laying and
     # the too-steep warning
@@ -762,6 +784,20 @@ def _lay_one_joint(W, y0, after, n, info):
     W[fore, 2] = np.maximum(cz - rad * np.cos(phi - turn), np.minimum(W[fore, 2], zb))
     return W, dict(raised_deg=round(raise_deg, 1), pivot_from_heel_mm=round(yp - y0, 1),
                    joint_from_heel_mm=round(float(cy - y0), 1), pivot_y=yp, floor_z=zb)
+
+
+def _toe_front_wall(ys, z, have, i):
+    """For ``_lay_one_joint``'s profile (lowest point ``z`` at each step ``ys``, ``have`` where there is one), which
+    steps past the pivot (step ``i``) are the toe tip's front: the last measured step, if it alone climbs from the
+    one before it more steeply than ``TOES_FRONT_WALL_DEG`` (the climb into the step before is shallower)."""
+    wall = np.zeros(len(z), dtype=bool)
+    steps = np.nonzero(have)[0]
+    steps = steps[steps >= i]
+    if len(steps) >= 2:
+        climb = np.degrees(np.arctan2(np.diff(z[steps[-3:]]), np.diff(ys[steps[-3:]])))
+        if climb[-1] > TOES_FRONT_WALL_DEG and (len(climb) < 2 or climb[-2] <= TOES_FRONT_WALL_DEG):
+            wall[steps[-1]] = True
+    return wall
 
 
 def _orient_and_trim(placed, info, trim_mm, heel_by: str = "leg", track: list | None = None,
