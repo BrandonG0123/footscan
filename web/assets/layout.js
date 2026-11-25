@@ -14,9 +14,10 @@ export function footSvg({ mirror = false, cls = "" } = {}) {
 const NAV = {
   customer: [["/", "Scan"], ["/mat.html", "Scan mat"], ["/care.html", "Wearing it"]],
   studio: [
+    // the library first: every scan lands there (the iPhone app's too), and on a phone only the first few show
+    ["/studio/captures.html", "Research library"],
     ["/studio/", "Submissions"],
     ["/studio/capture.html", "Research capture"],
-    ["/studio/captures.html", "Research library"],
     ["/studio/import.html", "Import 3D"],
     ["/mat.html", "Scan mat"],
     ["/studio/project.html", "Project"],
