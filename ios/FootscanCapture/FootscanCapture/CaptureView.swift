@@ -378,7 +378,7 @@ enum CaptureCoaching {
     /// Object Capture's own warnings, in footscan's words: the one most worth acting on first, or nil for none.
     /// Light first (nothing else helps in the dark), then the ones that spoil the photos being taken now, then
     /// the one that only wastes time.
-    static func tip(_ f: ObjectCaptureSession.Feedback) -> String? {
+    static func tip(_ f: Set<ObjectCaptureSession.Feedback>) -> String? {
         if f.contains(.environmentTooDark) { return "Too dark. Turn on more lights." }
         if f.contains(.environmentLowLight) { return "A bit dark. More light helps." }
         if f.contains(.movingTooFast) { return "Slow down a little." }
