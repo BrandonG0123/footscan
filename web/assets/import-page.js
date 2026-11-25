@@ -24,7 +24,7 @@ try {
   for (const id of KEPT) {
     const el = $(id), v = saved[id];
     if (typeof v !== "string") continue;
-    if (el.tagName === "SELECT" ? [...el.options].some((o) => o.value === v) : v.length <= el.maxLength) el.value = v;
+    if (el.tagName === "SELECT" ? [...el.options].some((o) => o.value === v) : el.maxLength < 0 || v.length <= el.maxLength) el.value = v;
   }
 } catch { /* nothing kept (private browsing): the form's own defaults */ }
 const keepChoices = () => {
