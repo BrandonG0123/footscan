@@ -167,6 +167,7 @@ struct StudioView: View {
     /// The numbered dots of the connect steps grow with the text, so a large number still fits inside.
     @ScaledMetric(relativeTo: .headline) private var stepDot: CGFloat = 28
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.dynamicTypeSize) private var typeSize
     @State private var scanning = false
     @State private var confirmDisconnect = false
     /// A screenshot or photo of the code, chosen instead of pointing the camera at it.
@@ -189,6 +190,9 @@ struct StudioView: View {
                     }
                     if let pending = studio.currentSwitch() { switchQuestion(pending.address) }
                     if let link = studio.link { connected(link) } else { howTo }
+                    // At the accessibility text sizes the buttons pinned to the bottom took half the screen, leaving
+                    // the steps to scroll in the top half: there they come after the steps instead.
+                    if typeSize.isAccessibilitySize { actions }
                     if let status = studio.status {
                         Label(status, systemImage: "info.circle")
                             .font(.footnote).foregroundStyle(Color.fsMuted)
@@ -201,26 +205,11 @@ struct StudioView: View {
             }
             .background(Color.fsBackground.ignoresSafeArea())
             .safeAreaInset(edge: .bottom) {
-                VStack(spacing: 8) {
-                    Group {
-                        if studio.link == nil {
-                            Button { scanning = true } label: { Label("Scan the studio's code", systemImage: "qrcode.viewfinder") }
-                                .buttonStyle(PrimaryButtonStyle())
-                        } else {
-                            Button { scanning = true } label: { Label("Connect to a different studio", systemImage: "qrcode.viewfinder") }
-                                .buttonStyle(SecondaryButtonStyle())
-                        }
-                    }
-                    .disabled(!canScan || connecting || studio.connecting)
-                    // the code on this phone's own screen (a remote-desktop app), or sent as a picture
-                    PhotosPicker(selection: $picture, matching: .images) {
-                        Label("Use a screenshot of the code", systemImage: "photo.on.rectangle")
-                            .font(.subheadline.weight(.semibold))
-                    }
-                    .disabled(connecting || studio.connecting)
+                if !typeSize.isAccessibilitySize {
+                    actions
+                        .padding(.horizontal, 20).padding(.vertical, 10)
+                        .background(.bar)
                 }
-                .padding(.horizontal, 20).padding(.vertical, 10)
-                .background(.bar)
             }
             .onChange(of: picture) { _, item in
                 guard let item else { return }
@@ -253,6 +242,28 @@ struct StudioView: View {
         }
         .tint(.fsBrand)
         .sensoryFeedback(.success, trigger: studio.link)
+    }
+
+    /// Connect with the code: the camera, or a screenshot of it.
+    private var actions: some View {
+        VStack(spacing: 8) {
+            Group {
+                if studio.link == nil {
+                    Button { scanning = true } label: { Label("Scan the studio's code", systemImage: "qrcode.viewfinder") }
+                        .buttonStyle(PrimaryButtonStyle())
+                } else {
+                    Button { scanning = true } label: { Label("Connect to a different studio", systemImage: "qrcode.viewfinder") }
+                        .buttonStyle(SecondaryButtonStyle())
+                }
+            }
+            .disabled(!canScan || connecting || studio.connecting)
+            // the code on this phone's own screen (a remote-desktop app), or sent as a picture
+            PhotosPicker(selection: $picture, matching: .images) {
+                Label("Use a screenshot of the code", systemImage: "photo.on.rectangle")
+                    .font(.subheadline.weight(.semibold))
+            }
+            .disabled(connecting || studio.connecting)
+        }
     }
 
     /// Read the connect code from the chosen picture, and connect with it.
