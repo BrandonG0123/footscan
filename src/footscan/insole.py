@@ -1048,9 +1048,14 @@ def fill_row(r: dict) -> str:
     outline's edge (a shoe's or the generic outline narrower than the foot), so the sheet doesn't give a height
     that isn't printed."""
     foot = r.get("foot_max_fill_mm")
+    # on a flat foot the highest point can be the heel's rounded back, not the arch (right scan 2349: 12.0 mm at
+    # the heel, 10.66 mm at the arch, generic outline at 280 mm): say so, so it isn't read as the arch's height
+    arch, at = r.get("arch_fill"), r.get("max_fill_at_mm")
+    where = (" at the heel, behind the arch support" if arch and at and at["x"] < arch["x"]
+             and arch["max_mm"] < r["max_fill_mm"] - FILL_PAST_EDGE_MM else "")
     if foot is None or r.get("foot_max_fill_past_edge") is False or foot <= r["max_fill_mm"] + FILL_PAST_EDGE_MM:
-        return f"{r['max_fill_mm']} mm"
-    return f"{r['max_fill_mm']} mm on the insole ({foot} mm under the foot, past the outline's edge)"
+        return f"{r['max_fill_mm']} mm{where}"
+    return f"{r['max_fill_mm']} mm on the insole{where} ({foot} mm under the foot, past the outline's edge)"
 
 
 def arch_row(r: dict, p: InsoleParams) -> str | None:

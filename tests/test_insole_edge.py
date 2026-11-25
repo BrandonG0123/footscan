@@ -185,3 +185,16 @@ def test_the_mirror_images_arch_support_is_on_its_own_inner_side(pair):
     left = insole.mirrored(rounded)
     a, b = rounded.report["arch_fill"], left.report["arch_fill"]
     assert b["y"] == -a["y"] and b["side"] == "inner" and b["max_mm"] == a["max_mm"]
+
+
+def test_the_sheets_highest_fill_says_when_it_is_the_heel_not_the_arch():
+    """As on right scan 2349 (12.0 mm at the heel's back, 10.66 mm arch support): the highest fill is behind the arch
+    and taller than it, so the sheet says where it is; an arch as tall as the highest point gets just the number."""
+    r = dict(max_fill_mm=12.0, max_fill_at_mm=dict(x=-1.0, y=1.5), foot_max_fill_mm=20.0, foot_max_fill_past_edge=True,
+             arch_fill=dict(max_mm=10.66, x=94.0, y=36.5, share=0.4, side="inner"))
+    assert insole.fill_row(r) == ("12.0 mm on the insole at the heel, behind the arch support (20.0 mm under the foot, "
+                                  "past the outline's edge)")
+    r.update(foot_max_fill_mm=12.0, foot_max_fill_past_edge=False)
+    assert insole.fill_row(r) == "12.0 mm at the heel, behind the arch support"
+    r["arch_fill"]["max_mm"] = 11.8  # within FILL_PAST_EDGE_MM of it: no note
+    assert insole.fill_row(r) == "12.0 mm"

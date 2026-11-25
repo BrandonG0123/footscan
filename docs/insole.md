@@ -529,7 +529,9 @@ between the heel zone and the ball's cap (30% to 62% of the foot's
 length), where it is and on which side. On that scan: 10.51 mm at 275 mm
 and 10.66 mm at 280 mm, on the inner side at 40% of the foot's length, near
 the outline's inner edge (the foot's own highest fill, 20 mm at the cap,
-hangs past that edge and isn't printed).
+hangs past that edge and isn't printed). Where the highest fill is behind
+the arch and taller than the arch support, the sheet's *Highest fill* says
+"at the heel, behind the arch support".
 
 On the bed: the outline is turned in 0.5 degree steps to find the angle
 where it fits the 256 mm bed with the most room to spare, and the 3MF is
