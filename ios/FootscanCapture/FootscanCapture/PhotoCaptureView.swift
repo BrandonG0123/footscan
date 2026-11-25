@@ -88,6 +88,14 @@ struct PhotoCaptureView: View {
     }
 }
 
+enum StudioPage {
+    /// What the studio's capture page may use: the camera, and only the studio's own page (never another site's,
+    /// and never the microphone). Asked by WebKit each time the page wants the camera.
+    static func mediaDecision(host: String, studioHost: String?, type: WKMediaCaptureType) -> WKPermissionDecision {
+        host == studioHost && type == .camera ? .grant : .deny
+    }
+}
+
 /// Lets the SwiftUI side ask the page about its state.
 @MainActor
 final class WebHandle {
@@ -190,9 +198,12 @@ private struct StudioWebView: UIViewRepresentable {
             }
         }
 
-        func webView(_ webView: WKWebView, requestMediaCapturePermissionFor origin: WKSecurityOrigin,
-                     initiatedByFrame frame: WKFrameInfo, type: WKMediaCaptureType) async -> WKPermissionDecision {
-            isStudio(origin.host) && type == .camera ? .grant : .deny
+        // WebKit's own name for this question (async form). An earlier spelling, requestMediaCapturePermissionFor
+        // ... async, matched nothing, so WebKit never asked it: it fell back to asking the person each time the
+        // page opened, and this rule (the camera for the studio only, never the microphone) wasn't applied.
+        func webView(_ webView: WKWebView, decideMediaCapturePermissionsFor origin: WKSecurityOrigin,
+                     initiatedBy frame: WKFrameInfo, type: WKMediaCaptureType) async -> WKPermissionDecision {
+            StudioPage.mediaDecision(host: origin.host, studioHost: parent.link.url.host(), type: type)
         }
 
         // The page's own "Discard N frames?" and messages: shown as native dialogs.

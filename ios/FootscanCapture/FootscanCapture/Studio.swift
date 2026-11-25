@@ -277,7 +277,7 @@ final class PinnedTrust: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
     var refusedCertificate: Bool { lock.withLock { refused } }
 
     func urlSession(_ session: URLSession, didReceive challenge: URLAuthenticationChallenge,
-                    completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
+                    completionHandler: @escaping @Sendable (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
         let (disposition, credential) = Self.decide(challenge, fingerprint: fingerprint)
         if disposition == .cancelAuthenticationChallenge { lock.withLock { refused = true } }
         completionHandler(disposition, credential)

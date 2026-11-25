@@ -3,6 +3,7 @@
 //      -destination 'platform=iOS Simulator,name=iPhone 17 Pro'
 import Foundation
 import Testing
+import WebKit
 @testable import FootscanCapture
 
 // MARK: - studio connect codes
@@ -479,6 +480,18 @@ struct ScanList {
         dec.dateDecodingStrategy = .iso8601
         let rec = try dec.decode(ScanRecord.self, from: Data(json.utf8))
         #expect(rec.subject == .rightFoot && rec.subject.needsScale)
+    }
+}
+
+// MARK: - the studio's camera page
+
+@Suite("The studio's camera page")
+struct StudioCameraPage {
+    @Test func onlyTheStudiosPageGetsTheCameraAndNothingGetsTheMicrophone() {
+        #expect(StudioPage.mediaDecision(host: "192.168.11.233", studioHost: "192.168.11.233", type: .camera) == .grant)
+        #expect(StudioPage.mediaDecision(host: "203.0.113.5", studioHost: "192.168.11.233", type: .camera) == .deny)
+        #expect(StudioPage.mediaDecision(host: "192.168.11.233", studioHost: "192.168.11.233", type: .microphone) == .deny)
+        #expect(StudioPage.mediaDecision(host: "192.168.11.233", studioHost: "192.168.11.233", type: .cameraAndMicrophone) == .deny)
     }
 }
 
