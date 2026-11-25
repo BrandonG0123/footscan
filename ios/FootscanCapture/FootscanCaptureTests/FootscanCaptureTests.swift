@@ -482,6 +482,29 @@ struct ScanList {
     }
 }
 
+// MARK: - a connect code read from a picture
+
+@Suite("A connect code read from a picture")
+struct CodeFromAPicture {
+    /// A QR code of `text`, as the studio draws one, scaled up as a screenshot would show it.
+    func qr(_ text: String) -> CIImage {
+        let filter = CIFilter(name: "CIQRCodeGenerator")!
+        filter.setValue(Data(text.utf8), forKey: "inputMessage")
+        filter.setValue("M", forKey: "inputCorrectionLevel")
+        return filter.outputImage!.transformed(by: CGAffineTransform(scaleX: 12, y: 12))
+    }
+
+    @Test func theStudiosCodeIsReadFromAPictureOfIt() {
+        let code = "footscan-capture://connect?url=https%3A%2F%2F192.168.11.233%3A8766&key=SYNTHETIC-test-key"
+        #expect(CodeInPicture.codes(in: qr(code)) == [code])
+    }
+
+    @Test func aPictureWithNoCodeReadsNothing() {
+        let blank = CIImage(color: .white).cropped(to: CGRect(x: 0, y: 0, width: 400, height: 400))
+        #expect(CodeInPicture.codes(in: blank).isEmpty)
+    }
+}
+
 // MARK: - free space
 
 @Suite("Free space before a capture")

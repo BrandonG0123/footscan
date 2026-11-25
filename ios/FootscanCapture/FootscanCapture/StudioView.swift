@@ -1,4 +1,5 @@
 // Connecting the app to the studio, by scanning the code it shows.
+import PhotosUI
 import SwiftUI
 import VisionKit
 
@@ -106,6 +107,8 @@ struct StudioView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var scanning = false
     @State private var confirmDisconnect = false
+    /// A screenshot or photo of the code, chosen instead of pointing the camera at it.
+    @State private var picture: PhotosPickerItem?
 
     private var canScan: Bool { DataScannerViewController.isSupported && DataScannerViewController.isAvailable }
 
@@ -133,18 +136,30 @@ struct StudioView: View {
             }
             .background(Color.fsBackground.ignoresSafeArea())
             .safeAreaInset(edge: .bottom) {
-                Group {
-                    if studio.link == nil {
-                        Button { scanning = true } label: { Label("Scan the studio's code", systemImage: "qrcode.viewfinder") }
-                            .buttonStyle(PrimaryButtonStyle())
-                    } else {
-                        Button { scanning = true } label: { Label("Connect to a different studio", systemImage: "qrcode.viewfinder") }
-                            .buttonStyle(SecondaryButtonStyle())
+                VStack(spacing: 8) {
+                    Group {
+                        if studio.link == nil {
+                            Button { scanning = true } label: { Label("Scan the studio's code", systemImage: "qrcode.viewfinder") }
+                                .buttonStyle(PrimaryButtonStyle())
+                        } else {
+                            Button { scanning = true } label: { Label("Connect to a different studio", systemImage: "qrcode.viewfinder") }
+                                .buttonStyle(SecondaryButtonStyle())
+                        }
+                    }
+                    .disabled(!canScan)
+                    // the code on this phone's own screen (a remote-desktop app), or sent as a picture
+                    PhotosPicker(selection: $picture, matching: .images) {
+                        Label("Use a screenshot of the code", systemImage: "photo.on.rectangle")
+                            .font(.subheadline.weight(.semibold))
                     }
                 }
-                .disabled(!canScan)
                 .padding(.horizontal, 20).padding(.vertical, 10)
                 .background(.bar)
+            }
+            .onChange(of: picture) { _, item in
+                guard let item else { return }
+                picture = nil
+                Task { await connect(from: item) }
             }
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
             .sheet(isPresented: $scanning) {
@@ -164,13 +179,26 @@ struct StudioView: View {
         .sensoryFeedback(.success, trigger: studio.link)
     }
 
+    /// Read the connect code from the chosen picture, and connect with it.
+    private func connect(from item: PhotosPickerItem) async {
+        guard let data = try? await item.loadTransferable(type: Data.self), let image = CIImage(data: data) else {
+            studio.status = "Couldn't open that picture. Choose it again, or scan the code with the camera."
+            return
+        }
+        guard let code = CodeInPicture.codes(in: image).first else {
+            studio.status = CodeInPicture.noneFound
+            return
+        }
+        _ = await studio.connect(code)
+    }
+
     private var howTo: some View {
         VStack(alignment: .leading, spacing: 12) {
             step(1, "On your computer, open the Footscan studio")
             step(2, "Go to Import 3D and tap Show the connect code")
             step(3, "Tap the button below and point this camera at it")
             if !canScan {
-                Text("This device can't read codes with its camera. Point the iPhone's Camera app at the code instead; it opens this app.")
+                Text("This device can't read codes with its camera. Point the iPhone's Camera app at the code instead (it opens this app), or take a screenshot of the code and use that.")
                     .font(.footnote).foregroundStyle(Color.fsWarn)
             }
         }
