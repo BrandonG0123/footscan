@@ -343,6 +343,9 @@ struct Scan: Identifiable, Hashable {
         (try? FileManager.default.contentsOfDirectory(atPath: images.path()))?
             .filter { !$0.hasPrefix(".") }.count ?? 0
     }
+
+    /// "1 photo", "24 photos": a scan stopped early is kept even with a single photo.
+    static func photosWords(_ n: Int) -> String { n == 1 ? "1 photo" : "\(n) photos" }
 }
 
 enum ScanStore {

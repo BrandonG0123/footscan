@@ -633,7 +633,7 @@ struct ScanCard: View {
                 if let rec {
                     // a named scan still says what kind it is
                     Text(((rec.name != nil ? [rec.subject.label] : [])
-                          + [rec.created.formatted(date: .abbreviated, time: .shortened), "\(scan.photoCount) photos"])
+                          + [rec.created.formatted(date: .abbreviated, time: .shortened), Scan.photosWords(scan.photoCount)])
                         .joined(separator: " · "))
                         .font(.caption).foregroundStyle(Color.fsMuted)
                 }

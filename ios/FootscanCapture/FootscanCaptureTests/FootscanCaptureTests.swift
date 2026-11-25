@@ -578,6 +578,12 @@ struct IncompleteScans {
 
 @Suite("Scan list")
 struct ScanList {
+    @Test func aScanWithOnePhotoSaysPhotoNotPhotos() {
+        #expect(Scan.photosWords(1) == "1 photo")  // a scan stopped early is kept with a single photo
+        #expect(Scan.photosWords(0) == "0 photos")
+        #expect(Scan.photosWords(24) == "24 photos")
+    }
+
     private func makeScan(in root: URL, folder: String, subject: Subject, created: Date?) throws {
         let dir = root.appending(path: folder, directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)

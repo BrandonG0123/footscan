@@ -133,7 +133,7 @@ struct ScanDetailView: View {
     private func steps(_ rec: ScanRecord?) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             StepRow(state: scan.photoCount > 0 ? .done : .failed, title: "Captured",
-                    detail: "\(scan.photoCount) photos\(rec?.scanPasses.map { ", \($0) lap\($0 == 1 ? "" : "s")" } ?? "")",
+                    detail: Scan.photosWords(scan.photoCount) + "\(rec?.scanPasses.map { ", \($0) lap\($0 == 1 ? "" : "s")" } ?? "")",
                     isLast: false)
             StepRow(state: modelState, title: "3D model", detail: modelDetail(rec), isLast: false) {
                 if !scan.hasOBJ && scan.photoCount > 0 && library.work[scan.folder] == nil {

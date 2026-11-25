@@ -284,7 +284,7 @@ private struct Controls: View {
                         Text(allSides ? "All sides" : "Sides").font(.callout.weight(allSides ? .bold : .regular))
                     }
                     .accessibilityElement(children: .combine)
-                    .accessibilityLabel("\(session.numberOfShotsTaken) photos. \(allSides ? "Every side has photos." : "Not every side has photos yet.")")
+                    .accessibilityLabel("\(Scan.photosWords(session.numberOfShotsTaken)). \(allSides ? "Every side has photos." : "Not every side has photos yet.")")
                     .foregroundStyle(.white)
                     .padding(.horizontal, 12).padding(.vertical, 8)
                     .background(.ultraThinMaterial, in: Capsule())
