@@ -115,6 +115,7 @@ function render() {
         ${imported ? "" : `<div><dt>Coverage</dt><dd>${cov}</dd></div>
         <div><dt>Texture</dt><dd>${esc(c.method)}</dd></div>`}
         <div><dt>Created</dt><dd>${esc(c.created?.replace("T", " "))}</dd></div>
+        ${c.device ? `<div><dt>Device</dt><dd>${esc(c.device)}</dd></div>` : ""}
         ${c.accuracy && !c.accuracy.error
           ? `<div><dt>Accuracy</dt><dd>${esc(c.accuracy.median_mm)} mm typical · length ${c.accuracy.length_mm == null ? "—" : (c.accuracy.length_mm > 0 ? "+" : "") + Number(c.accuracy.length_mm).toFixed(2) + " mm"}${c.accuracy.scale_pct == null ? "" : ` · size ${c.accuracy.scale_pct > 0 ? "+" : ""}${Number(c.accuracy.scale_pct).toFixed(1)}%`}</dd></div>` : ""}
       </dl>
