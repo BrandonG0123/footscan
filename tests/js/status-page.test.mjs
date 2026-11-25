@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { appRows, duration, errorsHtml, notes, size, statusHtml, titleFor } from "../../web/assets/status-page.js";
+import { appRows, duration, errorsHtml, errorsText, notes, size, statusHtml, titleFor } from "../../web/assets/status-page.js";
 
 const OK = {
   checkout: { commit: "36cc2ef", branch: "main" },
@@ -87,4 +87,12 @@ test("the tab's title carries how many notes there are, and drops the count once
   assert.equal(titleFor(0, "(1) Status · Studio"), "Status · Studio");
   assert.equal(titleFor("!", "(1) Status · Studio"), "(!) Status · Studio");  // couldn't ask the studio
   assert.equal(titleFor(0, "(!) Status · Studio"), "Status · Studio");
+});
+
+test("the unexpected errors copy as plain text, with the code version they happened on", () => {
+  const e = { at: "2026-11-25T09:00:00", request: "GET /api/captures", error: "RuntimeError: <b>", code: "server.py:12 (route)" };
+  assert.equal(errorsText([e], "918345d"),
+    "footscan studio at 918345d: unexpected errors, newest first\n2026-11-25 09:00:00  GET /api/captures\n  RuntimeError: <b>\n  server.py:12 (route)");
+  assert.match(errorsHtml([e]), /id="copy-errors"/);
+  assert.doesNotMatch(errorsHtml([]), /copy-errors/);
 });

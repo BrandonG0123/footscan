@@ -47,7 +47,14 @@ export function errorsHtml(errors) {
   if (!errors.length) return `<p class="muted" style="margin:0">None since the studio started.</p>`;
   return `<ul class="errors-list">${errors.map((e) => `<li><span class="mono">${esc(e.at.replace("T", " "))} · ${esc(e.request)}</span><br>
     ${esc(e.error)}<br><span class="hint mono">${esc(e.code)}</span></li>`).join("")}</ul>
-    <p class="hint" style="margin:8px 0 0">The studio's log has the full detail of each.</p>`;
+    <p class="hint" style="margin:8px 0 0">The studio's log has the full detail of each.
+      <button class="linkish" type="button" id="copy-errors">Copy the list</button> (to paste into a message about it)</p>`;
+}
+
+// The list as plain text, with the code version it happened on, for pasting into a message
+export function errorsText(errors, commit) {
+  return [`footscan studio${commit ? ` at ${commit}` : ""}: unexpected errors, newest first`,
+    ...errors.map((e) => `${e.at.replace("T", " ")}  ${e.request}\n  ${e.error}\n  ${e.code}`)].join("\n");
 }
 
 export function statusHtml(st) {
@@ -93,7 +100,7 @@ export function statusHtml(st) {
     ])}</section>`;
 }
 
-let asking = false;
+let asking = false, last = null;  // the last answer, for Copy the list
 async function load() {
   if (asking) return;
   asking = true;
@@ -108,6 +115,7 @@ async function load() {
     $("root").innerHTML = `<div class="callout stop"><p>Couldn't ask the studio: ${esc(st.error || "it refused")}.</p></div>`;
     return;
   }
+  last = st;
   const n = notes(st);
   document.title = titleFor(n.length, document.title);
   show($("notes"), n.length ? `<div class="callout warn" style="margin:16px 0"><ul class="checklist" style="margin:0">${n.map((x) => `<li>${esc(x)}</li>`).join("")}</ul></div>` : "");
@@ -131,6 +139,16 @@ function show(el, html) {
 const AGAIN_S = 10;
 if (typeof document !== "undefined" && document.getElementById("root")) {
   $("refresh").addEventListener("click", load);
+  $("root").addEventListener("click", async (e) => {
+    const b = e.target.closest("#copy-errors");
+    if (!b || !last) return;
+    try {
+      await navigator.clipboard.writeText(errorsText(last.recent_errors || [], last.checkout?.commit));
+      b.textContent = "Copied";
+    } catch {
+      b.textContent = "This browser won't copy here (it needs HTTPS)";
+    }
+  });
   load();
   setInterval(() => { if (document.visibilityState === "visible") load(); }, AGAIN_S * 1000);
   document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") load(); });
