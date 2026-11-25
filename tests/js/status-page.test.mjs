@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { appRows, duration, notes, size } from "../../web/assets/status-page.js";
+import { appRows, duration, errorsHtml, notes, size } from "../../web/assets/status-page.js";
 
 const OK = {
   checkout: { commit: "36cc2ef", branch: "main" },
@@ -53,4 +53,15 @@ test("the app's rows say never until it has asked, and escape what they show", (
   assert.deepEqual(appRows({}).map((r) => r[1]), ["never", "never"]);
   const [row] = appRows({ reached: { at: "2026-11-25T09:00:00", address: "<b>", network: "Tailscale", asked: "connection test" } });
   assert.match(row[1], /2026-11-25 09:00:00.*connection test, over Tailscale \(&#60;b&#62;\)/);
+});
+
+test("unexpected errors are listed escaped, and their count is a note", () => {
+  assert.match(errorsHtml([]), /None since the studio started/);
+  const e = { at: "2026-11-25T09:00:00", request: "GET /api/captures", error: "RuntimeError: <b>", code: "server.py:12 (route)" };
+  const html = errorsHtml([e]);
+  assert.match(html, /2026-11-25 09:00:00 · GET \/api\/captures/);
+  assert.ok(html.includes("RuntimeError: &#60;b&#62;") && !html.includes("<b>"));
+  const st = structuredClone(OK);
+  st.recent_errors = [e, e];
+  assert.match(notes(st)[0], /^2 requests hit a problem/);
 });

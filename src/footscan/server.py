@@ -122,6 +122,7 @@ MAX_JSON_BYTES = 2 * 1024 * 1024
 MAX_FRAMES = 200
 MAX_MESH_BYTES = 150 * 1024 * 1024
 MAX_NOTES_CHARS = 2000  # a capture's notes
+RECENT_ERRORS_KEPT = 20  # unexpected errors the Status page lists (in memory, since the studio started)
 MESH_TYPES = {"obj", "ply", "stl", "glb", "gltf", "off"}
 # New submissions per client per hour. Stops a script flooding the disk; a
 # real person makes one or two.
@@ -592,6 +593,7 @@ def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check
     shoes_dir = shoes_dir_of(captures_dir)
     started_at, started_clock = now_iso(), __import__("time").monotonic()  # for the Status page
     app_seen = AppSeen()  # the iPhone app's last requests, for the Status page
+    recent_errors = __import__("collections").deque(maxlen=RECENT_ERRORS_KEPT)  # unexpected ones, for the Status page
     submissions_dir = data_dir / "submissions"
     limiter = RateLimiter(submissions_per_hour)
 
@@ -933,6 +935,10 @@ def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check
 
                 where = SECRET_IN_URL.sub(r"\1=…", self.path)
                 sys.stderr.write(f"[{now_iso()}] unexpected error on {method} {where}:\n{traceback.format_exc()}")
+                last = traceback.extract_tb(e.__traceback__)[-1]
+                recent_errors.append(dict(at=now_iso(), request=f"{method} {where.partition('?')[0]}",
+                                          error=f"{type(e).__name__}: {str(e)[:300]}",
+                                          code=f"{Path(last.filename).name}:{last.lineno} ({last.name})"))
                 if self._answer_started:
                     self.close_connection = True  # part of an answer already went out: it can't be replaced
                     return
@@ -1317,6 +1323,7 @@ def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check
                 claude=dict(check_scans=second_look is not None, describe_shoes=describe_with_claude,
                             api_key_set=bool(os.environ.get("ANTHROPIC_API_KEY"))),
                 app=app_seen.view(),
+                recent_errors=list(reversed(recent_errors)),  # the newest first
                 search_engines="allowed" if allow_indexing else "kept out (noindex)",
                 sole_scan_preparation=foot_prep.prep_version("sole_up"),
             )

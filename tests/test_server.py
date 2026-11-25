@@ -2686,3 +2686,8 @@ def test_an_unexpected_error_is_answered_500_in_words_and_logged_not_a_dropped_c
     assert b"something inside broke" not in raw  # the details are the log's, not the answer's
     err = capsys.readouterr().err
     assert "something inside broke" in err and "GET /api/captures?key=…" in err and KEY not in err
+    # and the Status page lists it, newest first, without the key
+    monkeypatch.undo()
+    listed = json.loads(call(f"{op}/api/studio/status")[1])["recent_errors"]
+    assert len(listed) == 1 and listed[0]["request"] == "GET /api/captures"
+    assert listed[0]["error"] == "RuntimeError: something inside broke" and listed[0]["code"].startswith("test_server.py:")

@@ -26,6 +26,7 @@ export function notes(st) {
   if (st.claude.describe_shoes && !st.claude.api_key_set) out.push("Reading a shoe's description with Claude is on, but no ANTHROPIC_API_KEY is set for the studio.");
   const app = st.app || {};
   if (app.wrong_key && app.latest === "wrong_key") out.push(`The iPhone app last asked with a studio key that doesn't match (${app.wrong_key.at.replace("T", " ")}, over ${app.wrong_key.network}): it was paired before this studio's key changed, or reinstalled. Scan the connect code again on Import a 3D scan.`);
+  if (st.recent_errors?.length) out.push(`${st.recent_errors.length} request${st.recent_errors.length === 1 ? "" : "s"} hit a problem the studio didn't expect since it started: listed under Unexpected errors below.`);
   if (!st.checkout) out.push("This copy of footscan isn't a git checkout (or its .git folder can't be read), so the code's version can't be shown.");
   return out;
 }
@@ -38,6 +39,15 @@ function facts(rows) {
 export function appRows(app) {
   const seen = (e) => (e ? `${esc(e.at.replace("T", " "))}<br><span class="muted">${esc(e.asked)}, over ${esc(e.network)} (${esc(e.address)})</span>` : "never");
   return [["Last reached the studio", seen(app.reached)], ["Last turned away (wrong key)", seen(app.wrong_key)]];
+}
+
+// Requests the studio answered "a problem it didn't expect" (500), the newest first: what was asked, what went
+// wrong and where in the code, for a bug report. The full tracebacks are in the studio's log.
+export function errorsHtml(errors) {
+  if (!errors.length) return `<p class="muted" style="margin:0">None since the studio started.</p>`;
+  return `<ul class="errors-list">${errors.map((e) => `<li><span class="mono">${esc(e.at.replace("T", " "))} · ${esc(e.request)}</span><br>
+    ${esc(e.error)}<br><span class="hint mono">${esc(e.code)}</span></li>`).join("")}</ul>
+    <p class="hint" style="margin:8px 0 0">The studio's log has the full detail of each.</p>`;
 }
 
 export function statusHtml(st) {
@@ -64,6 +74,7 @@ export function statusHtml(st) {
     <section class="card"><h2>iPhone app</h2>${facts(appRows(st.app || {}))}
       <p class="hint" style="margin:12px 0 0">Since the studio started. "Test the connection" in the app shows here as a
         connection test; nothing here means the phone's requests aren't reaching this computer at all.</p></section>
+    <section class="card"><h2>Unexpected errors</h2>${errorsHtml(st.recent_errors || [])}</section>
     <section class="card"><h2>Data</h2>${facts([
       ["Folder", esc(d.folder), true],
       ["Disk free", disk.error ? "couldn't be read" : `${esc(size(disk.free_bytes))} of ${esc(size(disk.total_bytes))}`],
