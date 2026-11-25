@@ -1,6 +1,7 @@
 // Tests for the iPhone app's own logic: the parts that don't need a camera.
 // Run: xcodebuild test -project FootscanCapture.xcodeproj -scheme FootscanCapture
 //      -destination 'platform=iOS Simulator,name=iPhone 17 Pro'
+import CoreImage
 import Foundation
 import Testing
 @testable import FootscanCapture
@@ -497,6 +498,14 @@ struct CodeFromAPicture {
     @Test func theStudiosCodeIsReadFromAPictureOfIt() {
         let code = "footscan-capture://connect?url=https%3A%2F%2F192.168.11.233%3A8766&key=SYNTHETIC-test-key"
         #expect(CodeInPicture.codes(in: qr(code)) == [code])
+    }
+
+    @Test func theStudiosCodeIsReadFromAPictureFilesBytes() async throws {
+        let code = "footscan-capture://connect?url=https%3A%2F%2F192.168.11.233%3A8766&key=SYNTHETIC-test-key"
+        let png = try #require(CIContext().pngRepresentation(of: qr(code), format: .RGBA8,
+                                                              colorSpace: CGColorSpaceCreateDeviceRGB()))
+        #expect(await CodeInPicture.codes(inPicture: png) == [code])
+        #expect(await CodeInPicture.codes(inPicture: Data("not a picture".utf8)) == nil)
     }
 
     @Test func aPictureWithNoCodeReadsNothing() {

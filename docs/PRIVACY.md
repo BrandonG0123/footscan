@@ -18,7 +18,7 @@ it to. Nothing goes to the app's developer, and there are no accounts, ads, anal
 | Photos of your foot on the printed mat (Photos + mat) | The studio builds the 3-D model from them | Held only in the photo page while you take them, then sent to your studio when you tap Save to library (Discard sends nothing); not saved on the phone |
 | What each scan is of (which foot, sole up or a foam print), the date, your phone model and iOS version | So the studio can tell scans apart and read them the right way | With the scan on your iPhone |
 | A bathroom-scale reading, if you enter one: how much weight was on the foot during a loaded scan | The studio needs it to read a loaded foot scan | With the scan on your iPhone |
-| The address and key of your studio | To send scans to it | The address in the app's settings; the key in the iPhone's Keychain, on this phone only |
+| The address and key of your studio | To send scans to it | The address in the app's settings; the key in the iPhone's Keychain, on this phone only. If you connect from a screenshot of the studio's code, that screenshot holds the key too, in Photos (and iCloud Photos, if it's on) until you delete it: the app reminds you to |
 | Your settings (for example, whether to send scans automatically) | So you're asked things once | In the app's settings on your iPhone |
 
 Your foot's shape and your weight are personal information about your body, so the app treats them

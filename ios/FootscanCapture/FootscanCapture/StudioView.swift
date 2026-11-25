@@ -109,6 +109,8 @@ struct StudioView: View {
     @State private var confirmDisconnect = false
     /// A screenshot or photo of the code, chosen instead of pointing the camera at it.
     @State private var picture: PhotosPickerItem?
+    /// A connect is under way (from the camera or a picture): one at a time, so their answers can't cross.
+    @State private var connecting = false
 
     private var canScan: Bool { DataScannerViewController.isSupported && DataScannerViewController.isAvailable }
 
@@ -146,26 +148,36 @@ struct StudioView: View {
                                 .buttonStyle(SecondaryButtonStyle())
                         }
                     }
-                    .disabled(!canScan)
+                    .disabled(!canScan || connecting)
                     // the code on this phone's own screen (a remote-desktop app), or sent as a picture
                     PhotosPicker(selection: $picture, matching: .images) {
                         Label("Use a screenshot of the code", systemImage: "photo.on.rectangle")
                             .font(.subheadline.weight(.semibold))
                     }
+                    .disabled(connecting)
                 }
                 .padding(.horizontal, 20).padding(.vertical, 10)
                 .background(.bar)
             }
             .onChange(of: picture) { _, item in
-                guard let item else { return }
+                guard let item, !connecting else { return }
                 picture = nil
-                Task { await connect(from: item) }
+                connecting = true
+                Task {
+                    await connect(from: item)
+                    connecting = false
+                }
             }
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
             .sheet(isPresented: $scanning) {
                 CodeScanner { text in
                     scanning = false
-                    Task { await studio.connect(text) }
+                    guard !connecting else { return }
+                    connecting = true
+                    Task {
+                        _ = await studio.connect(text)
+                        connecting = false
+                    }
                 }
                 .ignoresSafeArea()
             }
@@ -181,22 +193,26 @@ struct StudioView: View {
 
     /// Read the connect code from the chosen picture, and connect with it.
     private func connect(from item: PhotosPickerItem) async {
-        guard let data = try? await item.loadTransferable(type: Data.self), let image = CIImage(data: data) else {
+        studio.status = "Reading the picture…"
+        guard let data = try? await item.loadTransferable(type: Data.self),
+              let codes = await CodeInPicture.codes(inPicture: data) else {
             studio.status = "Couldn't open that picture. Choose it again, or scan the code with the camera."
             return
         }
-        guard let code = CodeInPicture.codes(in: image).first else {
+        guard let code = codes.first else {
             studio.status = CodeInPicture.noneFound
             return
         }
-        _ = await studio.connect(code)
+        if await studio.connect(code) {
+            studio.status = (studio.status.map { $0 + " " } ?? "") + CodeInPicture.deleteIt
+        }
     }
 
     private var howTo: some View {
         VStack(alignment: .leading, spacing: 12) {
             step(1, "On your computer, open the Footscan studio")
             step(2, "Go to Import 3D and tap Show the connect code")
-            step(3, "Tap the button below and point this camera at it")
+            step(3, "Tap Scan below and point this camera at it, or use a screenshot of it")
             if !canScan {
                 Text("This device can't read codes with its camera. Point the iPhone's Camera app at the code instead (it opens this app), or take a screenshot of the code and use that.")
                     .font(.footnote).foregroundStyle(Color.fsWarn)
