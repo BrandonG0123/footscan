@@ -2,6 +2,7 @@
 import { ask, esc, sendWithProgress } from "/assets/studio.js";
 const $ = (id) => document.getElementById(id);
 let file = null;
+const MAX_MODEL_BYTES = 150 * 1024 * 1024; // the studio's own limit (server.MAX_MESH_BYTES): refused before it's sent
 
 // "condition:kind" for the scans that show the sole (sole up, foam print); plain condition otherwise
 const NOT_A_FOOT = new Set(["object", "calibration", "shoe_insole"]);
@@ -105,6 +106,8 @@ $("form").addEventListener("submit", async (e) => {
   const errors = [];
   if (!file) errors.push("Choose a 3D file first.");
   else if (!["obj", "ply", "stl", "glb", "gltf", "off"].includes(ext)) errors.push("That file type can't be read. Export as OBJ or PLY.");
+  else if (file.size > MAX_MODEL_BYTES) errors.push(`That file is ${(file.size / 1048576).toFixed(0)} MB; the studio takes up to 150 MB. Export it with fewer faces (a lower detail level) and try again.`);
+  else if (!file.size) errors.push("That file is empty.");
   if ((cond === "swb" || cond === "fwb") && kind === "foot" && !$("load").value) errors.push("Enter the scale reading for a loaded scan.");
   $("errors").textContent = errors.join(" ");
   $("retake").hidden = true;

@@ -1928,7 +1928,7 @@ def test_a_refused_upload_still_gets_its_answer_when_the_body_is_large(servers):
         sender.join(10)
         sock.close()
     assert got.startswith(b"HTTP/1.1 400"), got[:200]
-    assert b"body too large" in got
+    assert b"body too large: " in got and b"MB, and this takes at most " in got  # how big, and the limit
     assert errors == []  # the whole body was taken in before the connection closed, so nothing was reset
 
 

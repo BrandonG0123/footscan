@@ -670,7 +670,8 @@ def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check
             if length <= 0:
                 raise BadRequest("empty body")
             if length > limit:
-                raise BadRequest("body too large")
+                mb = lambda n: f"{n / 1048576:.1f} MB" if n < 10 * 1048576 else f"{n / 1048576:.0f} MB"  # noqa: E731
+                raise BadRequest(f"body too large: {mb(length)}, and this takes at most {mb(limit)}")
             body = self.rfile.read(length)
             self._body_read = len(body) == length
             if not self._body_read:
