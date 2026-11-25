@@ -148,6 +148,11 @@ def test_the_status_says_what_the_studio_holds_and_which_options_are_on_never_a_
     assert st["claude"] == {"check_scans": False, "describe_shoes": False, "api_key_set": True}
     assert st["up_s"] >= 0 and st["sole_scan_preparation"]
     assert call(f"{phone}/api/studio/status")[0] == 403  # where the data folder is: the studio's own
+    newest = st["data"]["newest_capture"]
+    assert newest["id"] == cid and newest["created"]
+    __import__("time").sleep(1.1)  # (arrival times are to the second)
+    later = make_capture(op)  # the next to arrive is the newest
+    assert body(call(f"{op}/api/studio/status"))["data"]["newest_capture"]["id"] == later
 
 
 def test_the_checkout_version_is_read_from_git_files_loose_or_packed(tmp_path):

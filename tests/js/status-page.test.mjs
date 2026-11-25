@@ -74,6 +74,9 @@ test("the Status page says which 3-D model is being built, escaped, or that none
   };
   Object.assign(st.data, { folder: "C:/srv/footscan/data", captures: 3, sole_scans: 1, insoles: 1, shoes_saved: 0, submissions: 0 });
   assert.match(statusHtml(st), /3D model being built<\/dt><dd>none \(one is built at a time\)/);
+  assert.match(statusHtml(st), /Newest capture<\/dt><dd class="mono">none yet/);
+  st.data.newest_capture = { id: "LIDAR_<x>", created: "2026-11-25T09:00:00" };
+  assert.match(statusHtml(st), /href="\/studio\/captures.html#LIDAR_%3Cx%3E">LIDAR_&#60;x&#62;<\/a><br><span class="muted">2026-11-25 09:00:00/);
   st.working = { model_being_built: "captures/<b>" };
   assert.match(statusHtml(st), /3D model being built<\/dt><dd class="mono">captures\/&#60;b&#62;/);
 });

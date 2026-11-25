@@ -79,6 +79,7 @@ export function statusHtml(st) {
       ["Folder", esc(d.folder), true],
       ["Disk free", disk.error ? "couldn't be read" : `${esc(size(disk.free_bytes))} of ${esc(size(disk.total_bytes))}`],
       ["Captures", esc(d.captures)],
+      ["Newest capture", d.newest_capture ? `<a href="/studio/captures.html#${encodeURIComponent(d.newest_capture.id)}">${esc(d.newest_capture.id)}</a><br><span class="muted">${esc(String(d.newest_capture.created || "").replace("T", " "))}</span>` : "none yet", true],
       ["Sole scans", esc(d.sole_scans)],
       ["Insoles", `${esc(d.insoles)}${d.insoles_out_of_date ? ` (<a href="/studio/captures.html?attention=1">${esc(d.insoles_out_of_date)} out of date</a>)` : ""}${d.insoles_failed ? ` (${esc(d.insoles_failed)} failed)` : ""}`],
       ["3D model being built", st.working?.model_being_built ? esc(st.working.model_being_built) : "none (one is built at a time)", !!st.working?.model_being_built],

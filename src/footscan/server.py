@@ -1347,6 +1347,9 @@ def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check
                              tailscale=self.other_addresses(None) if host in ("0.0.0.0", "::") else []),
                 data=dict(folder=str(data_dir), disk=disk,
                           captures=len(captures), sole_scans=sum(1 for c in captures if _checked(c)),
+                          # the latest to arrive (the list is newest first): did the scan just sent land?
+                          newest_capture=dict(id=captures[0].get("capture_id"), created=captures[0].get("created"))
+                          if captures else None,
                           insoles=len(insoles), insoles_out_of_date=sum(1 for i in insoles if i.get("stale")),
                           insoles_failed=sum(1 for i in made if "error" in i),
                           shoes_saved=len(shoes_mod.listed(shoes_dir)),
