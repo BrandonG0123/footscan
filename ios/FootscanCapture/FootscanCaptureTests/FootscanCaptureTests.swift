@@ -4,6 +4,7 @@
 import AVFoundation
 import CoreImage
 import Foundation
+import RealityKit
 import Testing
 import UIKit
 import WebKit
@@ -789,6 +790,19 @@ struct CaptureCoachingTests {
         let another = tips.shouldSay("Move a little closer.", at: t0 + 1)  // another tip isn't held back
         let later = tips.shouldSay("Slow down a little.", at: t0 + TipRepeats.quiet)
         #expect(first && !again && another && later)
+    }
+
+    @Test func losingTheSubjectAndOverCapturingAreSaid() {
+        #expect(CaptureCoaching.tip([.objectNotDetected]) == "Lost track. Point the phone back at it.")
+        #expect(CaptureCoaching.tip([.overCapturing]) == "Plenty from here. Move on round to a new angle.")
+        #expect(CaptureCoaching.tip([]) == nil)
+    }
+
+    @Test func theTipMostWorthActingOnWins() {
+        #expect(CaptureCoaching.tip([.overCapturing, .environmentTooDark]) == "Too dark. Turn on more lights.")
+        #expect(CaptureCoaching.tip([.objectTooClose, .movingTooFast]) == "Slow down a little.")
+        #expect(CaptureCoaching.tip([.objectTooFar, .objectNotDetected]) == "Lost track. Point the phone back at it.")
+        #expect(CaptureCoaching.tip([.overCapturing, .outOfFieldOfView]) == "Keep it in the middle of the screen.")
     }
 }
 

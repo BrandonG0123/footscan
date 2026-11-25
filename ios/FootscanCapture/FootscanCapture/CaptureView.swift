@@ -436,16 +436,7 @@ private struct Controls: View {
     }
 
     /// Object Capture's own warnings, in footscan's words. The most useful one wins.
-    private var feedbackText: String? {
-        let f = session.feedback
-        if f.contains(.environmentTooDark) { return "Too dark. Turn on more lights." }
-        if f.contains(.environmentLowLight) { return "A bit dark. More light helps." }
-        if f.contains(.movingTooFast) { return "Slow down a little." }
-        if f.contains(.objectTooClose) { return "Step back a little." }
-        if f.contains(.objectTooFar) { return "Move a little closer." }
-        if f.contains(.outOfFieldOfView) { return "Keep it in the middle of the screen." }
-        return nil
-    }
+    private var feedbackText: String? { CaptureCoaching.tip(session.feedback) }
 }
 
 /// Three dots and labels: point at it, fit the box, walk round.
@@ -475,6 +466,23 @@ private struct StepDots: View {
 
 /// What the capture says beyond Object Capture's own coaching.
 enum CaptureCoaching {
+    /// Object Capture's own warnings, in footscan's words: the one most worth acting on first, or nil for none.
+    /// Light first (nothing else helps in the dark), then the ones that spoil the photos being taken now, then
+    /// the one that only wastes time.
+    static func tip(_ f: Set<ObjectCaptureSession.Feedback>) -> String? {
+        if f.contains(.environmentTooDark) { return "Too dark. Turn on more lights." }
+        if f.contains(.environmentLowLight) { return "A bit dark. More light helps." }
+        if f.contains(.movingTooFast) { return "Slow down a little." }
+        // it has lost what it was scanning: photos now don't add to the model
+        if f.contains(.objectNotDetected) { return "Lost track. Point the phone back at it." }
+        if f.contains(.objectTooClose) { return "Step back a little." }
+        if f.contains(.objectTooFar) { return "Move a little closer." }
+        if f.contains(.outOfFieldOfView) { return "Keep it in the middle of the screen." }
+        // enough from this angle: more photos here only fill the phone
+        if f.contains(.overCapturing) { return "Plenty from here. Move on round to a new angle." }
+        return nil
+    }
+
     /// A warning when the phone is hot enough for iOS to slow it down; nil when it's fine.
     static func thermalWarning(_ state: ProcessInfo.ThermalState) -> String? {
         switch state {
