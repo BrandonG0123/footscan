@@ -449,6 +449,17 @@ struct IncompleteScans {
         }
     }
 
+    @Test func aStudioFaultKeepsTheStudiosWordsAndSaysTheScanIsStillHere() {
+        let fault = StudioClient.Failure.from(status: 503, json: ["error": "disk full"])
+        guard case .troubled("disk full") = fault else {
+            Issue.record("a 5xx with the studio's words should be its own fault, in its words"); return
+        }
+        let words = fault.errorDescription ?? ""
+        #expect(words.contains("disk full"))
+        #expect(words.contains("still on this phone"))  // nothing to scan again, unlike a refusal
+        #expect(!words.hasPrefix("The studio said no"))
+    }
+
     @Test func theStudiosStepsForTheNextScanAreRead() throws {
         let json: [String: Any] = [
             "error": "The studio didn't keep this scan",
