@@ -56,7 +56,7 @@ struct ScanDetailView: View {
         .confirmationDialog("Delete this scan from the phone?", isPresented: $confirmDelete, titleVisibility: .visible) {
             Button("Delete", role: .destructive) { library.delete(scan); dismiss() }
         } message: {
-            Text(rec?.studioCaptureID == nil ? "Its photos and model will be gone." : "The copy in the studio stays.")
+            Text(scan.deleteWarning)
         }
         .onAppear { if let l = rec?.loadKg { loadText = String(l) } }
         // a scan built before the phone checked models (or by an older check) is checked when it's opened
@@ -160,6 +160,7 @@ struct ScanDetailView: View {
         default:
             if scan.hasModel && !scan.hasOBJ { return "Built, but the copy for the studio wasn't saved" }
             if scan.hasModel { return rec?.modelSeconds.map { "Built on the phone in \(Int($0)) s" } ?? "Built on the phone" }
+            if scan.photoCount > 0 && rec?.stoppedEarly != nil { return "Not built: the scan was stopped before the end" }
             return scan.photoCount > 0 ? "Not built yet" : "Nothing to build from"
         }
     }

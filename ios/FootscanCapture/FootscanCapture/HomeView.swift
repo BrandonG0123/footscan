@@ -63,6 +63,8 @@ struct HomeView: View {
     @State private var findingStudio: Subject?
     /// Scanning again after a refusal: what to change, for the get-ready sheet and the camera.
     @State private var retake: [RetakeAdvice] = []
+    /// Delete, from a card's long-press menu: asked first, as on the scan's own page.
+    @State private var deleting: Scan?
 
     struct PrepRequest: Identifiable {
         let subject: Subject
@@ -140,8 +142,17 @@ struct HomeView: View {
             }, onCancel: {
                 capturing = nil
                 retake = []
+                // cancelled before the first photo: nothing to keep, so no "Empty" card is left behind
+                if scan.keptNothing { ScanStore.delete(scan) }
                 library.reload()
             })
+        }
+        .confirmationDialog("Delete this scan from the phone?",
+                            isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } }),
+                            titleVisibility: .visible, presenting: deleting) { scan in
+            Button("Delete", role: .destructive) { withAnimation { library.delete(scan) } }
+        } message: { scan in
+            Text(scan.deleteWarning)
         }
     }
 
@@ -268,7 +279,7 @@ struct HomeView: View {
                             .scrollReveal()
                             .contextMenu {
                                 if scan.hasOBJ { ShareLink(item: scan.obj) { Label("Share model.obj", systemImage: "square.and.arrow.up") } }
-                                Button(role: .destructive) { withAnimation { library.delete(scan) } } label: {
+                                Button(role: .destructive) { deleting = scan } label: {
                                     Label("Delete", systemImage: "trash")
                                 }
                                 .disabled(library.work[scan.folder] != nil)
@@ -292,7 +303,7 @@ struct HomeView: View {
                 let what = r.nextTime.map(\.title).joined(separator: ". ")
                 return (s, "Scan your \(r.subject.label.lowercased()) again", what + ". Tap to see what to change.")
             }
-            if s.photoCount > 0 && !s.hasOBJ && CaptureMethod.lidarAvailable {
+            if s.waitsToBuild && CaptureMethod.lidarAvailable {
                 return (s, "Finish your \(r.subject.label.lowercased()) scan", "Its 3D model hasn't been built yet.")
             }
             if studio.client != nil, s.hasOBJ, r.studioCaptureID == nil, r.subject.needsScale, r.loadKg == nil {
@@ -501,6 +512,8 @@ struct ScanStatus: View {
                     Chip(text: "Sent to studio", symbol: "checkmark.circle.fill", tint: .fsOK, soft: .fsOKSoft)
                 } else if scan.hasModel {
                     Chip(text: "Model ready", symbol: "cube.fill")
+                } else if rec?.stoppedEarly != nil && scan.photoCount > 0 {
+                    Chip(text: "Stopped early", symbol: "stop.circle", tint: .fsMuted, soft: .fsSurface2)
                 } else if scan.photoCount > 0 {
                     Chip(text: "Photos only", symbol: "photo.stack", tint: .fsMuted, soft: .fsSurface2)
                 } else {

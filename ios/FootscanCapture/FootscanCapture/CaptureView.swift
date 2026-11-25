@@ -28,6 +28,9 @@ struct CaptureView: View {
     @State private var allSides = false
     @State private var startError: String?
     @State private var releaseScreen: (() -> Void)?
+    /// The X was tapped after photos were taken: ask before ending the scan (a helper's thumb can hit it halfway
+    /// round a foot, and the person scanned may have gone by the time anyone notices).
+    @State private var confirmCancel = false
 
     var body: some View {
         ZStack {
@@ -42,10 +45,10 @@ struct CaptureView: View {
                         .clipShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
                         .overlay(alignment: .top) {
                             Controls(session: session, subject: scan.record?.subject ?? .other, retake: retake, passes: $passes,
-                                     allSides: $allSides, part: .top, onCancel: cancel)
+                                     allSides: $allSides, part: .top, onCancel: askCancel)
                         }
                     Controls(session: session, subject: scan.record?.subject ?? .other, retake: retake, passes: $passes,
-                             allSides: $allSides, part: .panel, onCancel: cancel)
+                             allSides: $allSides, part: .panel, onCancel: askCancel)
                 }
                 .task { await follow(session) }
             } else if let startError {
@@ -63,6 +66,17 @@ struct CaptureView: View {
         }
         .onDisappear { releaseScreen?(); releaseScreen = nil }
         .statusBarHidden()
+        .confirmationDialog("Stop this scan?", isPresented: $confirmCancel, titleVisibility: .visible) {
+            Button("Stop scanning", role: .destructive, action: cancel)
+            Button("Keep scanning", role: .cancel) {}
+        } message: {
+            Text("The \(session?.numberOfShotsTaken ?? 0) photos taken so far stay on the phone, but this scan won't go on from here.")
+        }
+    }
+
+    /// Before any photo there's nothing to lose: cancel at once. After, ask first.
+    private func askCancel() {
+        if (session?.numberOfShotsTaken ?? 0) > 0 { confirmCancel = true } else { cancel() }
     }
 
     private func start() {
@@ -105,6 +119,13 @@ struct CaptureView: View {
     }
 
     private func cancel() {
+        if let session, session.numberOfShotsTaken > 0, var rec = scan.record {
+            // stopped partway on purpose: kept, but home doesn't ask for it to be built (ScanRecord.stoppedEarly)
+            rec.stoppedEarly = Date()
+            rec.shotsTaken = session.numberOfShotsTaken
+            rec.scanPasses = passes
+            scan.save(rec)
+        }
         session?.cancel()
         session = nil
         onCancel()

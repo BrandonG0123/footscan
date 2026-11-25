@@ -171,6 +171,10 @@ struct ScanRecord: Codable {
     /// What the phone's own check (ScanCheck) found once the model was built. A scan it says to scan again isn't
     /// sent by itself; it goes only if the person taps Send anyway.
     var phoneCheck: PhoneCheck?
+    /// Set when the person stopped the capture partway (the X, then Stop scanning) after photos were taken. The
+    /// photos stay, but the home screen doesn't ask for its model to be built: a scan stopped on purpose is
+    /// usually one they meant to start again. Its page can still build it.
+    var stoppedEarly: Date?
     var units = "metres, Y up (Apple Object Capture's own frame). The studio's Import 3D converts to millimetres."
     var note = "Footscan LiDAR test capture. Not a medical device."
 }
@@ -257,6 +261,18 @@ struct Scan: Identifiable, Hashable {
     }
 
     var hasModel: Bool { FileManager.default.fileExists(atPath: usdz.path()) }
+
+    /// What deleting this scan from the phone loses, said in the confirmation before it goes.
+    var deleteWarning: String {
+        record?.studioCaptureID == nil ? "Its photos and model will be gone." : "The copy in the studio stays."
+    }
+
+    /// Photos and no model yet, and not a capture the person stopped partway: the home screen asks for it to be
+    /// finished (built).
+    var waitsToBuild: Bool { photoCount > 0 && !hasOBJ && record?.stoppedEarly == nil }
+
+    /// Nothing was kept: no photos and no model (a capture cancelled before its first photo leaves this).
+    var keptNothing: Bool { photoCount == 0 && !hasModel }
     var hasOBJ: Bool { FileManager.default.fileExists(atPath: obj.path()) }
 
     var photoCount: Int {
