@@ -549,6 +549,16 @@ struct ScaleReadingTests {
     @Test func aCommaIsADecimalMark() {
         #expect(ScaleReading.kilograms("68,5", unit: .kg) == 68.5)
         #expect(ScaleReading.kilograms(" 68.5 ", unit: .kg) == 68.5)
+        #expect(ScaleReading.kilograms("68.5\n", unit: .kg) == 68.5) // pasted with its line end
+        #expect(ScaleReading.kilograms(".5", unit: .kg) == 0.5)
+    }
+
+    @Test func onlyPlainNumbersAreReadings() {
+        // Double() reads these too: pasted text mustn't become a load
+        #expect(ScaleReading.kilograms("0x40", unit: .kg) == nil)
+        #expect(ScaleReading.kilograms("6.85e1", unit: .kg) == nil)
+        #expect(ScaleReading.kilograms("1.2.3", unit: .kg) == nil)
+        #expect(ScaleReading.kilograms("+68", unit: .kg) == nil)
     }
 
     @Test func readingsTheStudioWouldRefuseAreNotTaken() {
@@ -568,11 +578,18 @@ struct ScaleReadingTests {
         #expect(ScaleReading.text(kilograms: kg, unit: .lb) == "150")
         #expect(ScaleReading.text(kilograms: 68.5, unit: .kg) == "68.5")
         #expect(ScaleReading.text(kilograms: 70, unit: .kg) == "70")
+        // sending a reopened scan again sends the same number, not one rounded on the way into the box
+        #expect(ScaleReading.kilograms(ScaleReading.text(kilograms: 68.25, unit: .kg), unit: .kg) == 68.25)
+        #expect(ScaleReading.kilograms(ScaleReading.text(kilograms: kg, unit: .lb), unit: .lb) == kg)
+    }
+
+    @Test func theLineUnderTheBoxShowsWhatIsSent() {
+        #expect(ScaleReading.sentAs(ScaleReading.kilograms("150", unit: .lb)!) == "Sent to the studio as 68.04 kg")
     }
 
     @Test func theDetailsRowGivesKilogramsAndPoundsWhenOnPounds() {
-        #expect(ScaleReading.detail(kilograms: 68.04, unit: .kg) == "68.0 kg")
-        #expect(ScaleReading.detail(kilograms: 68.04, unit: .lb) == "68.0 kg (150 lb)")
+        #expect(ScaleReading.detail(kilograms: 68.04, unit: .kg) == "68.04 kg")
+        #expect(ScaleReading.detail(kilograms: 68.04, unit: .lb) == "68.04 kg (150 lb)")
     }
 
     @Test func theUnitStartsFromThePhonesRegion() {

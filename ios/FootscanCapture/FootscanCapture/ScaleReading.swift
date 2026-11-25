@@ -28,30 +28,37 @@ enum ScaleReading {
     /// The studio refuses a load of this or more (server.py's parse_load takes more than 0, less than 400 kg).
     static let studioLimitKg = 400.0
 
-    /// The typed reading in kilograms, to 0.01 kg, or nil when it isn't a number the studio would take. Accepts a
-    /// comma as the decimal mark ("68,5"), as a phone set to another region's keyboard types it. Rounding to 0.01 kg
-    /// (far finer than any bathroom scale) keeps the studio's pages from showing 68.0388555 kg for 150 lb, and still
+    /// The typed reading in kilograms, to 0.01 kg, or nil when it isn't a number the studio would take. Only plain
+    /// digits with one decimal mark: a comma counts as one ("68,5"), as a phone set to another region's keyboard
+    /// types it; hex or exponent forms that Double() also reads ("0x40", "6e1") don't. Rounding to 0.01 kg (far
+    /// finer than any bathroom scale) keeps the studio's pages from showing 68.0388555 kg for 150 lb, and still
     /// shows 150 lb again when the scan is opened.
     static func kilograms(_ text: String, unit: ScaleUnit) -> Double? {
-        let trimmed = text.trimmingCharacters(in: .whitespaces).replacingOccurrences(of: ",", with: ".")
-        guard let value = Double(trimmed), value.isFinite else { return nil }
+        let plain = text.trimmingCharacters(in: .whitespacesAndNewlines).replacingOccurrences(of: ",", with: ".")
+        guard plain.wholeMatch(of: /[0-9]+(\.[0-9]*)?|\.[0-9]+/) != nil, let value = Double(plain) else { return nil }
         let kg = (unit.kilograms(value) * 100).rounded() / 100
         return kg > 0 && kg < studioLimitKg ? kg : nil
     }
 
-    /// A saved reading shown back in `unit`, to one decimal place without a trailing ".0" ("68.5", "150").
-    static func text(kilograms kg: Double, unit: ScaleUnit) -> String {
-        let v = (unit.fromKilograms(kg) * 10).rounded() / 10
-        return v == v.rounded() ? String(Int(v)) : String(format: "%.1f", v)
-    }
+    /// A saved reading shown back in `unit`, to 0.01 without trailing zeros ("68.25", "150"), so that sending it
+    /// again sends the same number rather than one rounded on the way back into the box.
+    static func text(kilograms kg: Double, unit: ScaleUnit) -> String { plain(unit.fromKilograms(kg)) }
 
-    /// What the reading comes to in kilograms, shown under the box when the unit is pounds, so the number the
-    /// studio will get is on screen before Send.
-    static func sentAs(_ kg: Double) -> String { String(format: "Sent to the studio as %.1f kg", kg) }
+    /// What the reading comes to in kilograms, shown under the box, so the number the studio will get is on
+    /// screen before Send whichever unit is set (switching the unit keeps the number as typed and changes its
+    /// meaning: this line shows that).
+    static func sentAs(_ kg: Double) -> String { "Sent to the studio as \(plain(kg)) kg" }
 
     /// The Details row: kilograms, and the pounds too when that's the unit in use.
     static func detail(kilograms kg: Double, unit: ScaleUnit) -> String {
-        let inKg = String(format: "%.1f kg", kg)
-        return unit == .kg ? inKg : "\(inKg) (\(text(kilograms: kg, unit: .lb)) lb)"
+        unit == .kg ? "\(plain(kg)) kg" : "\(plain(kg)) kg (\(text(kilograms: kg, unit: .lb)) lb)"
+    }
+
+    /// To 0.01, without trailing zeros: 68.04 → "68.04", 68.5 → "68.5", 150.0011 → "150".
+    private static func plain(_ v: Double) -> String {
+        var s = String(format: "%.2f", v)
+        while s.hasSuffix("0") { s.removeLast() }
+        if s.hasSuffix(".") { s.removeLast() }
+        return s
     }
 }
