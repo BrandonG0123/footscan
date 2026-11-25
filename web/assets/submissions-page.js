@@ -34,11 +34,12 @@ function render() {
     const use = s.survey?.sport || { everyday: "Everyday", on_feet: "On feet all day", sport: "Sport" }[s.survey?.use] || "—";
     const st = STATUS[s.status] || { label: s.status, cls: "" };
     const href = `/studio/submission.html?id=${encodeURIComponent(s.id)}`;
-    return `<tr data-href="${href}"><td><a href="${href}">${esc(s.name)}</a></td>
-      <td>${fmtDate(s.submitted || s.created)}</td><td class="mono">${done}/${scans.length}</td>
-      <td class="mono">${photos}</td><td>${esc(use)}</td>
-      <td>${before ? `<span class="badge stop">${before} before wear</span>` : "—"}</td>
-      <td><span class="badge ${st.cls}">${st.label}</span></td></tr>`;
+    // data-label: a phone shows each row as a small card, every value under its column's name (index.html's CSS)
+    return `<tr data-href="${href}"><td data-label="Name"><a href="${href}">${esc(s.name)}</a></td>
+      <td data-label="Sent">${fmtDate(s.submitted || s.created)}</td><td data-label="Scans" class="mono">${done}/${scans.length}</td>
+      <td data-label="Photos" class="mono">${photos}</td><td data-label="Use">${esc(use)}</td>
+      <td data-label="Flags">${before ? `<span class="badge stop">${before} before wear</span>` : "—"}</td>
+      <td data-label="Status"><span class="badge ${st.cls}">${st.label}</span></td></tr>`;
   }).join("");
 }
 

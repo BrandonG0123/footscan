@@ -20,6 +20,17 @@
     td a { font-weight: 650; color: var(--ink); text-decoration: none; }
     .share { display: grid; grid-template-columns: 1fr auto; gap: 12px; align-items: center; }
     @media (max-width: 560px) { .share { grid-template-columns: 1fr; } }
+    /* A phone: each submission a small card, every value under its column's name, instead of a table to scroll sideways */
+    @media (max-width: 640px) {
+      .table-wrap table { min-width: 0; background: transparent; border: 0; }
+      .table-wrap thead { display: none; }
+      .table-wrap tbody, .table-wrap tr, .table-wrap td { display: block; }
+      .table-wrap tr { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); margin-bottom: 12px; padding: 6px 0; }
+      .table-wrap td { display: grid; grid-template-columns: 7em 1fr; gap: 8px; border: 0; padding: 6px 14px; }
+      .table-wrap td[data-label]::before { content: attr(data-label); color: var(--muted); font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.06em; align-self: center; }
+      .table-wrap td > * { justify-self: start; }
+      .table-wrap td:not([data-label]) { display: block; }
+    }
   </style>
 </head>
 <body data-area="studio">

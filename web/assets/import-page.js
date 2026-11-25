@@ -1,5 +1,5 @@
 // Studio: Import a 3D scan (import.html), the iPhone app's connect code, and the calibration object's accuracy.
-import { ask, esc } from "/assets/studio.js";
+import { ask, esc, sendWithProgress } from "/assets/studio.js";
 const $ = (id) => document.getElementById(id);
 let file = null;
 
@@ -123,10 +123,12 @@ $("form").addEventListener("submit", async (e) => {
       }),
     });
     if (!made) throw new Error(created.error);
-    btn.textContent = cond === "calibration" ? "Sending and measuring…" : "Sending the model…";
-    const [sent, data] = await ask(`/api/captures/${created.id}/mesh?ext=${ext}&up=${$("up").value}`, {
+    // how much has gone up, then what the studio is doing with it (a sole scan is checked on arrival)
+    btn.textContent = "Sending the model…";
+    const [sent, data] = await sendWithProgress(`/api/captures/${created.id}/mesh?ext=${ext}&up=${$("up").value}`, {
       method: "PUT", headers: { "Content-Type": "application/octet-stream" }, body: file,
-    });
+    }, (part) => { btn.textContent = `Sending the model… ${Math.round(100 * part)}%`; },
+    () => { btn.textContent = cond === "calibration" ? "Measuring it against the object…" : "The studio is reading and checking it…"; });
     if (!sent) throw Object.assign(new Error(data.error), { retake: data.retake });
     const m = data.mesh;
     $("facts").innerHTML = [

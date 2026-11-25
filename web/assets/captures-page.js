@@ -87,6 +87,8 @@ function render() {
       ? `<img src="/api/captures/${esc(c.capture_id)}/frames/1.jpg" alt="First frame of ${esc(c.capture_id)}" loading="lazy">`
       : `<div class="noimg"></div>`;
     const status = c.status === "complete" ? `<span class="badge ok">complete</span>` : `<span class="badge warn">${esc(c.status)}</span>`;
+    // a model sent by the iPhone app or imported: no photos, so no coverage or skin texture to show
+    const imported = c.method === "imported_mesh";
     const cov = s.coverage_completeness == null ? "—" : `${Math.round(100 * s.coverage_completeness)}%`;
     return `<article class="card cap" id="${esc(c.capture_id)}">${thumb}<div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:4px">
@@ -94,12 +96,12 @@ function render() {
       <h3 class="mono">${esc(c.capture_id)}</h3>
       <dl>
         <div><dt>Session</dt><dd>${esc(c.session)}</dd></div>
-        <div><dt>Load</dt><dd>${c.load_kg == null ? "—" : esc(c.load_kg) + " kg"}</dd></div>
+        ${c.load_kg == null && imported ? "" : `<div><dt>Load</dt><dd>${c.load_kg == null ? "—" : esc(c.load_kg) + " kg"}</dd></div>`}
         ${c.mesh
           ? `<div><dt>3D model</dt><dd>${c.mesh.extents_mm[0]} × ${c.mesh.extents_mm[1]} × ${c.mesh.extents_mm[2]} mm</dd></div>`
           : `<div><dt>Frames</dt><dd>${c.frame_files?.length ?? 0}</dd></div>`}
-        <div><dt>Coverage</dt><dd>${cov}</dd></div>
-        <div><dt>Texture</dt><dd>${esc(c.method)}</dd></div>
+        ${imported ? "" : `<div><dt>Coverage</dt><dd>${cov}</dd></div>
+        <div><dt>Texture</dt><dd>${esc(c.method)}</dd></div>`}
         <div><dt>Created</dt><dd>${esc(c.created?.replace("T", " "))}</dd></div>
         ${c.accuracy && !c.accuracy.error
           ? `<div><dt>Accuracy</dt><dd>${esc(c.accuracy.median_mm)} mm typical · length ${c.accuracy.length_mm == null ? "—" : (c.accuracy.length_mm > 0 ? "+" : "") + Number(c.accuracy.length_mm).toFixed(2) + " mm"}${c.accuracy.scale_pct == null ? "" : ` · size ${c.accuracy.scale_pct > 0 ? "+" : ""}${Number(c.accuracy.scale_pct).toFixed(1)}%`}</dd></div>` : ""}

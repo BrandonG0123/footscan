@@ -47,3 +47,38 @@ export async function ask(url, init) {
   const isJson = (r.headers.get("Content-Type") || "").includes("application/json");
   return [r.ok && isJson, await answer(r), r.status];
 }
+
+// The studio key this browser was given (layout.js keeps it: ?key= once, then this device's storage), or null.
+function studioKey() {
+  try {
+    return new URL(location.href).searchParams.get("key") || localStorage.getItem("footscan.studioKey");
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Send a file with a progress report (fetch can't say how much of an upload has gone): onProgress(0..1) while
+ * it goes up, then onSent() while the studio reads it. -> [ok, data, status] as ask() gives them. Carries the
+ * studio key as layout.js's fetch does, for a browser that keeps no cookie.
+ */
+export function sendWithProgress(url, { method = "PUT", body, headers = {} } = {}, onProgress, onSent) {
+  return new Promise((resolve) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open(method, url);
+    const key = studioKey();
+    if (key) xhr.setRequestHeader("X-Studio-Key", key);
+    for (const [k, v] of Object.entries(headers)) xhr.setRequestHeader(k, v);
+    xhr.upload.addEventListener("progress", (e) => { if (e.lengthComputable) onProgress?.(e.loaded / e.total); });
+    xhr.upload.addEventListener("load", () => onSent?.());
+    xhr.addEventListener("load", async () => {
+      const type = xhr.getResponseHeader("Content-Type") || "";
+      const r = new Response(xhr.responseText, { status: xhr.status, statusText: xhr.statusText, headers: { "Content-Type": type } });
+      resolve([xhr.status >= 200 && xhr.status < 300 && type.includes("application/json"), await answer(r), xhr.status]);
+    });
+    const unreachable = () => resolve([false, { error: "the connection to the studio was lost while sending (weak Wi-Fi?): try again" }, 0]);
+    xhr.addEventListener("error", unreachable);
+    xhr.addEventListener("abort", unreachable);
+    xhr.send(body);
+  });
+}
