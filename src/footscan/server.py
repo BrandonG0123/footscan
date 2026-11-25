@@ -598,14 +598,25 @@ def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check
     errors_lock = threading.Lock()  # added to by any request's thread while the Status page reads it
 
     def model_being_built() -> str | None:
-        """The folder whose 3-D model is being built right now, from the data folder, or None."""
-        folder = runner.folder
-        if folder is None or not runner.busy():
+        """The folder whose 3-D model is being built right now, from the data folder, or None. Also one this
+        studio didn't start: a build goes on when the studio is restarted, and its status file says so."""
+        with runner.lock:  # start() sets the process and the folder together under it
+            folder = runner.folder if runner.busy() else None
+            only = runner.accuracy_only
+        if folder is None:
+            only = False
+            for st in [*captures_dir.glob("*/recon/status.json"), *submissions_dir.glob("*/*/recon/status.json")]:
+                cur = recon_jobs.read_json_or_none(st) or {}
+                if cur.get("state") == "running" and recon_jobs.pid_alive(cur.get("pid"), cur.get("at")):
+                    folder = st.parent.parent
+                    break
+        if folder is None:
             return None
         try:
-            return folder.relative_to(data_dir).as_posix()
+            name = folder.relative_to(data_dir).as_posix()
         except ValueError:
-            return folder.name
+            name = folder.name
+        return f"{name} (its accuracy figures only)" if only else name
 
     def errors_newest_first() -> list[dict]:
         with errors_lock:

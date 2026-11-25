@@ -68,7 +68,8 @@ function start() {
   $("rows").addEventListener("click", (e) => {
     const tr = e.target.closest("tr[data-href]");
     // followed as its link is (which carries the studio key on a phone without the cookie)
-    if (tr && !e.target.closest("a")) tr.querySelector("a")?.click();
+    // (a click with Cmd, Ctrl or Shift is left alone: the name's own link opens a new tab or window that way)
+    if (tr && !e.target.closest("a") && !(e.metaKey || e.ctrlKey || e.shiftKey || e.altKey)) tr.querySelector("a")?.click();
   });
   $("tabs").addEventListener("click", (e) => {
     const b = e.target.closest("button");

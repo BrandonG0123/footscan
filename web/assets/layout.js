@@ -26,6 +26,7 @@ const NAV = {
 };
 
 import { addPageGlow, initReveal } from "./reveal.js";
+import { withStudioKey } from "./studio.js";
 
 const KEY_STORE = "footscan.studioKey";
 
@@ -54,10 +55,7 @@ function useStudioKey(key) {
     }
     return fetchWithKey(input, init);
   };
-  const withKey = (a) => {  // before any #, where the studio sees it
-    const u = new URL(a.href);
-    if (!u.searchParams.has("key")) { u.searchParams.set("key", key); a.href = u.href; }
-  };
+  const withKey = (a) => { a.href = withStudioKey(a.href, key); };  // before any #, the rest left as it was
   addEventListener("DOMContentLoaded", () => { for (const a of document.querySelectorAll('a[href^="/studio/"]')) withKey(a); });
   // links a page writes later (library cards, the Status page's counts) get it as they're followed or copied
   const later = (e) => { const a = e.target.closest?.('a[href^="/studio/"]'); if (a) withKey(a); };

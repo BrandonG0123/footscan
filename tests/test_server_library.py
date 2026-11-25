@@ -195,7 +195,7 @@ def test_a_model_replaced_while_its_picture_is_drawn_is_drawn_again_never_kept_u
 def test_the_status_says_which_3d_model_is_being_built_while_it_is(servers, monkeypatch):
     from footscan import recon_jobs
 
-    op, _, _ = servers
+    op, _, data = servers
 
     class Building:  # the reconstruction's process, still running until told otherwise
         done = None
@@ -214,6 +214,16 @@ def test_the_status_says_which_3d_model_is_being_built_while_it_is(servers, monk
     assert working() == {"model_being_built": f"captures/{cid}"}
     Building.done = 0  # finished
     assert working() == {"model_being_built": None}
+    # one this studio didn't start (it was restarted while a build went on): its status file says who builds it
+    import json
+    import os
+    import time
+
+    other = make_capture(op)
+    (data / "captures" / other / "recon").mkdir()
+    (data / "captures" / other / "recon" / "status.json").write_text(
+        json.dumps({"stage": "matching", "state": "running", "at": time.time(), "pid": os.getpid()}))
+    assert working() == {"model_being_built": f"captures/{other}"}
 
 
 def test_the_status_says_when_the_iphone_app_last_got_in_and_when_it_was_turned_away_for_a_wrong_key(servers):
