@@ -902,6 +902,35 @@ struct ScanNames {
     }
 }
 
+// MARK: - a capture that stopped by itself
+
+@Suite("A capture that stopped by itself")
+struct CaptureStoppedWords {
+    @Test func photosSavedSoFarAreSaidToBeKeptAndTheErrorComesLast() {
+        let w = CaptureStopped.words(photos: 37, error: "Session interrupted", free: 5_000_000_000, hot: false)
+        #expect(w.body.hasPrefix("The 37 photos taken so far are kept"))
+        #expect(w.cause == nil)
+        #expect(w.detail == "What the phone said: Session interrupted")
+    }
+
+    @Test func withNoPhotosNothingIsSaidToBeKeptAndOnePhotoIsNotEnough() {
+        #expect(CaptureStopped.words(photos: 0, error: "x", free: nil, hot: false).body.hasPrefix("No photos were saved"))
+        #expect(CaptureStopped.words(photos: 1, error: "x", free: nil, hot: false).body.hasPrefix("The 1 photo taken so far is kept"))
+    }
+
+    @Test func aHotPhoneIsNamedBeforeSpace() {
+        let w = CaptureStopped.words(photos: 5, error: "x", free: 100_000_000, hot: true)
+        #expect(w.cause?.hasPrefix("The phone is hot") == true)
+    }
+
+    @Test func spaceIsNamedOnlyWhenThePhoneIsNearlyFull() {
+        // under the 1.5 GB a capture asks for at the start, but not nearly full: not blamed
+        #expect(CaptureStopped.words(photos: 5, error: "x", free: 1_200_000_000, hot: false).cause == nil)
+        #expect(CaptureStopped.words(photos: 5, error: "x", free: 100_000_000, hot: false).cause?.hasPrefix("The phone is nearly full") == true)
+        #expect(CaptureStopped.words(photos: 5, error: "x", free: nil, hot: false).cause == nil)
+    }
+}
+
 // MARK: - free space
 
 @Suite("Free space before a capture")

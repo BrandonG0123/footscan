@@ -28,6 +28,8 @@ struct CaptureView: View {
     /// A lap has been completed: Object Capture's ring has photos from every side. Finish waits for this.
     @State private var allSides = false
     @State private var startError: String?
+    /// Object Capture stopped by itself partway: what to say about it.
+    @State private var stopped: CaptureStopped.Words?
     @State private var releaseScreen: (() -> Void)?
     /// The X was tapped after photos were taken: ask before ending the scan (a helper's thumb can hit it halfway
     /// round a foot, and the person scanned may have gone by the time anyone notices).
@@ -69,6 +71,24 @@ struct CaptureView: View {
                              allSides: $allSides, part: .panel, onCancel: askCancel)
                 }
                 .task { await follow(session) }
+            } else if let stopped {
+                VStack(spacing: 14) {
+                    Text(stopped.title).font(.title3.weight(.bold))
+                    Text(stopped.body)
+                    if let cause = stopped.cause {
+                        Label(cause, systemImage: "exclamationmark.triangle.fill").foregroundStyle(Color.fsWarn)
+                    }
+                    Text(stopped.detail).font(.footnote).foregroundStyle(.white.opacity(0.6))
+                    Button("Back") {
+                        // nothing was kept: no empty scan left in the list
+                        if scan.photoCount == 0 { ScanStore.delete(scan) }
+                        onCancel()
+                    }
+                    .buttonStyle(.borderedProminent).padding(.top, 6)
+                }
+                .foregroundStyle(.white)
+                .multilineTextAlignment(.center)
+                .padding(24)
             } else if let startError {
                 VStack(spacing: 16) {
                     Text(startError).foregroundStyle(.white).multilineTextAlignment(.center)
@@ -133,10 +153,19 @@ struct CaptureView: View {
                 onDone(scan)
                 return
             case .failed(let error):
+                // the photos actually saved (what the scan's page builds from), not the session's count, which can
+                // include shots it hadn't finished writing when it stopped
+                let photos = scan.photoCount
                 var rec = scan.record
                 rec?.error = error.localizedDescription
+                rec?.shotsTaken = photos
+                rec?.scanPasses = passes
                 if let rec { scan.save(rec) }
-                startError = "The capture stopped: \(error.localizedDescription)"
+                stopped = CaptureStopped.words(photos: photos, error: error.localizedDescription,
+                                               free: DiskSpace.available(),
+                                               hot: ProcessInfo.processInfo.thermalState.rawValue
+                                                   >= ProcessInfo.ThermalState.serious.rawValue)
+                UINotificationFeedbackGenerator().notificationOccurred(.error)
                 self.session = nil
                 return
             default:
@@ -157,6 +186,41 @@ struct CaptureView: View {
         session?.cancel()
         session = nil
         onCancel()
+    }
+}
+
+/// What the screen says when Object Capture stops by itself partway (it failed: not the person's own Stop). Its
+/// own error is technical, so it comes last; first what was kept, what to do, and a likely cause the phone can see.
+enum CaptureStopped {
+    struct Words: Equatable {
+        var title: String
+        var body: String
+        /// A cause the phone can see for itself (short of space, too hot), when there is one.
+        var cause: String?
+        var detail: String
+    }
+
+    /// Free space under this, after a capture has written its photos, makes a full phone a likely cause. A judgment,
+    /// not measured: a capture's photos take a few hundred MB, and the 1.5 GB asked for before a capture
+    /// (DiskSpace.neededForCapture) is often gone by the end of one that had nothing to do with space.
+    static let nearlyFull: Int64 = 300_000_000
+
+    /// `photos`: saved in the scan's folder. `free`: bytes free now (nil: not known). `hot`: thermal state serious or
+    /// critical, which outranks space (it's seen for certain; space only makes a cause likely).
+    static func words(photos: Int, error: String, free: Int64?, hot: Bool) -> Words {
+        let body = switch photos {
+        case 0: "No photos were saved, so nothing was kept. Go back and scan again."
+        case 1: "The 1 photo taken so far is kept with the scan, but a model needs many more. Go back and scan again."
+        default: "The \(photos) photos taken so far are kept with the scan. Its page can build a model from them, though "
+            + "a capture stopped partway may be missing a side. Or go back and scan again."
+        }
+        let cause: String? = if hot {
+            "The phone is hot, and iOS slows a hot phone down. Let it cool, out of direct sun, before scanning again."
+        } else if let free, free < nearlyFull {
+            "The phone is nearly full (\(ByteCountFormatter.string(fromByteCount: free, countStyle: .file)) free). Delete "
+                + "some old scans (Settings shows how much they use) or other files before scanning again."
+        } else { nil }
+        return Words(title: "The capture stopped", body: body, cause: cause, detail: "What the phone said: \(error)")
     }
 }
 
