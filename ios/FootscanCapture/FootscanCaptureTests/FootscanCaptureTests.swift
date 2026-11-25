@@ -588,19 +588,27 @@ struct SharedFileNames {
 
     @Test func aScanIsNamedForWhatItIsAndWhenItWasTaken() {
         let rec = ScanRecord(subject: .rightSole, created: taken, device: "test", systemVersion: "0", appVersion: "0")
-        #expect(SharedFile.fileName(for: rec, ext: "obj", timeZone: utc) == "\(rec.subject.label) 2026-11-18 1106.obj")
+        #expect(SharedFile.fileName(for: rec, ext: "obj", timeZone: utc) == "\(rec.subject.label) 2026-11-18 110640.obj")
     }
 
     @Test func aNamedScanUsesItsName() {
         var rec = ScanRecord(subject: .leftSole, created: taken, device: "test", systemVersion: "0", appVersion: "0")
         rec.name = "Sam, left"
-        #expect(SharedFile.fileName(for: rec, ext: "usdz", timeZone: utc) == "Sam, left 2026-11-18 1106.usdz")
+        #expect(SharedFile.fileName(for: rec, ext: "usdz", timeZone: utc) == "Sam, left 2026-11-18 110640.usdz")
     }
 
     @Test func charactersAFileNameCantHoldBecomeSpaces() {
         var rec = ScanRecord(subject: .leftSole, created: taken, device: "test", systemVersion: "0", appVersion: "0")
         rec.name = "Sam/Alex: left?"
-        #expect(SharedFile.fileName(for: rec, ext: "obj", timeZone: utc) == "Sam Alex left 2026-11-18 1106.obj")
+        #expect(SharedFile.fileName(for: rec, ext: "obj", timeZone: utc) == "Sam Alex left 2026-11-18 110640.obj")
+    }
+
+    @Test func aNameStartingWithADotDoesNotMakeAHiddenFile() {
+        var rec = ScanRecord(subject: .leftSole, created: taken, device: "test", systemVersion: "0", appVersion: "0")
+        rec.name = "..Sam"
+        #expect(SharedFile.fileName(for: rec, ext: "obj", timeZone: utc) == "Sam 2026-11-18 110640.obj")
+        rec.name = "."
+        #expect(SharedFile.fileName(for: rec, ext: "obj", timeZone: utc) == "Scan 2026-11-18 110640.obj")
     }
 
     @Test func aScanWithNoRecordKeepsTheFilesOwnName() {
