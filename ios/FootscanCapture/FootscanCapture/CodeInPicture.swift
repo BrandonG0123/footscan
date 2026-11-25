@@ -18,7 +18,7 @@ enum CodeInPicture {
     /// The codes in a picture file's bytes, read off the main thread; nil if the bytes aren't a picture.
     nonisolated static func codes(inPicture data: Data) async -> [String]? {
         await Task.detached(priority: .userInitiated) {
-            CIImage(data: data).map { codes(in: $0) }
+            CIImage(data: data).map { CodeInPicture.codes(in: $0) }
         }.value
     }
 
