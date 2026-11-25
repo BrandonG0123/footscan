@@ -36,6 +36,10 @@ struct PhotoCaptureView: View {
     @State private var unsavedPhotos = 0
     @State private var confirmDiscard = false
     @State private var stillSending = false
+    /// The screen stays on while this page is open: the studio's page takes its photos by itself as the phone goes
+    /// round, so nobody touches the screen, and iOS would dim and lock it partway (ending the camera). The page
+    /// asks for this itself too (a web wake lock), but a web view in an app can't be relied on to honour that.
+    @State private var releaseScreen: (() -> Void)?
 
     private var url: URL {
         var c = URLComponents(url: link.url.appending(path: "studio/capture.html"), resolvingAgainstBaseURL: false)!
@@ -54,16 +58,27 @@ struct PhotoCaptureView: View {
                 if loading && failure == nil { ProgressView("Opening the studio's camera…") }
                 if let failure {
                     VStack(spacing: 12) {
-                        Image(systemName: "wifi.exclamationmark").font(.largeTitle).foregroundStyle(Color.fsWarn)
+                        Image(systemName: failure == PhotoPageWords.pageStopped ? "memorychip" : "wifi.exclamationmark")
+                            .font(.largeTitle).foregroundStyle(Color.fsWarn)
                         Text(failure).multilineTextAlignment(.center).foregroundStyle(Color.fsMuted)
+                        // the page again, from the start, without going back to the home screen
+                        Button("Try again") {
+                            self.failure = nil
+                            loading = true
+                            handle.open(url)
+                        }
+                        .buttonStyle(.borderedProminent)
                     }
                     .padding(30)
+                    .background(Color.fsBackground)
                 }
             }
             .navigationTitle("Photos + mat")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { Task { await done() } } } }
             .interactiveDismissDisabled()
+            .onAppear { if releaseScreen == nil { releaseScreen = KeepAlive.screen() } }
+            .onDisappear { releaseScreen?(); releaseScreen = nil }
             .confirmationDialog("Discard \(unsavedPhotos) photo\(unsavedPhotos == 1 ? "" : "s")?", isPresented: $confirmDiscard,
                                 titleVisibility: .visible) {
                 Button("Discard and close", role: .destructive, action: onClose)
@@ -88,10 +103,66 @@ struct PhotoCaptureView: View {
     }
 }
 
+enum StudioPage {
+    /// What the studio's capture page may use: the camera, and only the studio's own page (never another site's,
+    /// and never the microphone). Asked by WebKit each time the page wants the camera. "The studio's own page"
+    /// means the same scheme, host and port as the studio link: another program on the same computer (a different
+    /// port) is another site.
+    static func mediaDecision(scheme: String, host: String, port: Int, studio: URL,
+                              type: WKMediaCaptureType) -> WKPermissionDecision {
+        guard type == .camera, let studioScheme = studio.scheme?.lowercased(), studioScheme == "https",
+              scheme.lowercased() == studioScheme, host.lowercased() == studio.host()?.lowercased(),
+              portOrDefault(port, scheme: studioScheme) == portOrDefault(studio.port ?? 0, scheme: studioScheme)
+        else { return .deny }
+        return .grant
+    }
+
+    /// WebKit gives 0 for a page on its scheme's default port; a URL gives no port at all.
+    private static func portOrDefault(_ port: Int, scheme: String) -> Int {
+        port != 0 ? port : (scheme == "https" ? 443 : 80)
+    }
+}
+
+/// What the Photos + mat screen says when the studio's page can't be shown.
+enum PhotoPageWords {
+    static func unreachable(_ studio: String) -> String {
+        "Couldn't reach the studio at \(studio). Check Footscan is running on the studio computer and this phone can reach "
+            + "it (same Wi-Fi, or Tailscale on); if its address changed, reconnect with its code."
+    }
+
+    static let pageStopped = "The studio's page stopped: iOS ended it, which it does when the phone is short of memory. "
+        + "Photos already saved to the studio are kept there; any not yet saved are gone. Close other apps, then try again."
+
+    static func certificateChanged(_ studio: String) -> String {
+        "The studio at \(studio) answered with a different certificate from the one this phone paired with. If you "
+            + "set the studio up again, show its connect code and scan it again."
+    }
+
+    /// A cancel (NSURLErrorCancelled, or WebKit's "frame load interrupted" when a link goes to Safari instead),
+    /// rather than a load that failed.
+    static func isCancel(_ error: Error) -> Bool {
+        let e = error as NSError
+        return (e.domain == NSURLErrorDomain && e.code == NSURLErrorCancelled)
+            || (e.domain == "WebKitErrorDomain" && e.code == 102)
+    }
+
+    /// What to say when a load of the studio's page ends with `error`, or nil for nothing. A refused certificate also
+    /// ends as a cancel, so it's checked first. Any other cancel is the view's own once the page has shown (the
+    /// page is still there behind it); before that, nothing would be on screen, so it's said as unreachable.
+    static func failure(_ error: Error, pageShown: Bool, pinRefused: Bool, studio: String) -> String? {
+        if pinRefused { return certificateChanged(studio) }
+        if isCancel(error) && pageShown { return nil }
+        return unreachable(studio)
+    }
+}
+
 /// Lets the SwiftUI side ask the page about its state.
 @MainActor
 final class WebHandle {
     weak var webView: WKWebView?
+
+    /// Load the page again from the start (after it couldn't be reached, or stopped).
+    func open(_ url: URL) { webView?.load(URLRequest(url: url)) }
 
     struct State: Decodable { let uploading: Bool; let unsaved: Int }
 
@@ -139,8 +210,16 @@ private struct StudioWebView: UIViewRepresentable {
         func webView(_ webView: WKWebView, respondTo challenge: URLAuthenticationChallenge) async
             -> (URLSession.AuthChallengeDisposition, URLCredential?) {
             guard isStudio(challenge.protectionSpace.host) else { return (.cancelAuthenticationChallenge, nil) }
-            return PinnedTrust.decide(challenge, fingerprint: parent.link.fingerprint)
+            let answer = PinnedTrust.decide(challenge, fingerprint: parent.link.fingerprint)
+            if answer.0 == .cancelAuthenticationChallenge { pinRefused = true } // WebKit then reports a cancel
+            return answer
         }
+
+        /// The studio's page has loaded at least once: a cancel after that is the view's own (a link sent to Safari, a
+        /// navigation refused), and the page is still there behind it.
+        private var pageShown = false
+        /// The studio answered with a certificate other than the pinned one.
+        private var pinRefused = false
 
         // Stay on the studio: anything else opens in Safari instead. And leaving
         // the capture page (a menu link) mustn't lose photos: same rule as Done.
@@ -190,9 +269,13 @@ private struct StudioWebView: UIViewRepresentable {
             }
         }
 
-        func webView(_ webView: WKWebView, requestMediaCapturePermissionFor origin: WKSecurityOrigin,
-                     initiatedByFrame frame: WKFrameInfo, type: WKMediaCaptureType) async -> WKPermissionDecision {
-            isStudio(origin.host) && type == .camera ? .grant : .deny
+        // WebKit's own name for this question (async form). An earlier spelling, requestMediaCapturePermissionFor
+        // ... async, matched nothing, so WebKit never asked it: it fell back to asking the person each time the
+        // page opened, and this rule (the camera for the studio only, never the microphone) wasn't applied.
+        func webView(_ webView: WKWebView, decideMediaCapturePermissionsFor origin: WKSecurityOrigin,
+                     initiatedBy frame: WKFrameInfo, type: WKMediaCaptureType) async -> WKPermissionDecision {
+            StudioPage.mediaDecision(scheme: origin.`protocol`, host: origin.host, port: origin.port,
+                                     studio: parent.link.url, type: type)
         }
 
         // The page's own "Discard N frames?" and messages: shown as native dialogs.
@@ -214,12 +297,39 @@ private struct StudioWebView: UIViewRepresentable {
 
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
             parent.loading = false
+            pageShown = true
+            pinRefused = false
         }
 
         func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+            failed(error)
+        }
+
+        // the page started loading, then the connection went (a Wi-Fi drop partway)
+        func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+            failed(error)
+        }
+
+        private func failed(_ error: Error) {
+            let studio = StudioConnection.describe(parent.link.url)
+            let said = PhotoPageWords.failure(error, pageShown: pageShown, pinRefused: pinRefused, studio: studio)
+            pinRefused = false
+            // nothing to say (the view's own cancel with the page still there): leave loading to the newer navigation
+            guard let said else { return }
+            // the message covers the page and Try again loads it from the start: a cancel on that load is no
+            // longer the view's own with the page still behind it
+            pageShown = false
             parent.loading = false
-            parent.failure = "Couldn't reach the studio at \(StudioConnection.describe(parent.link.url)). Check Footscan is running "
-                + "on the studio computer and this phone can reach it (same Wi-Fi, or Tailscale on); if its address changed, reconnect with its code."
+            parent.failure = said
+        }
+
+        // iOS ended the page's process (it does that to a camera page when the phone is short of memory): the page
+        // is blank and its photos not yet saved are gone
+        func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+            pageShown = false // nothing is shown now: Try again starts over
+            pinRefused = false
+            parent.loading = false
+            parent.failure = PhotoPageWords.pageStopped
         }
     }
 }

@@ -37,7 +37,8 @@ allows TestFlight.)
    capture**. Walk slowly all the way round; when the ring is full, do
    **Another lap** higher up, looking down, then **Finish**.
 4. The phone builds the model (a few minutes; keep the app open).
-5. **Send model.obj** > AirDrop to the Mac.
+5. Under *Share*, tap **.obj** > AirDrop to the Mac. The file is named after
+   the scan, for example `Calibration object 2026-11-18 110640.obj`.
 6. In the studio: **Import 3D** > *The calibration object (accuracy test)* >
    choose the file > Import. The score appears straight away, and in the
    research library. Type your caliper readings of the print into the
@@ -47,9 +48,9 @@ allows TestFlight.)
 Or from the command line:
 
 ```bash
-.venv/bin/footscan accuracy-mesh ~/Downloads/model.obj -o reports/lidar-calib.json
+.venv/bin/footscan accuracy-mesh ~/Downloads/"Calibration object 2026-11-18 110640.obj" -o reports/lidar-calib.json
 # with caliper readings of the print:
-.venv/bin/footscan accuracy-mesh ~/Downloads/model.obj --calipers calipers.json
+.venv/bin/footscan accuracy-mesh ~/Downloads/"Calibration object 2026-11-18 110640.obj" --calipers calipers.json
 ```
 
 It reports the same numbers as the photo pipeline's study: surface
@@ -152,6 +153,97 @@ keep still; someone else holds the phone). There is no ground truth for a
 foot, so these go to the studio's **Import 3D**, then **Landmarks**, like
 any imported scan, for comparison with photo scans of the same foot.
 
+## When something goes wrong
+
+What the app does by itself, and what it asks, when a scan or a send doesn't
+go to plan. None of this has been seen on a real iPhone yet: it is tested in
+the simulator (see *Tests*).
+
+- **Stopping or deleting a scan asks first.** Once photos have been taken, the
+  capture's X asks *Stop this scan?*. A scan stopped that way keeps its
+  photos, says *Stopped early*, and isn't nagged about on the home screen. A
+  capture cancelled before its first photo leaves nothing behind. Delete, from
+  a card's menu or the scan's page, says what will be gone first.
+- **Camera not allowed.** Before a scan opens the camera, the app checks that
+  Footscan may use it. If not, the home screen says so, with Open Settings
+  (or, when Screen Time or a device profile blocks it, says that instead).
+- **Phone too hot.** When iOS reports the phone as hot during a capture, a
+  banner says so: iOS slows a hot phone down, which can stop the capture.
+  With VoiceOver on, each new tip and warning is read out once.
+- **Leaving the app while the model builds.** iOS doesn't let an app build a
+  model in the background, so the build fails. It starts again by itself
+  (from Object Capture's working data) when the app is back in front, at most
+  3 times; after that it waits for Try again.
+- **A send that drops partway.** The phone keeps the id of the capture the
+  studio made for it, and the next try finishes that capture (after checking
+  the studio's list that it is still waiting for its model) instead of making
+  another empty one.
+- **No studio in reach.** A scan waiting on a studio that didn't answer goes
+  again by itself when the phone joins a network (a Wi-Fi, or Tailscale
+  coming on), every so often while the app is open (after 2 minutes, then
+  less often, up to every 16, so a silent studio doesn't cost a whole upload
+  every 2 minutes), and when the app comes back to the front. Pulling the home screen down tries straight away. Until
+  one gets through, the dot on the studio button (top left) is amber, not
+  green.
+- **How far a send has got.** The card reads *Sending 42%* while the model goes
+  up, then *Studio checking* while the studio reads it before it answers.
+- **Short of space.** Settings > Storage can remove Object Capture's working
+  data for scans that are already built. Every photo and model stays, so the
+  Mac can still rebuild a scan in more detail.
+- **Several people's scans.** *Name this scan* (a card's menu, or the pencil
+  on its page) gives a scan a name, kept on the phone only. A scan again of a
+  named scan carries its name.
+- **Battery low.** Below 20%, the home screen says so before the camera
+  opens, with *Scan anyway* or *Not now*: a capture and a model build use a
+  lot of power, and a phone that dies partway loses the capture.
+- **A capture that stops by itself.** The screen says why when it can tell
+  (the phone nearly full, or hot), how many photos were kept, and what to do
+  next. With no photos kept, Back leaves nothing behind.
+- **Lost track, or plenty from one angle.** Besides light, speed and distance,
+  the capture says when Object Capture has lost what it was scanning and when
+  it has plenty of photos from where the phone is.
+- **A model build cut off.** The model is written to a working name and only
+  put in place once it is whole, so a build that stops partway never leaves
+  half a model behind.
+- **Photos + mat page problems.** If the studio's page can't be reached, or
+  iOS stops it because the phone is short of memory, the screen says which,
+  with *Try again*. If the studio answers with a different certificate from
+  the one the phone paired with, it says that and how to pair again. The
+  screen stays on while the page is open, since nobody touches it while it
+  takes photos.
+- **Connecting when the code is on this phone's screen.** *Use a screenshot of
+  the code* reads the studio's code from a picture (for example, the tank
+  seen through RustDesk on the iPhone). The app then says to delete the
+  screenshot: the code in it holds the studio's key.
+- **Scale in pounds.** The scale-reading box for a seated foot scan has a
+  kg / lb switch (it starts from the phone's region). Pounds are turned into
+  kilograms before anything is sent, and the box shows the kg figure the
+  studio will get.
+- **Delete all.** Settings' *Delete all scans* says how many scans haven't
+  been sent to the studio, and so will be gone for good.
+- **A link for another studio.** A `footscan-capture://` link (from the
+  Camera app, say) for a studio other than the connected one opens the studio
+  screen and asks *Connect to a different studio?* first, since waiting scans
+  would go there.
+- **Sharing a model.** A shared .obj or .usdz is named after its scan (its
+  name, or what it is of, and when it was taken), so models AirDropped to the
+  Mac no longer arrive as model.obj, model-1.obj, and so on.
+
+## Accessibility
+
+- **VoiceOver** reads the capture's tips and warnings as they come, and says
+  when an open scan's model or send finishes (or stops, and why). The end of
+  a send can also be felt.
+- **Larger text.** The welcome headline and the home screen's cards and step
+  labels grow with the text size instead of being cut off. At the
+  Accessibility sizes, the welcome screen keeps its not-a-medical-device line
+  on the first screen.
+- **Reduce Motion.** Cards only fade as they scroll, and the welcome scene
+  stands still.
+
+Larger text was looked at in the simulator, at the Accessibility sizes.
+VoiceOver and Reduce Motion are covered by tests only, not yet heard or seen.
+
 ## What this decides
 
 Whether the full iPhone app (step 2 onward: native capture with coaching,
@@ -162,7 +254,9 @@ Nothing is concluded until the calibration object has actually been scanned.
 ## Tests
 
 The app's own logic (studio connect codes, the scan list's order, the
-free-space check, the welcome scene's ring, the phone's own scan check) has unit tests in
+free-space check, the welcome scene's ring, the phone's own scan check, and
+the handling above: interrupted builds, dropped sends, network changes,
+camera access, upload progress, scan names) has unit tests in
 `ios/FootscanCapture/FootscanCaptureTests`. In Xcode press Cmd-U, or:
 
 ```bash

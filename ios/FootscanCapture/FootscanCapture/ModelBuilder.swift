@@ -28,8 +28,14 @@ final class ModelBuilder {
         do {
             var config = PhotogrammetrySession.Configuration()
             config.checkpointDirectory = scan.checkpoint
+            // built beside the scan under a working name and moved into place whole once done: a build cut off
+            // while writing (the app ended) never leaves a half-written model.usdz that counts as a model
+            let fm = FileManager.default
+            let staged = scan.folder.appending(path: Self.buildingName)
+            try? fm.removeItem(at: staged)
+            defer { try? fm.removeItem(at: staged) }
             let session = try PhotogrammetrySession(input: scan.images, configuration: config)
-            try session.process(requests: [.modelFile(url: scan.usdz)])
+            try session.process(requests: [.modelFile(url: staged)])
             outputs: for try await output in session.outputs {
                 switch output {
                 case .requestProgress(_, let fraction):
@@ -44,11 +50,13 @@ final class ModelBuilder {
                     continue
                 }
             }
+            try Self.putInPlace(staged, at: scan.usdz)
             phase = .converting
             try Self.exportOBJ(from: scan.usdz, to: scan.obj)
             var rec = scan.record
             rec?.modelBuiltOnPhone = true
             rec?.modelSeconds = Date().timeIntervalSince(started).rounded()
+            rec?.error = nil // an earlier failed try (shown as "Last problem") no longer applies
             if let rec { scan.save(rec) }
             phase = .done
         } catch {
@@ -59,13 +67,53 @@ final class ModelBuilder {
         }
     }
 
+    /// The working names a build and an export write under, beside the scan's files.
+    nonisolated static let buildingName = "model-building.usdz"
+    nonisolated static let exportFolderName = ".obj-export"
+
     /// USDZ -> OBJ with Model I/O. Geometry only matters for measuring; the
     /// OBJ keeps the model's own units (metres) and axes (Y up).
+    ///
+    /// model.obj is what says a scan is ready to send, so it only ever stands for this model, whole: the old one goes
+    /// first (it was made from an earlier model), the new one is written in a working folder beside it and moved into
+    /// place last, in one rename. A failed export, or one cut off partway (the app ended), leaves no model.obj.
     nonisolated static func exportOBJ(from usdz: URL, to obj: URL) throws {
+        let fm = FileManager.default
+        try? fm.removeItem(at: obj)
         let asset = MDLAsset(url: usdz)
         guard asset.count > 0 else { throw ExportError.empty }
-        try? FileManager.default.removeItem(at: obj)
-        try asset.export(to: obj)
+        let folder = obj.deletingLastPathComponent()
+        let work = folder.appending(path: exportFolderName, directoryHint: .isDirectory)
+        try? fm.removeItem(at: work)
+        try fm.createDirectory(at: work, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: work) }
+        let staged = work.appending(path: obj.lastPathComponent)
+        try asset.export(to: staged)
+        guard fm.fileExists(atPath: staged.path(percentEncoded: false)) else { throw ExportError.empty }
+        // anything the export wrote beside it (a material file the OBJ names) first, the OBJ itself last
+        for file in try fm.contentsOfDirectory(at: work, includingPropertiesForKeys: nil)
+        where file.lastPathComponent != obj.lastPathComponent {
+            try putInPlace(file, at: folder.appending(path: file.lastPathComponent))
+        }
+        try putInPlace(staged, at: obj)
+    }
+
+    /// What a build or export cut off partway (the app ended) left under its working names in a scan's folder:
+    /// cleared when the app starts, before anything is building.
+    nonisolated static func clearLeftovers(in folder: URL) {
+        let fm = FileManager.default
+        try? fm.removeItem(at: folder.appending(path: buildingName))
+        try? fm.removeItem(at: folder.appending(path: exportFolderName, directoryHint: .isDirectory))
+    }
+
+    /// Move a finished file to where it belongs, replacing what's there, in one step (a rename on the same disk).
+    nonisolated static func putInPlace(_ file: URL, at destination: URL) throws {
+        let fm = FileManager.default
+        if fm.fileExists(atPath: destination.path(percentEncoded: false)) {
+            _ = try fm.replaceItemAt(destination, withItemAt: file)
+        } else {
+            try fm.moveItem(at: file, to: destination)
+        }
     }
 
     enum ExportError: LocalizedError {

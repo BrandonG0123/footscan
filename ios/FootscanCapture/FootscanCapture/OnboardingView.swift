@@ -7,6 +7,9 @@ struct OnboardingView: View {
     @Environment(AppSettings.self) private var settings
     @Environment(StudioConnection.self) private var studio
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    /// The welcome headline: 40 points at the usual text size, larger or smaller with the phone's text size.
+    @ScaledMetric(relativeTo: .largeTitle) private var headlineSize = 40.0
+    @Environment(\.dynamicTypeSize) private var typeSize
 
     enum Page: Int, CaseIterable { case welcome, safety, howTo, camera, studio }
     @State private var page: Page = .welcome
@@ -80,14 +83,19 @@ struct OnboardingView: View {
     private var welcome: some View {
         VStack(alignment: .leading, spacing: 16) {
             OrbitScene()
-                .frame(maxWidth: .infinity)
+                // at the Accessibility text sizes the scene steps back, so the words under it fit on the screen
+                .frame(maxWidth: .infinity, maxHeight: typeSize.isAccessibilitySize ? 200 : nil)
                 .padding(.horizontal, 8)
             Text("Scan it.\nMeasure it.")
-                .font(.system(size: 40, weight: .bold, design: .rounded))
+                .font(.system(size: min(headlineSize, 64), weight: .bold, design: .rounded)) // capped at 64 points, so it still fits under the scene
                 .foregroundStyle(Color.fsInk)
+                .accessibilityAddTraits(.isHeader)
+            // the not-a-medical-device line is on the first screen at every text size: at the Accessibility sizes
+            // the paragraph runs below the button, so the line goes above it there
+            if typeSize.isAccessibilitySize { SafetyStrip() }
             Text("Footscan turns a walk round your foot with your iPhone into a 3D model in real millimetres. Try it: drag the phone round the foot above.")
                 .font(.body).foregroundStyle(Color.fsMuted)
-            SafetyStrip()
+            if !typeSize.isAccessibilitySize { SafetyStrip() }
         }
     }
 
@@ -134,7 +142,8 @@ struct OnboardingView: View {
             header("Three things make a good scan", "The phone does the measuring. Your part is easy.", symbol: "sparkles")
             tip("sun.max.fill", "Bright, even light", "No harsh shadows. Matte things scan best; shiny or plain white ones come out patchy.", 0)
             tip("arrow.trianglehead.2.clockwise.rotate.90", "Walk all the way round", "Slowly, keeping it in the middle of the screen. Then a lap higher up, looking down. 2 or 3 laps in all.", 1)
-            tip("figure.stand", "Keep it still", "For a foot: sit, foot bare and flat on the mat, and let someone else hold the phone.", 2)
+            // the scan an insole is made from is the sole, facing up (Subject.rightSole's get-ready list)
+            tip("person.2.fill", "Keep it still, and let a helper scan", "What's scanned stays still while someone else walks round with the phone. For the sole: lie face down with the knee bent, sole to the ceiling. Each kind of scan has its own short get-ready list first.", 2)
         }
     }
 

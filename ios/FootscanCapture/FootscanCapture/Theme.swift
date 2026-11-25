@@ -92,14 +92,36 @@ struct CardModifier: ViewModifier {
 extension View {
     func card(padding: CGFloat = 18) -> some View { modifier(CardModifier(padding: padding)) }
 
-    /// Cards rise and settle as they scroll into view, and soften as they leave.
-    func scrollReveal() -> some View {
-        scrollTransition(.interactive, axis: .vertical) { content, phase in
-            content
-                .opacity(phase.isIdentity ? 1 : 0.35)
-                .scaleEffect(phase.isIdentity ? 1 : 0.94)
-                .offset(y: phase.value > 0 ? 18 * phase.value : 0)
-                .blur(radius: phase.isIdentity ? 0 : 1.5)
+    /// Cards rise and settle as they scroll into view, and soften as they leave. With Reduce Motion on, they
+    /// only fade.
+    func scrollReveal() -> some View { modifier(ScrollReveal()) }
+}
+
+/// How far a card is from settled as it scrolls in or out: `phase` is SwiftUI's scroll-transition value
+/// (0 settled, -1 or 1 fully off). Reduce Motion keeps the fade and drops the growing, rising and blur.
+struct RevealStyle: Equatable {
+    var opacity: Double, scale: Double, rise: Double, blur: Double
+
+    static func at(_ phase: Double, reduceMotion: Bool) -> RevealStyle {
+        let settled = phase == 0
+        let opacity = settled ? 1 : 0.35
+        if reduceMotion { return RevealStyle(opacity: opacity, scale: 1, rise: 0, blur: 0) }
+        return RevealStyle(opacity: opacity, scale: settled ? 1 : 0.94, rise: phase > 0 ? 18 * phase : 0, blur: settled ? 0 : 1.5)
+    }
+}
+
+private struct ScrollReveal: ViewModifier {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    func body(content: Content) -> some View {
+        let reduce = reduceMotion
+        return content.scrollTransition(.interactive, axis: .vertical) { content, phase in
+            let style = RevealStyle.at(phase.value, reduceMotion: reduce)
+            return content
+                .opacity(style.opacity)
+                .scaleEffect(style.scale)
+                .offset(y: style.rise)
+                .blur(radius: style.blur)
         }
     }
 }
