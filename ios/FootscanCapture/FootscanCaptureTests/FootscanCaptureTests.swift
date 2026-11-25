@@ -1150,3 +1150,66 @@ struct Ring {
         #expect(model.lit == [0, 11])
     }
 }
+
+// MARK: - the scale reading
+
+@Suite("Scale reading in kg or lb")
+struct ScaleReadingTests {
+    @Test func poundsAreSentAsKilograms() {
+        // 150 lb is 68.04 kg: typed with the box on lb, the studio must not get 150 kg
+        #expect(ScaleReading.kilograms("150", unit: .lb) == 68.04)
+        #expect(ScaleReading.kilograms("150", unit: .kg) == 150)
+    }
+
+    @Test func aCommaIsADecimalMark() {
+        #expect(ScaleReading.kilograms("68,5", unit: .kg) == 68.5)
+        #expect(ScaleReading.kilograms(" 68.5 ", unit: .kg) == 68.5)
+        #expect(ScaleReading.kilograms("68.5\n", unit: .kg) == 68.5) // pasted with its line end
+        #expect(ScaleReading.kilograms(".5", unit: .kg) == 0.5)
+    }
+
+    @Test func onlyPlainNumbersAreReadings() {
+        // Double() reads these too: pasted text mustn't become a load
+        #expect(ScaleReading.kilograms("0x40", unit: .kg) == nil)
+        #expect(ScaleReading.kilograms("6.85e1", unit: .kg) == nil)
+        #expect(ScaleReading.kilograms("1.2.3", unit: .kg) == nil)
+        #expect(ScaleReading.kilograms("+68", unit: .kg) == nil)
+    }
+
+    @Test func readingsTheStudioWouldRefuseAreNotTaken() {
+        #expect(ScaleReading.kilograms("", unit: .kg) == nil)
+        #expect(ScaleReading.kilograms("abc", unit: .kg) == nil)
+        #expect(ScaleReading.kilograms("0", unit: .kg) == nil)
+        #expect(ScaleReading.kilograms("-5", unit: .kg) == nil)
+        #expect(ScaleReading.kilograms("400", unit: .kg) == nil)
+        #expect(ScaleReading.kilograms("inf", unit: .kg) == nil)
+        // 880 lb is 399.2 kg, so it's taken in lb; 900 lb (408 kg) is not
+        #expect(ScaleReading.kilograms("880", unit: .lb) != nil)
+        #expect(ScaleReading.kilograms("900", unit: .lb) == nil)
+    }
+
+    @Test func aSavedReadingShowsBackAsTyped() {
+        let kg = ScaleReading.kilograms("150", unit: .lb)!
+        #expect(ScaleReading.text(kilograms: kg, unit: .lb) == "150")
+        #expect(ScaleReading.text(kilograms: 68.5, unit: .kg) == "68.5")
+        #expect(ScaleReading.text(kilograms: 70, unit: .kg) == "70")
+        // sending a reopened scan again sends the same number, not one rounded on the way into the box
+        #expect(ScaleReading.kilograms(ScaleReading.text(kilograms: 68.25, unit: .kg), unit: .kg) == 68.25)
+        #expect(ScaleReading.kilograms(ScaleReading.text(kilograms: kg, unit: .lb), unit: .lb) == kg)
+    }
+
+    @Test func theLineUnderTheBoxShowsWhatIsSent() {
+        #expect(ScaleReading.sentAs(ScaleReading.kilograms("150", unit: .lb)!) == "Sent to the studio as 68.04 kg")
+    }
+
+    @Test func theDetailsRowGivesKilogramsAndPoundsWhenOnPounds() {
+        #expect(ScaleReading.detail(kilograms: 68.04, unit: .kg) == "68.04 kg")
+        #expect(ScaleReading.detail(kilograms: 68.04, unit: .lb) == "68.04 kg (150 lb)")
+    }
+
+    @Test func theUnitStartsFromThePhonesRegion() {
+        #expect(ScaleUnit.usual(for: Locale(identifier: "en_US")) == .lb)
+        #expect(ScaleUnit.usual(for: Locale(identifier: "en_GB")) == .kg)
+        #expect(ScaleUnit.usual(for: Locale(identifier: "de_DE")) == .kg)
+    }
+}

@@ -65,7 +65,7 @@ struct ScanDetailView: View {
         } message: {
             Text(scan.deleteWarning)
         }
-        .onAppear { if let l = rec?.loadKg { loadText = String(l) } }
+        .onAppear { if let l = rec?.loadKg { loadText = ScaleReading.text(kilograms: l, unit: settings.scaleUnit) } }
         // a scan built before the phone checked models (or by an older check) is checked when it's opened
         .task { await library.check(scan) }
     }
@@ -244,7 +244,9 @@ struct ScanDetailView: View {
                         .padding(.top, 6)
                     }
                     .font(.footnote.weight(.semibold))
-                    // a quiet way past it: the studio still checks the scan, and refuses it if it's no good
+                    // a quiet way past it: the studio still checks the scan, and refuses it if it's no good. A seated
+                    // foot scan needs its scale reading for that too, so the box is here as well.
+                    if studio.client != nil && scan.hasOBJ && rec.subject.needsScale { scaleBox }
                     if studio.client != nil && scan.hasOBJ && !(rec.subject.needsScale && parsedLoad == nil) {
                         Button("Send anyway") {
                             Task { await library.sendAnyway(scan, studio: studio, loadKg: parsedLoad) }
@@ -257,17 +259,7 @@ struct ScanDetailView: View {
                 Button("Connect") { showStudio = true }.buttonStyle(.bordered)
             } else if scan.hasOBJ {
                 VStack(alignment: .leading, spacing: 8) {
-                    if rec.subject.needsScale && rec.studioCaptureID == nil {
-                        HStack {
-                            Image(systemName: "scalemass").foregroundStyle(Color.fsBrand)
-                            TextField("Scale reading", text: $loadText)
-                                .keyboardType(.decimalPad)
-                                .focused($loadFocused)
-                            Text("kg").foregroundStyle(Color.fsMuted)
-                        }
-                        .padding(.horizontal, 12).padding(.vertical, 10)
-                        .background(Color.fsSurface2, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-                    }
+                    if rec.subject.needsScale && rec.studioCaptureID == nil { scaleBox }
                     if rec.studioCaptureID == nil {
                         Button("Send to studio") {
                             Task { await library.send(scan, studio: studio, loadKg: parsedLoad) }
@@ -288,8 +280,31 @@ struct ScanDetailView: View {
         }
     }
 
-    private var parsedLoad: Double? {
-        Double(loadText.replacingOccurrences(of: ",", with: ".")).flatMap { $0 > 0 && $0 < 400 ? $0 : nil }
+    private var parsedLoad: Double? { ScaleReading.kilograms(loadText, unit: settings.scaleUnit) }
+
+    /// The bathroom-scale reading for a seated foot scan, in kg or lb (what the scale shows), with what the studio
+    /// will get in kg under it.
+    private var scaleBox: some View {
+        @Bindable var settings = settings
+        return VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Image(systemName: "scalemass").foregroundStyle(Color.fsBrand)
+                TextField("Scale reading", text: $loadText)
+                    .keyboardType(.decimalPad)
+                    .focused($loadFocused)
+                // the number stays as typed: the switch says which unit the scale showed it in
+                Picker("Scale unit", selection: $settings.scaleUnit) {
+                    ForEach(ScaleUnit.allCases) { Text($0.rawValue).tag($0) }
+                }
+                .pickerStyle(.segmented)
+                .fixedSize()
+            }
+            .padding(.horizontal, 12).padding(.vertical, 10)
+            .background(Color.fsSurface2, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+            if let kg = parsedLoad {
+                Text(ScaleReading.sentAs(kg)).font(.footnote).foregroundStyle(Color.fsMuted)
+            }
+        }
     }
 
     // MARK: details and sharing
@@ -301,7 +316,7 @@ struct ScanDetailView: View {
             if let rec, rec.name != nil { row("What", rec.subject.label) }
             if let d = rec?.created { row("Scanned", d.formatted(date: .abbreviated, time: .shortened)) }
             row("Phone", "\(ScanStore.phoneName(rec?.device ?? "?")), iOS \(rec?.systemVersion ?? "?")")
-            if let l = rec?.loadKg { row("Scale reading", String(format: "%.1f kg", l)) }
+            if let l = rec?.loadKg { row("Scale reading", ScaleReading.detail(kilograms: l, unit: settings.scaleUnit)) }
             if let id = rec?.studioCaptureID { row("In the studio", id) }
             if let err = rec?.error { row("Last problem", err) }
         }

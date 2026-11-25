@@ -5,6 +5,7 @@
 //   once a scan of that kind has been captured, it's skipped (still one tap
 //   away as Tips).
 // - With a studio connected, finished models are sent automatically.
+// - The unit the bathroom scale shows (kg or lb), for a seated foot scan's reading.
 import Foundation
 import RealityKit
 import SwiftUI
@@ -19,6 +20,8 @@ final class AppSettings {
     var autoSend: Bool { didSet { defaults.set(autoSend, forKey: "autoSend") } }
     /// The chosen way to scan, on phones that can do both.
     var method: CaptureMethod { didSet { defaults.set(method.rawValue, forKey: "captureMethod") } }
+    /// What the bathroom scale shows: the scale-reading box takes this unit. Starts from the phone's region.
+    var scaleUnit: ScaleUnit { didSet { defaults.set(scaleUnit.rawValue, forKey: "scaleUnit") } }
     private(set) var prepared: Set<String> { didSet { defaults.set(Array(prepared), forKey: "preparedSubjects") } }
 
     init() {
@@ -26,6 +29,7 @@ final class AppSettings {
         safetyAcknowledgedAt = defaults.object(forKey: "safetyAcknowledgedAt") as? Date
         autoSend = defaults.object(forKey: "autoSend") as? Bool ?? true
         method = CaptureMethod(rawValue: defaults.string(forKey: "captureMethod") ?? "") ?? .lidar
+        scaleUnit = ScaleUnit(rawValue: defaults.string(forKey: "scaleUnit") ?? "") ?? .usual(for: .current)
         prepared = Set(defaults.stringArray(forKey: "preparedSubjects") ?? [])
     }
 
