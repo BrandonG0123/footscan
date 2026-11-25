@@ -54,7 +54,8 @@ struct PhotoCaptureView: View {
                 if loading && failure == nil { ProgressView("Opening the studio's camera…") }
                 if let failure {
                     VStack(spacing: 12) {
-                        Image(systemName: "wifi.exclamationmark").font(.largeTitle).foregroundStyle(Color.fsWarn)
+                        Image(systemName: failure == PhotoPageWords.pageStopped ? "memorychip" : "wifi.exclamationmark")
+                            .font(.largeTitle).foregroundStyle(Color.fsWarn)
                         Text(failure).multilineTextAlignment(.center).foregroundStyle(Color.fsMuted)
                         // the page again, from the start, without going back to the home screen
                         Button("Try again") {
@@ -106,12 +107,26 @@ enum PhotoPageWords {
     static let pageStopped = "The studio's page stopped: iOS ended it, which it does when the phone is short of memory. "
         + "Photos already saved to the studio are kept there; any not yet saved are gone. Close other apps, then try again."
 
-    /// A load the web view cancelled itself (NSURLErrorCancelled, or WebKit's "frame load interrupted" when a link
-    /// goes to Safari instead), as opposed to one that failed.
-    static func isOwnCancel(_ error: Error) -> Bool {
+    static func certificateChanged(_ studio: String) -> String {
+        "The studio at \(studio) answered with a different certificate from the one this phone paired with. If you "
+            + "set the studio up again, show its connect code and scan it again."
+    }
+
+    /// A cancel (NSURLErrorCancelled, or WebKit's "frame load interrupted" when a link goes to Safari instead),
+    /// rather than a load that failed.
+    static func isCancel(_ error: Error) -> Bool {
         let e = error as NSError
         return (e.domain == NSURLErrorDomain && e.code == NSURLErrorCancelled)
             || (e.domain == "WebKitErrorDomain" && e.code == 102)
+    }
+
+    /// What to say when a load of the studio's page ends with `error`, or nil for nothing. A refused certificate also
+    /// ends as a cancel, so it's checked first. Any other cancel is the view's own once the page has shown (the
+    /// page is still there behind it); before that, nothing would be on screen, so it's said as unreachable.
+    static func failure(_ error: Error, pageShown: Bool, pinRefused: Bool, studio: String) -> String? {
+        if pinRefused { return certificateChanged(studio) }
+        if isCancel(error) && pageShown { return nil }
+        return unreachable(studio)
     }
 }
 
@@ -169,8 +184,16 @@ private struct StudioWebView: UIViewRepresentable {
         func webView(_ webView: WKWebView, respondTo challenge: URLAuthenticationChallenge) async
             -> (URLSession.AuthChallengeDisposition, URLCredential?) {
             guard isStudio(challenge.protectionSpace.host) else { return (.cancelAuthenticationChallenge, nil) }
-            return PinnedTrust.decide(challenge, fingerprint: parent.link.fingerprint)
+            let answer = PinnedTrust.decide(challenge, fingerprint: parent.link.fingerprint)
+            if answer.0 == .cancelAuthenticationChallenge { pinRefused = true } // WebKit then reports a cancel
+            return answer
         }
+
+        /// The studio's page has loaded at least once: a cancel after that is the view's own (a link sent to Safari, a
+        /// navigation refused), and the page is still there behind it.
+        private var pageShown = false
+        /// The studio answered with a certificate other than the pinned one.
+        private var pinRefused = false
 
         // Stay on the studio: anything else opens in Safari instead. And leaving
         // the capture page (a menu link) mustn't lose photos: same rule as Done.
@@ -244,6 +267,8 @@ private struct StudioWebView: UIViewRepresentable {
 
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
             parent.loading = false
+            pageShown = true
+            pinRefused = false
         }
 
         func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
@@ -256,10 +281,13 @@ private struct StudioWebView: UIViewRepresentable {
         }
 
         private func failed(_ error: Error) {
+            let studio = StudioConnection.describe(parent.link.url)
+            let said = PhotoPageWords.failure(error, pageShown: pageShown, pinRefused: pinRefused, studio: studio)
+            pinRefused = false
+            // nothing to say (the view's own cancel with the page still there): leave loading to the newer navigation
+            guard let said else { return }
             parent.loading = false
-            // a load this view cancelled itself (a link sent to Safari, a new load over an old one) isn't a failure
-            guard !PhotoPageWords.isOwnCancel(error) else { return }
-            parent.failure = PhotoPageWords.unreachable(StudioConnection.describe(parent.link.url))
+            parent.failure = said
         }
 
         // iOS ended the page's process (it does that to a camera page when the phone is short of memory): the page
