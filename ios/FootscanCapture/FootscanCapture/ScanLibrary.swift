@@ -26,6 +26,19 @@ final class ScanLibrary {
     private(set) var reconnect: Set<URL> = []
     /// Bumped when a scan's files or record change, so views re-read them.
     private(set) var version = 0
+    /// Model builds cut off because the app left the screen (iOS doesn't lend the graphics chip to an app in the
+    /// background): started again by themselves once it's back in front (`resumeInterrupted`).
+    private(set) var interrupted: Set<URL> = []
+    /// How many times each scan's build has been started again that way, this run: a build that keeps failing
+    /// stops being retried and shows its own error instead.
+    private var resumes: [URL: Int] = [:]
+    static let maxResumes = 3
+    static let interruptedMessage = "The model stopped building when Footscan left the screen. It starts again by itself when you come back to the app."
+
+    /// Start a cut-off build again? Only if the app left the screen while it ran, and not more than `maxResumes` times.
+    nonisolated static func shouldResume(leftScreen: Bool, resumesSoFar: Int) -> Bool {
+        leftScreen && resumesSoFar < maxResumes
+    }
 
     init() { reload() }
 
@@ -44,6 +57,7 @@ final class ScanLibrary {
         ScanStore.delete(scan)
         work[scan.folder] = nil
         problems[scan.folder] = nil
+        interrupted.remove(scan.folder)
         reload()
     }
 
@@ -52,6 +66,7 @@ final class ScanLibrary {
         for s in scans { ScanStore.delete(s) }
         work = [:]
         problems = [:]
+        interrupted = []
         reload()
     }
 
@@ -103,9 +118,15 @@ final class ScanLibrary {
     func build(_ scan: Scan) async {
         guard work[scan.folder] == nil else { return }
         problems[scan.folder] = nil
+        interrupted.remove(scan.folder)
         work[scan.folder] = .building(0)
         let release = KeepAlive.work("Building a 3D model")
         defer { release() }
+        // a build the app leaves the screen during usually fails there: noted, so it's started again on return
+        let left = LeftScreen()
+        let token = NotificationCenter.default.addObserver(forName: UIApplication.didEnterBackgroundNotification,
+                                                           object: nil, queue: .main) { _ in left.value = true }
+        defer { NotificationCenter.default.removeObserver(token) }
         let builder = ModelBuilder()
         let watch = Task { @MainActor in
             while !Task.isCancelled {
@@ -121,12 +142,29 @@ final class ScanLibrary {
         watch.cancel()
         work[scan.folder] = nil
         if case .failed(let message) = builder.phase {
-            problems[scan.folder] = message
+            if Self.shouldResume(leftScreen: left.value, resumesSoFar: resumes[scan.folder, default: 0]) {
+                interrupted.insert(scan.folder)
+                problems[scan.folder] = Self.interruptedMessage
+            } else {
+                problems[scan.folder] = message
+            }
         } else {
+            resumes[scan.folder] = nil
             await makeThumbnail(scan)
             UINotificationFeedbackGenerator().notificationOccurred(.success)
         }
         reload()
+    }
+
+    /// Builds cut off by the app leaving the screen: start each again, oldest first, picking up from the working
+    /// data Object Capture kept (its Checkpoint folder). Call when the app is back in front.
+    func resumeInterrupted(settings: AppSettings, studio: StudioConnection) async {
+        let waiting = scans.reversed().filter { interrupted.contains($0.folder) }
+        interrupted = []
+        for scan in waiting where !scan.hasOBJ && scan.photoCount > 0 && work[scan.folder] == nil {
+            resumes[scan.folder, default: 0] += 1
+            await finish(scan, settings: settings, studio: studio)
+        }
     }
 
     /// The model was built but its studio copy (OBJ) wasn't made: make just that.
@@ -239,4 +277,9 @@ final class ScanLibrary {
         }
         return total
     }
+}
+
+/// Set (on the main queue) when the app goes to the background while a model builds.
+private final class LeftScreen: @unchecked Sendable {
+    var value = false
 }

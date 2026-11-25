@@ -35,12 +35,20 @@ struct RootView: View {
         // (or reconnected), when the app comes back to the front, and when
         // "send automatically" is switched on.
         .onChange(of: studio.connections) { sendWaiting() }
-        .onChange(of: scenePhase) { _, phase in if phase == .active { sendWaiting() } }
+        .onChange(of: scenePhase) { _, phase in if phase == .active { sendWaiting(); resumeBuilds() } }
         .onChange(of: settings.autoSend) { _, on in if on { sendWaiting() } }
+        // a model build cut off by leaving the app starts again once it's back in front (and at once, if the
+        // build only reported failing after the app came back)
+        .onChange(of: library.interrupted) { _, cut in if !cut.isEmpty && scenePhase == .active { resumeBuilds() } }
     }
 
     private func sendWaiting() {
         Task { await library.sendWaiting(settings: settings, studio: studio) }
+    }
+
+    private func resumeBuilds() {
+        guard !library.interrupted.isEmpty else { return }
+        Task { await library.resumeInterrupted(settings: settings, studio: studio) }
     }
 }
 

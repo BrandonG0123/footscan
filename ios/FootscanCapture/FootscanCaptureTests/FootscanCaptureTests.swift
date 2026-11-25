@@ -482,6 +482,26 @@ struct ScanList {
     }
 }
 
+// MARK: - model builds cut off by leaving the app
+
+@Suite("A model build cut off by leaving the app")
+struct InterruptedBuilds {
+    @Test func aBuildCutOffByLeavingTheAppIsStartedAgainAFewTimesAtMost() {
+        #expect(ScanLibrary.shouldResume(leftScreen: true, resumesSoFar: 0))
+        #expect(ScanLibrary.shouldResume(leftScreen: true, resumesSoFar: ScanLibrary.maxResumes - 1))
+        // one that keeps failing shows its own error instead of trying for ever
+        #expect(!ScanLibrary.shouldResume(leftScreen: true, resumesSoFar: ScanLibrary.maxResumes))
+    }
+
+    @Test func aBuildThatFailedWithTheAppOnScreenIsNotRetriedByItself() {
+        #expect(!ScanLibrary.shouldResume(leftScreen: false, resumesSoFar: 0))
+    }
+
+    @Test func theMessageSaysItCarriesOnByItself() {
+        #expect(ScanLibrary.interruptedMessage.localizedCaseInsensitiveContains("by itself"))
+    }
+}
+
 // MARK: - free space
 
 @Suite("Free space before a capture")
