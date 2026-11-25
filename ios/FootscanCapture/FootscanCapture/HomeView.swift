@@ -371,7 +371,7 @@ struct HomeView: View {
                             .contextMenu {
                                 Button { naming = scan } label: { Label("Name this scan", systemImage: "pencil") }
                                     .disabled(library.work[scan.folder] != nil)
-                                if scan.hasOBJ { ShareLink(item: scan.obj) { Label("Share model.obj", systemImage: "square.and.arrow.up") } }
+                                if scan.hasOBJ { ShareLink(item: SharedFile(scan.obj, record: scan.record), preview: SharePreview("3D model")) { Label("Share the .obj", systemImage: "square.and.arrow.up") } }
                                 Button(role: .destructive) { deleting = scan } label: {
                                     Label("Delete", systemImage: "trash")
                                 }

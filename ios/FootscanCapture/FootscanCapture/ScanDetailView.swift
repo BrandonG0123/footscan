@@ -331,13 +331,14 @@ struct ScanDetailView: View {
     }
 
     private var shareCard: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        let rec = scan.record
+        return VStack(alignment: .leading, spacing: 10) {
             Text("Share").font(.headline)
             HStack(spacing: 10) {
-                if scan.hasOBJ { ShareLink(item: scan.obj) { Label("model.obj", systemImage: "square.and.arrow.up") }.buttonStyle(.bordered) }
-                ShareLink(item: scan.usdz) { Label("model.usdz", systemImage: "square.and.arrow.up") }.buttonStyle(.bordered)
+                if scan.hasOBJ { ShareLink(item: SharedFile(scan.obj, record: rec), preview: SharePreview("3D model")) { Label(".obj", systemImage: "square.and.arrow.up") }.buttonStyle(.bordered) }
+                ShareLink(item: SharedFile(scan.usdz, record: rec), preview: SharePreview("3D model")) { Label(".usdz", systemImage: "square.and.arrow.up") }.buttonStyle(.bordered)
             }
-            Text("model.obj goes into the studio's Import 3D. To rebuild in more detail on a Mac, copy this scan's Images folder over (Finder > iPhone > Files > Footscan).")
+            Text("Shared files are named after the scan. The .obj goes into the studio's Import 3D. To rebuild in more detail on a Mac, copy this scan's Images folder over (Finder > iPhone > Files > Footscan).")
                 .font(.footnote).foregroundStyle(Color.fsMuted)
         }
         .card()

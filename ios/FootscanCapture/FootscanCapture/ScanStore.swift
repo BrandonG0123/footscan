@@ -179,7 +179,7 @@ struct ScanRecord: Codable {
     /// into it, so a shaky connection doesn't leave the studio one empty capture per try.
     var pendingCapture: PendingCapture?
     /// A name the person gave the scan ("Sam, left", "after the run"), to tell scans of the same kind apart. Kept on
-    /// this phone only: it isn't sent to the studio.
+    /// this phone only: it isn't sent to the studio (it's in the file name when the person shares a model themselves).
     var name: String?
     var units = "metres, Y up (Apple Object Capture's own frame). The studio's Import 3D converts to millimetres."
     var note = "Footscan LiDAR test capture. Not a medical device."
