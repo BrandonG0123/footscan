@@ -1317,4 +1317,12 @@ struct OtherStudioLinks {
         #expect(StudioConnection.otherStudio(in: "not a code", connected: home) == nil)            // connect() says why
         #expect(StudioConnection.otherStudio(in: other, connected: home) == "192.168.1.99 (home Wi-Fi)")
     }
+
+    @Test func aQuestionLeftUnseenForMinutesIsDropped() {
+        // opened while a capture covered the screen: it mustn't turn up out of the blue much later
+        let asked = Date(timeIntervalSince1970: 1_800_000_000)
+        #expect(StudioConnection.stillAsking(since: asked, now: asked + 60))
+        #expect(!StudioConnection.stillAsking(since: asked, now: asked + StudioConnection.switchQuestionLasts))
+        #expect(!StudioConnection.stillAsking(since: asked, now: asked - 60)) // the clock went back
+    }
 }

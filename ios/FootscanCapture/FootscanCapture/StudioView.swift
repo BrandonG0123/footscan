@@ -25,6 +25,11 @@ final class StudioConnection {
 
     /// Try a connect code; save it only if the studio answers to it (at any of its addresses).
     func connect(_ text: String) async -> Bool {
+        // one at a time: two codes connecting at once would leave whichever answered last, and waiting scans
+        // would go there
+        guard !connecting else { return false }
+        connecting = true
+        defer { connecting = false }
         pendingSwitch = nil // connecting any way answers the question
         guard let parsed = StudioStore.parse(text) else {
             if let other = StudioStore.parse(text, allowPublic: true) {
@@ -59,13 +64,29 @@ final class StudioConnection {
     /// A connect code that came from outside the app (a link, or the iPhone's own Camera app) for a different
     /// studio from the connected one, waiting for a yes on the studio screen. The studio's own Scan the code and
     /// screenshot paths don't ask: the person chose to connect there.
-    var pendingSwitch: (code: String, address: String)?
+    var pendingSwitch: (code: String, address: String, at: Date)?
+    /// A connect is under way (checking the studio answers): another waits until it's done.
+    private(set) var connecting = false
+    /// A question older than this isn't shown: the link was opened while something else covered the screen, and
+    /// turning up later, out of the blue, it would only confuse.
+    nonisolated static let switchQuestionLasts: TimeInterval = 5 * 60
+
+    /// The pending switch, if it's recent enough to ask about.
+    func currentSwitch(now: Date = .now) -> (code: String, address: String, at: Date)? {
+        guard let p = pendingSwitch, Self.stillAsking(since: p.at, now: now) else { return nil }
+        return p
+    }
+
+    nonisolated static func stillAsking(since asked: Date, now: Date) -> Bool {
+        let age = now.timeIntervalSince(asked)
+        return age >= 0 && age < switchQuestionLasts
+    }
 
     /// A code from outside the app: connected straight away, unless it would put a different studio in place of
     /// the connected one, which is asked first (scans waiting to go would go to the new studio by themselves).
     func open(_ code: String) async {
         if let address = Self.otherStudio(in: code, connected: link) {
-            pendingSwitch = (code, address)
+            pendingSwitch = (code, address, .now)
             status = nil
             return
         }
@@ -74,7 +95,7 @@ final class StudioConnection {
 
     /// Yes to the pending switch: connect to the studio the link named.
     func confirmSwitch() async {
-        guard let pending = pendingSwitch else { return }
+        guard let pending = currentSwitch() else { pendingSwitch = nil; return }
         pendingSwitch = nil
         _ = await connect(pending.code)
     }
@@ -157,7 +178,7 @@ struct StudioView: View {
                         Text("Scans go straight from this phone to the Footscan studio on your computer: over your Wi-Fi at home, or over Tailscale from anywhere if the studio has it.")
                             .foregroundStyle(Color.fsMuted)
                     }
-                    if let pending = studio.pendingSwitch { switchQuestion(pending.address) }
+                    if let pending = studio.currentSwitch() { switchQuestion(pending.address) }
                     if let link = studio.link { connected(link) } else { howTo }
                     if let status = studio.status {
                         Label(status, systemImage: "info.circle")
@@ -272,6 +293,7 @@ struct StudioView: View {
             HStack {
                 Button("Connect to \(address)") { Task { await studio.confirmSwitch() } }
                     .buttonStyle(PrimaryButtonStyle())
+                    .disabled(studio.connecting)
                 Button("Keep this one") { studio.pendingSwitch = nil }
                     .buttonStyle(SecondaryButtonStyle())
             }
