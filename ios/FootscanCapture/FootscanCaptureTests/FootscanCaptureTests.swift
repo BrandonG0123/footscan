@@ -492,6 +492,15 @@ struct CaptureCoachingTests {
         #expect(CaptureCoaching.thermalWarning(.serious)?.contains("cool") == true)
         #expect(CaptureCoaching.thermalWarning(.critical)?.contains("cool") == true)
     }
+
+    @Test func aTipThatFlickersIsReadOutOnceEveryFewSeconds() {
+        var tips = TipRepeats()
+        let t0 = Date(timeIntervalSince1970: 1_800_000_000)
+        #expect(tips.shouldSay("Slow down a little.", at: t0))
+        #expect(!tips.shouldSay("Slow down a little.", at: t0 + 1))
+        #expect(tips.shouldSay("Move a little closer.", at: t0 + 1))  // another tip isn't held back
+        #expect(tips.shouldSay("Slow down a little.", at: t0 + TipRepeats.quiet))
+    }
 }
 
 // MARK: - free space

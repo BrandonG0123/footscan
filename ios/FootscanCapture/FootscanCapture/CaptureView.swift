@@ -41,21 +41,24 @@ struct CaptureView: View {
                 // progress ring: the hints sit along its top edge, the
                 // instructions and buttons in a panel below it.
                 VStack(spacing: 8) {
-                    if let hot = CaptureCoaching.thermalWarning(thermal) {
-                        Label(hot, systemImage: "thermometer.sun.fill")
-                            .font(.footnote.weight(.semibold))
-                            .foregroundStyle(Color.fsAccentInk)
-                            .padding(.horizontal, 14).padding(.vertical, 8)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .background(Color.fsAccent, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-                            .padding(.horizontal, 12)
-                            .transition(.move(edge: .top).combined(with: .opacity))
-                    }
                     ObjectCaptureView(session: session)
                         .clipShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
                         .overlay(alignment: .top) {
-                            Controls(session: session, subject: scan.record?.subject ?? .other, retake: retake, passes: $passes,
-                                     allSides: $allSides, part: .top, onCancel: cancel)
+                            VStack(spacing: 6) {
+                                Controls(session: session, subject: scan.record?.subject ?? .other, retake: retake, passes: $passes,
+                                         allSides: $allSides, part: .top, onCancel: cancel)
+                                // over the camera's top edge, like the hints: the camera view never changes size mid-lap
+                                if let hot = CaptureCoaching.thermalWarning(thermal) {
+                                    Label(hot, systemImage: "thermometer.sun.fill")
+                                        .font(.footnote.weight(.semibold))
+                                        .foregroundStyle(Color.fsAccentInk)
+                                        .padding(.horizontal, 14).padding(.vertical, 8)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                        .background(Color.fsAccent, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                                        .padding(.horizontal, 12)
+                                        .transition(.move(edge: .top).combined(with: .opacity))
+                                }
+                            }
                         }
                     Controls(session: session, subject: scan.record?.subject ?? .other, retake: retake, passes: $passes,
                              allSides: $allSides, part: .panel, onCancel: cancel)
@@ -77,7 +80,9 @@ struct CaptureView: View {
         .onDisappear { releaseScreen?(); releaseScreen = nil }
         .onReceive(NotificationCenter.default.publisher(for: ProcessInfo.thermalStateDidChangeNotification)
             .receive(on: DispatchQueue.main)) { _ in
-            withAnimation(.smooth) { thermal = ProcessInfo.processInfo.thermalState }
+            let now = ProcessInfo.processInfo.thermalState
+            if now != thermal, let hot = CaptureCoaching.thermalWarning(now) { CaptureCoaching.announce(hot) }
+            withAnimation(.smooth) { thermal = now }
         }
         .statusBarHidden()
     }
@@ -139,6 +144,7 @@ private struct Controls: View {
     enum Part { case top, panel }
     var part: Part
     var onCancel: () -> Void
+    @State private var announcedTips = TipRepeats()
 
     static let legsFlatPhotos = 40
     private var enoughPhotos: Bool { subject.scanKind == "sole_hanging" && session.numberOfShotsTaken >= Self.legsFlatPhotos }
@@ -234,8 +240,11 @@ private struct Controls: View {
         .sensoryFeedback(.impact(weight: .medium), trigger: stepIndex)
         // VoiceOver reads each new instruction and warning out, so whoever holds the phone hears it without
         // looking for it on screen (here only: the top part is a second copy of this view)
-        .onChange(of: instruction) { _, said in CaptureCoaching.announce(said) }
-        .onChange(of: feedbackText) { _, tip in if let tip { CaptureCoaching.announce(tip) } }
+        .onChange(of: instruction, initial: true) { _, said in CaptureCoaching.announce(said) }
+        .onChange(of: feedbackText) { _, tip in
+            // Object Capture's flags flicker on and off while walking round: the same tip at most every few seconds
+            if let tip, announcedTips.shouldSay(tip, at: Date()) { CaptureCoaching.announce(tip) }
+        }
     }
 
     /// Until capture starts: what went wrong last time (after a refusal), and the checks to make before Start.
@@ -372,14 +381,28 @@ enum CaptureCoaching {
     static func thermalWarning(_ state: ProcessInfo.ThermalState) -> String? {
         switch state {
         case .serious: "This iPhone is getting hot. iOS slows a hot phone down, which can stop the capture: keep out of direct sun, and let it cool before another scan."
-        case .critical: "This iPhone is too hot and iOS is slowing it right down. Finish now if you can, then let it cool before scanning again."
+        case .critical: "This iPhone is too hot and iOS is slowing it right down, which can stop the capture. Stop when you can, and let it cool before scanning again."
         default: nil
         }
     }
 
-    /// Say it out loud to VoiceOver, if VoiceOver is on.
+    /// Say it out loud to VoiceOver, if VoiceOver is on: queued after whatever it's saying, not cutting it off.
     @MainActor static func announce(_ text: String) {
         guard UIAccessibility.isVoiceOverRunning, !text.isEmpty else { return }
-        UIAccessibility.post(notification: .announcement, argument: text)
+        let queued = NSAttributedString(string: text, attributes: [.accessibilitySpeechQueueAnnouncement: true])
+        UIAccessibility.post(notification: .announcement, argument: queued)
+    }
+}
+
+/// When each of Object Capture's tips was last read out, so one that flickers on and off isn't read again and again.
+struct TipRepeats {
+    /// The same tip isn't read out again sooner than this.
+    static let quiet: TimeInterval = 8
+    private var last: [String: Date] = [:]
+
+    mutating func shouldSay(_ tip: String, at now: Date) -> Bool {
+        if let when = last[tip], now.timeIntervalSince(when) < Self.quiet { return false }
+        last[tip] = now
+        return true
     }
 }
