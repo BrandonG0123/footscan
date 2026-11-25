@@ -15,6 +15,21 @@ function sync() {
   $("load-field").hidden = (c !== "swb" && c !== "fwb") || kind === "impression";
 }
 $("condition").addEventListener("change", sync);
+
+// The choices of the last import on this device come back for the next (a pair is two imports in a row); the file,
+// the scale reading and the notes don't. Only a value the form still offers is put back.
+const CHOICES = "footscan.importChoices", KEPT = ["condition", "up", "foot", "session"];
+try {
+  const saved = JSON.parse(localStorage.getItem(CHOICES) || "{}");
+  for (const id of KEPT) {
+    const el = $(id), v = saved[id];
+    if (typeof v !== "string") continue;
+    if (el.tagName === "SELECT" ? [...el.options].some((o) => o.value === v) : v.length <= el.maxLength) el.value = v;
+  }
+} catch { /* nothing kept (private browsing): the form's own defaults */ }
+const keepChoices = () => {
+  try { localStorage.setItem(CHOICES, JSON.stringify(Object.fromEntries(KEPT.map((id) => [id, $(id).value])))); } catch { /* not kept */ }
+};
 sync();
 
 function pick(f) {
@@ -142,6 +157,7 @@ $("form").addEventListener("submit", async (e) => {
       + `so it was scaled by ${m.scale_to_mm} to millimetres. `
       + (cond === "calibration" ? "The calibration object is 150 × 70 mm." : "A foot is usually 220–320 mm long: if the length above is far off, the units guess was wrong.");
     showAccuracy(data.accuracy, created.id);
+    keepChoices();
     $("to-library").href = `/studio/captures.html#${created.id}`;
     $("result").hidden = false;
     $("result").scrollIntoView({ behavior: "smooth" });
