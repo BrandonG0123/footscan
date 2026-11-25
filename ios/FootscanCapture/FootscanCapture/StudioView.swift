@@ -160,8 +160,9 @@ struct StudioView: View {
                 .background(.bar)
             }
             .onChange(of: picture) { _, item in
-                guard let item, !connecting else { return }
-                picture = nil
+                guard let item else { return }
+                picture = nil // first, so the same picture can be chosen again later
+                guard !connecting else { return }
                 connecting = true
                 Task {
                     await connect(from: item)
