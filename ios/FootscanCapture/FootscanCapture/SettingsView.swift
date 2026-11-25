@@ -92,7 +92,9 @@ struct SettingsView: View {
                     Link(destination: AppLinks.support) {
                         Label("Help and support", systemImage: "questionmark.circle")
                     }
-                    LabeledContent("Version", value: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "?")
+                    LabeledContent("Version", value: AppVersion.shown(
+                        version: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String,
+                        build: Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String))
                     Text("Footscan measures how accurate iPhone scanning is. It is not a medical device: it designs and treats nothing.")
                         .font(.footnote).foregroundStyle(Color.fsMuted)
                 }
@@ -112,6 +114,9 @@ struct SettingsView: View {
                     library.deleteAll()
                     storage = 0
                 }
+            } message: {
+                Text(DeleteAllWords.message(total: library.scans.count,
+                                            unsent: library.scans.filter { $0.record?.studioCaptureID == nil }.count))
             }
             .task(id: library.version) {
                 let scans = library.scans
@@ -122,5 +127,31 @@ struct SettingsView: View {
             }
         }
         .tint(.fsBrand)
+    }
+}
+
+/// What Delete all says before it deletes: how many of the scans exist only on this phone, because those are gone
+/// for good, while a scan already sent keeps its copy in the studio.
+enum DeleteAllWords {
+    static func message(total: Int, unsent: Int) -> String {
+        let kept = "Copies already in the studio stay there."
+        let gone = "will be gone for good."
+        if unsent <= 0 { return kept }
+        if unsent >= total {
+            return total == 1 ? "It hasn't been sent to the studio: its photos and model \(gone)"
+                              : "None of them has been sent to the studio: their photos and models \(gone)"
+        }
+        return unsent == 1 ? "1 of them hasn't been sent to the studio: its photos and model \(gone) \(kept)"
+                           : "\(unsent) of them haven't been sent to the studio: their photos and models \(gone) \(kept)"
+    }
+}
+
+/// The version as Settings shows it: with the build number, which tells two builds of the same version apart
+/// (a TestFlight build and the App Store one, say) when someone asks for help.
+enum AppVersion {
+    static func shown(version: String?, build: String?) -> String {
+        guard let version else { return "?" }
+        guard let build, build != version else { return version }
+        return "\(version) (\(build))"
     }
 }
