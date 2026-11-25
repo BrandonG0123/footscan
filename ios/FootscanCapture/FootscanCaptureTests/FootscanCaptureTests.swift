@@ -1326,3 +1326,35 @@ struct OtherStudioLinks {
         #expect(!StudioConnection.stillAsking(since: asked, now: asked - 60)) // the clock went back
     }
 }
+
+// MARK: - how the overnight changes work together
+
+@Suite("A scan again that was stopped")
+struct StoppedScanAgain {
+    @Test func aStoppedScanAgainWithNoModelDoesNotReplaceTheRefusedScan() throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString, directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let t0 = Date(timeIntervalSince1970: 1_800_000_000)
+        var refused = ScanRecord(subject: .rightSole, created: t0, device: "test", systemVersion: "0", appVersion: "0")
+        refused.retake = ["THE HEEL IS CUT OFF"]
+
+        let again = Scan(folder: root)
+        var rec = ScanRecord(subject: .rightSole, created: t0 + 60, device: "test", systemVersion: "0", appVersion: "0")
+        rec.stoppedEarly = t0 + 90
+        again.save(rec)
+        #expect(!again.replaces(refused)) // the home screen keeps asking for that foot
+
+        try Data().write(to: again.usdz) // built after all: now it stands in for the refused one
+        #expect(again.replaces(refused))
+
+        rec.stoppedEarly = nil
+        again.save(rec)
+        try? FileManager.default.removeItem(at: again.usdz)
+        #expect(again.replaces(refused)) // a scan again that went to the end replaces it, built or not
+        var older = rec
+        older.created = t0 - 60
+        again.save(older)
+        #expect(!again.replaces(refused)) // only a newer scan
+    }
+}

@@ -312,6 +312,14 @@ struct Scan: Identifiable, Hashable {
 
     var hasModel: Bool { FileManager.default.fileExists(atPath: usdz.path()) }
 
+    /// Whether this scan stands in for `refused` (one the studio or the phone said to scan again), so the home
+    /// screen stops asking for it: a newer scan of the same foot, unless this one was stopped partway with no
+    /// model. The foot still needs scanning then, and a stopped scan asks for nothing itself.
+    func replaces(_ refused: ScanRecord) -> Bool {
+        guard let r = record else { return false }
+        return r.sameFoot(as: refused) && r.created > refused.created && (r.stoppedEarly == nil || hasModel)
+    }
+
     /// What deleting this scan from the phone loses, said in the confirmation before it goes.
     var deleteWarning: String {
         record?.studioCaptureID == nil ? "Its photos and model will be gone." : "The copy in the studio stays."

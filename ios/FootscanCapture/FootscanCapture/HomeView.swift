@@ -390,10 +390,7 @@ struct HomeView: View {
             guard let r = s.record else { continue }
             if let p = library.problems[s.folder] { return (s, "\(r.heading) needs a look", p) }
             if r.retake != nil || r.heldByPhoneCheck, !library.scans.contains(where: { newer in
-                // a newer scan of the same foot replaces it, unless that one was stopped partway with no model:
-                // the foot still needs scanning, and a stopped scan asks for nothing itself
-                newer.record.map { $0.sameFoot(as: r) && $0.created > r.created && ($0.stoppedEarly == nil || newer.hasModel) }
-                    ?? false
+                newer.replaces(r)
             }) {
                 // what went wrong, in short; the steps to fix it are on the scan's page, with Scan again
                 let what = r.nextTime.map(\.title).joined(separator: ". ")
