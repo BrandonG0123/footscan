@@ -31,6 +31,8 @@ struct CaptureView: View {
     /// The X was tapped after photos were taken: ask before ending the scan (a helper's thumb can hit it halfway
     /// round a foot, and the person scanned may have gone by the time anyone notices).
     @State private var confirmCancel = false
+    /// Photos taken when the X was tapped: the session may end (fail) while the question is open.
+    @State private var shotsWhenAsked = 0
 
     var body: some View {
         ZStack {
@@ -70,13 +72,16 @@ struct CaptureView: View {
             Button("Stop scanning", role: .destructive, action: cancel)
             Button("Keep scanning", role: .cancel) {}
         } message: {
-            Text("The \(session?.numberOfShotsTaken ?? 0) photos taken so far stay on the phone, but this scan won't go on from here.")
+            Text("The photos taken so far stay on the phone, but this scan won't go on from here.")
         }
+        // the session ended under the question (it failed, or finished): nothing left to stop
+        .onChange(of: session == nil) { _, ended in if ended { confirmCancel = false } }
     }
 
     /// Before any photo there's nothing to lose: cancel at once. After, ask first.
     private func askCancel() {
-        if (session?.numberOfShotsTaken ?? 0) > 0 { confirmCancel = true } else { cancel() }
+        shotsWhenAsked = session?.numberOfShotsTaken ?? 0
+        if shotsWhenAsked > 0 { confirmCancel = true } else { cancel() }
     }
 
     private func start() {
@@ -119,10 +124,11 @@ struct CaptureView: View {
     }
 
     private func cancel() {
-        if let session, session.numberOfShotsTaken > 0, var rec = scan.record {
+        let shots = max(session?.numberOfShotsTaken ?? 0, shotsWhenAsked)
+        if shots > 0, var rec = scan.record {
             // stopped partway on purpose: kept, but home doesn't ask for it to be built (ScanRecord.stoppedEarly)
             rec.stoppedEarly = Date()
-            rec.shotsTaken = session.numberOfShotsTaken
+            rec.shotsTaken = shots
             rec.scanPasses = passes
             scan.save(rec)
         }

@@ -502,6 +502,28 @@ struct ScanList {
         // kept (its page can still build it), but the home screen no longer asks for it
         #expect(!scan.waitsToBuild && !scan.keptNothing && scan.photoCount == 12)
         #expect(scan.record?.stoppedEarly != nil)
+        // built from its page anyway, but its studio copy wasn't saved: home asks again
+        try Data().write(to: scan.usdz)
+        #expect(scan.waitsToBuild)
+    }
+
+    @Test func aStoppedOrFailedCaptureIsNeverTakenForAnEmptyOne() throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString, directoryHint: .isDirectory)
+        defer { try? FileManager.default.removeItem(at: root) }
+        // stopped after shots the session counted, before their photos reached the folder
+        let stopped = try scanWithPhotos(0, in: root)
+        var rec = try #require(stopped.record)
+        rec.stoppedEarly = Date()
+        rec.shotsTaken = 3
+        stopped.save(rec)
+        #expect(!stopped.keptNothing)
+        // failed before the first photo: its error explains what happened
+        rec = try #require(stopped.record)
+        rec.stoppedEarly = nil
+        rec.shotsTaken = nil
+        rec.error = "The capture stopped"
+        stopped.save(rec)
+        #expect(!stopped.keptNothing)
     }
 
     @Test func aCaptureCancelledBeforeItsFirstPhotoKeptNothing() throws {

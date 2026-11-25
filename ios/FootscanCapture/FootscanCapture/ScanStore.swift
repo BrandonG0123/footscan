@@ -267,12 +267,18 @@ struct Scan: Identifiable, Hashable {
         record?.studioCaptureID == nil ? "Its photos and model will be gone." : "The copy in the studio stays."
     }
 
-    /// Photos and no model yet, and not a capture the person stopped partway: the home screen asks for it to be
-    /// finished (built).
-    var waitsToBuild: Bool { photoCount > 0 && !hasOBJ && record?.stoppedEarly == nil }
+    /// Photos and no studio copy of the model yet: the home screen asks for it to be finished (built). Not a capture
+    /// the person stopped partway, until a model is built from it anyway (then its copy for the studio is owed).
+    var waitsToBuild: Bool { photoCount > 0 && !hasOBJ && (record?.stoppedEarly == nil || hasModel) }
 
-    /// Nothing was kept: no photos and no model (a capture cancelled before its first photo leaves this).
-    var keptNothing: Bool { photoCount == 0 && !hasModel }
+    /// Nothing was kept or happened: no photos, no model, no shots counted (a stopped capture's photos may still be
+    /// on their way to the folder) and no error saved to explain a failure. A capture cancelled before its first
+    /// photo leaves this, and its folder can go.
+    var keptNothing: Bool {
+        guard photoCount == 0, !hasModel else { return false }
+        guard let rec = record else { return true }
+        return rec.stoppedEarly == nil && rec.error == nil && (rec.shotsTaken ?? 0) == 0
+    }
     var hasOBJ: Bool { FileManager.default.fileExists(atPath: obj.path()) }
 
     var photoCount: Int {
