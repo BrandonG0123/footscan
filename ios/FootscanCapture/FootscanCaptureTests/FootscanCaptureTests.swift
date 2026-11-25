@@ -495,10 +495,13 @@ struct CalibrationScore {
         """#
         let acc = try JSONDecoder().decode(StudioAccuracy.self, from: Data(json.utf8))
         #expect(acc.scale_pct == 1.35 && acc.warnings == ["the phone made up the bottom"])
-        #expect(acc.comparedWith == "vs the design")
-        var calipers = acc
-        calipers.reference = "calipers"
-        #expect(calipers.comparedWith == "vs your calipers")
+    }
+
+    @Test func withCaliperReadingsTheNoteSaysEachSizeMayStillBeAgainstTheDesign() {
+        // the studio marks the whole score "calipers" once any reading is typed in; sizes without one use the design
+        #expect(AccuracyCard.referenceNote("calipers").contains("where you typed one in"))
+        #expect(AccuracyCard.referenceNote("model").contains("design"))
+        #expect(AccuracyCard.referenceNote(nil) == AccuracyCard.referenceNote("model"))
     }
 
     @Test func anAnswerSavedBeforeTheWarningsStillReads() throws {
@@ -510,6 +513,8 @@ struct CalibrationScore {
         #expect(AccuracyCard.percent(0.9) == "+0.9%")
         #expect(AccuracyCard.percent(-1.24) == "−1.2%")
         #expect(AccuracyCard.percent(0) == "0.0%")
+        #expect(AccuracyCard.percent(-0.04) == "0.0%")  // no direction where there's none to show
+        #expect(AccuracyCard.signed(-1.0, places: 2) == "−1.00")
     }
 }
 

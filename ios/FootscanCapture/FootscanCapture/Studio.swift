@@ -324,9 +324,6 @@ struct StudioAccuracy: Codable, Equatable {
     /// What the studio noticed about the scan, in its own words (a made-up bottom, a size off, a part it couldn't measure).
     var warnings: [String]?
     var error: String?
-
-    /// "vs your calipers" or "vs the design": what the sizes were compared with.
-    var comparedWith: String { reference == "calipers" ? "vs your calipers" : "vs the design" }
 }
 
 struct StudioClient {
