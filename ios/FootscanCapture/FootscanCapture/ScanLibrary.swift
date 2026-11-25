@@ -12,15 +12,15 @@ import UIKit
 
 /// How a send is going, in the words the home card and the scan's page use.
 enum SendingWords {
-    /// `share`: of the model sent so far (nil before the upload itself starts: finding the studio, making its capture).
-    static func chip(_ share: Double?) -> String {
-        guard let share else { return "Sending" }
-        return share < 1 ? "Sending \(Int(share * 100))%" : "Studio checking"
+    /// `percent`: of the model sent so far (nil before the upload itself starts: finding the studio, making its capture).
+    static func chip(_ percent: Int?) -> String {
+        guard let percent else { return "Sending" }
+        return percent < 100 ? "Sending \(percent)%" : "Studio checking"
     }
 
-    static func detail(_ share: Double?, calibration: Bool) -> String {
-        guard let share else { return calibration ? "Sending, and measuring its accuracy…" : "Sending…" }
-        if share < 1 { return "Sending the model… \(Int(share * 100))%" }
+    static func detail(_ percent: Int?, calibration: Bool) -> String {
+        guard let percent else { return calibration ? "Sending, and measuring its accuracy…" : "Sending…" }
+        if percent < 100 { return "Sending the model… \(percent)%" }
         // every byte is there; the studio answers once it has read the model (and scored it, for the calibration object)
         return calibration ? "All sent. The studio is measuring its accuracy…" : "All sent. The studio is checking it…"
     }
@@ -40,9 +40,12 @@ final class ScanLibrary {
     private(set) var unreachable: Set<URL> = []
     /// Of those, the ones where no address answered at all (offer Reconnect: scan the studio's code again).
     private(set) var reconnect: Set<URL> = []
-    /// While a scan is sending: the share of its model sent so far (absent until its upload starts). At 1 the studio
-    /// has all of it and is reading it (and scoring it, for the calibration object) before it answers.
-    private(set) var uploaded: [URL: Double] = [:]
+    /// While a scan is sending: the whole percent of its model sent so far (absent until its upload starts). At 100
+    /// the studio has all of it and is reading it (and scoring it, for the calibration object) before it answers.
+    private(set) var uploaded: [URL: Int] = [:]
+    /// Which send of each scan is the current one, so a report from a send that has ended can't land on the next.
+    private var sendRun: [URL: Int] = [:]
+    private var sendRuns = 0
     /// Bumped when a scan's files or record change, so views re-read them.
     private(set) var version = 0
 
@@ -211,8 +214,11 @@ final class ScanLibrary {
         unreachable.remove(scan.folder)
         reconnect.remove(scan.folder)
         work[scan.folder] = .sending
+        sendRuns += 1
+        let run = sendRuns
+        sendRun[scan.folder] = run
         let release = KeepAlive.work("Sending a scan")
-        defer { work[scan.folder] = nil; uploaded[scan.folder] = nil; reload(); release() }
+        defer { work[scan.folder] = nil; uploaded[scan.folder] = nil; sendRun[scan.folder] = nil; reload(); release() }
         let reuse = record.reusableCapture(at: client.link)
         let studioID = PendingCapture.identity(of: client.link), loadKg = record.loadKg
         do {
@@ -223,10 +229,11 @@ final class ScanLibrary {
                 guard var latest = scan.record else { return }
                 latest.pendingCapture = PendingCapture(id: id, studio: studioID, loadKg: loadKg)
                 scan.save(latest)
-            }, progress: { [weak self] share in
-                // only while this send is still the scan's work (a late report after it ended changes nothing)
-                guard let self, self.work[folder] == .sending else { return }
-                self.uploaded[folder] = max(self.uploaded[folder] ?? 0, share)
+            }, progress: { [weak self] percent in
+                // only this send's own reports (one still queued when it ended changes nothing, even if the scan is
+                // sending again by then)
+                guard let self, self.sendRun[folder] == run else { return }
+                self.uploaded[folder] = percent
             })
             record.pendingCapture = nil
             record.studioCaptureID = sent.captureID

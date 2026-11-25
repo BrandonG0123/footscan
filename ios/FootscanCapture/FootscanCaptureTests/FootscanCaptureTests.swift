@@ -423,32 +423,52 @@ struct NetworkChanges {
 
 @Suite("Upload progress")
 struct UploadProgressShown {
-    @Test func eachWholePercentIsToldOnceAndOnlyForward() {
-        #expect(UploadProgress.step(sent: 0, total: 1000, last: -1) == 0)
-        #expect(UploadProgress.step(sent: 420, total: 1000, last: 0) == 42)
-        #expect(UploadProgress.step(sent: 425, total: 1000, last: 42) == nil)  // still 42%
-        #expect(UploadProgress.step(sent: 300, total: 1000, last: 42) == nil)  // never backwards
+    @Test func eachWholePercentIsToldOnce() {
+        var count = UploadProgress.Count()
+        let first = count.next(sent: 0, total: 1000)
+        let further = count.next(sent: 420, total: 1000)
+        let same = count.next(sent: 425, total: 1000)  // still 42%
+        #expect(first == 0)
+        #expect(further == 42)
+        #expect(same == nil)
     }
 
     @Test func oneHundredMeansEveryByteHasGone() {
-        #expect(UploadProgress.step(sent: 999, total: 1000, last: 98) == 99)
-        #expect(UploadProgress.step(sent: 1000, total: 1000, last: 99) == 100)
-        #expect(UploadProgress.step(sent: 1200, total: 1000, last: 99) == 100)
+        var count = UploadProgress.Count()
+        let nearly = count.next(sent: 999, total: 1000)
+        let all = count.next(sent: 1000, total: 1000)
+        #expect(nearly == 99)
+        #expect(all == 100)
+        var over = UploadProgress.Count()
+        let beyond = over.next(sent: 1200, total: 1000)
+        #expect(beyond == 100)
+    }
+
+    @Test func sendingTheBodyAgainCountsFromTheStartAgain() {
+        var count = UploadProgress.Count()
+        _ = count.next(sent: 1000, total: 1000)
+        let again = count.next(sent: 50, total: 1000)
+        #expect(again == 5)
+        #expect(count.percent == 5)
     }
 
     @Test func anUnknownSizeTellsNothing() {
-        #expect(UploadProgress.step(sent: 500, total: 0, last: -1) == nil)
-        #expect(UploadProgress.step(sent: 500, total: NSURLSessionTransferSizeUnknown, last: -1) == nil)
+        var count = UploadProgress.Count()
+        let none = count.next(sent: 500, total: 0)
+        let unknown = count.next(sent: 500, total: NSURLSessionTransferSizeUnknown)
+        #expect(none == nil)
+        #expect(unknown == nil)
     }
 
     @Test func theCardSaysHowFarAndThenThatTheStudioIsChecking() {
         #expect(SendingWords.chip(nil) == "Sending")
-        #expect(SendingWords.chip(0.42) == "Sending 42%")
-        #expect(SendingWords.chip(1) == "Studio checking")
+        #expect(SendingWords.chip(29) == "Sending 29%")  // a whole percent, never 28 from 0.29 * 100
+        #expect(SendingWords.chip(57) == "Sending 57%")
+        #expect(SendingWords.chip(100) == "Studio checking")
         #expect(SendingWords.detail(nil, calibration: false) == "Sending…")
-        #expect(SendingWords.detail(0.07, calibration: false) == "Sending the model… 7%")
-        #expect(SendingWords.detail(1, calibration: false) == "All sent. The studio is checking it…")
-        #expect(SendingWords.detail(1, calibration: true) == "All sent. The studio is measuring its accuracy…")
+        #expect(SendingWords.detail(7, calibration: false) == "Sending the model… 7%")
+        #expect(SendingWords.detail(100, calibration: false) == "All sent. The studio is checking it…")
+        #expect(SendingWords.detail(100, calibration: true) == "All sent. The studio is measuring its accuracy…")
     }
 }
 

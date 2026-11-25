@@ -265,39 +265,55 @@ enum StudioStore {
     }
 }
 
-/// How far an upload has got, told in whole percents (at most 101 times, however many chunks the phone sends it in),
-/// and only ever forward. URLSession reports each chunk sent on its own queue; the share goes to the main actor.
-final class UploadProgress: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
-    private let report: @MainActor @Sendable (Double) -> Void
-    private let lock = NSLock()
-    private var last = -1
-    init(_ report: @escaping @MainActor @Sendable (Double) -> Void) { self.report = report }
+/// How far an upload has got, in whole percents: each told once, in order, on the main thread. Rounded down, so 100
+/// means every byte has gone. If the phone starts sending the body again (a connection reset partway), the count
+/// starts again from there rather than staying at the old, higher figure.
+final class UploadProgress: @unchecked Sendable {
+    /// The counting itself, without the threads.
+    struct Count: Equatable {
+        private(set) var percent = -1
+        private var bytes: Int64 = -1
 
-    /// The whole percent `sent` of `total` is, if it's further than `last`; nil when it isn't, or when the size
-    /// isn't known. Rounded down, so 100 means every byte has gone.
-    static func step(sent: Int64, total: Int64, last: Int) -> Int? {
-        guard total > 0, sent >= 0 else { return nil }
-        let percent = Int(min(sent, total) * 100 / total)
-        return percent > last ? percent : nil
+        /// The whole percent `sent` of `total` is, if it's a new figure; nil when it isn't, or the size isn't known.
+        mutating func next(sent: Int64, total: Int64) -> Int? {
+            guard total > 0, sent >= 0 else { return nil }
+            if sent < bytes { percent = -1 } // sending again from the start
+            bytes = sent
+            let now = Int(min(sent, total) * 100 / total)
+            guard now != percent else { return nil }
+            percent = now
+            return now
+        }
     }
 
-    func urlSession(_ session: URLSession, task: URLSessionTask, didSendBodyData bytesSent: Int64,
-                    totalBytesSent: Int64, totalBytesExpectedToSend: Int64) {
-        let percent: Int? = lock.withLock {
-            guard let p = Self.step(sent: totalBytesSent, total: totalBytesExpectedToSend, last: last) else { return nil }
-            last = p
-            return p
-        }
-        guard let percent else { return }
+    private let report: @MainActor @Sendable (Int) -> Void
+    private let lock = NSLock()
+    private var count = Count()
+    init(_ report: @escaping @MainActor @Sendable (Int) -> Void) { self.report = report }
+
+    /// From URLSession's queue, for each chunk sent.
+    func sent(_ total: Int64, of expected: Int64) {
+        guard let percent = lock.withLock({ count.next(sent: total, total: expected) }) else { return }
         let report = report
-        Task { @MainActor in report(Double(percent) / 100) }
+        // the main queue keeps the reports in the order they were made (separate Tasks needn't)
+        DispatchQueue.main.async { MainActor.assumeIsolated { report(percent) } }
     }
 }
 
 /// Trusts exactly the pinned certificate (when there is one); otherwise the phone's normal checks.
 final class PinnedTrust: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
     let fingerprint: String?
-    init(fingerprint: String?) { self.fingerprint = fingerprint }
+    /// Told how an upload goes (one session per request, so this is that request's).
+    let progress: UploadProgress?
+    init(fingerprint: String?, progress: UploadProgress? = nil) {
+        self.fingerprint = fingerprint
+        self.progress = progress
+    }
+
+    func urlSession(_ session: URLSession, task: URLSessionTask, didSendBodyData bytesSent: Int64,
+                    totalBytesSent: Int64, totalBytesExpectedToSend: Int64) {
+        progress?.sent(totalBytesSent, of: totalBytesExpectedToSend)
+    }
 
     private let lock = NSLock()
     private var refused = false
@@ -482,11 +498,11 @@ struct StudioClient {
         }
     }
 
-    private func session(timeout: TimeInterval = 20) -> (URLSession, PinnedTrust) {
+    private func session(timeout: TimeInterval = 20, progress: UploadProgress? = nil) -> (URLSession, PinnedTrust) {
         let config = URLSessionConfiguration.ephemeral
         config.timeoutIntervalForRequest = timeout
         config.waitsForConnectivity = false
-        let trust = PinnedTrust(fingerprint: link.fingerprint)
+        let trust = PinnedTrust(fingerprint: link.fingerprint, progress: progress)
         return (URLSession(configuration: config, delegate: trust, delegateQueue: nil), trust)
     }
 
@@ -505,19 +521,19 @@ struct StudioClient {
     }
 
     private func send(_ req: URLRequest, timeout: TimeInterval = 20,
-                      watching: URLSessionTaskDelegate? = nil) async throws -> [String: Any] {
-        try await sendForJSON(req, timeout: timeout, watching: watching) as? [String: Any] ?? [:]
+                      progress: UploadProgress? = nil) async throws -> [String: Any] {
+        try await sendForJSON(req, timeout: timeout, progress: progress) as? [String: Any] ?? [:]
     }
 
-    /// The studio's answer as whatever JSON it is (a list, for api/captures). `watching`: told how the upload goes
-    /// (UploadProgress), alongside the pin check.
+    /// The studio's answer as whatever JSON it is (a list, for api/captures). `progress`: told how the upload goes,
+    /// by the same session delegate that checks the pin and refuses redirects.
     private func sendForJSON(_ req: URLRequest, timeout: TimeInterval = 20,
-                             watching: URLSessionTaskDelegate? = nil) async throws -> Any {
-        let (s, trust) = session(timeout: timeout)
+                             progress: UploadProgress? = nil) async throws -> Any {
+        let (s, trust) = session(timeout: timeout, progress: progress)
         defer { s.finishTasksAndInvalidate() }
         let data: Data, response: URLResponse
         do {
-            (data, response) = try await s.data(for: req, delegate: watching)
+            (data, response) = try await s.data(for: req)
         } catch {
             if Task.isCancelled { throw CancellationError() } // another address answered first: not a miss
             throw Failure.unreachable([Missed(address: link.url, miss: Miss(error, pinRefused: trust.refusedCertificate))],
@@ -595,10 +611,10 @@ struct StudioClient {
     /// Make a research capture for this scan and upload its model, at whichever address answers. `created` is told
     /// the new capture's id as soon as the studio makes it, so a try that fails after that can be finished by the next
     /// (`into`: the capture an earlier try made at this studio; see `existingCapture`).
-    /// `progress` is told the share of the model sent so far (0...1, in whole percents) while it goes.
+    /// `progress` is told the whole percent of the model sent so far while it goes (UploadProgress).
     func upload(_ scan: Scan, record: ScanRecord, into existing: String? = nil,
                 created: @escaping @MainActor @Sendable (String) -> Void = { _ in },
-                progress: @escaping @MainActor @Sendable (Double) -> Void = { _ in }) async throws -> Sent {
+                progress: @escaping @MainActor @Sendable (Int) -> Void = { _ in }) async throws -> Sent {
         // A quick hello first: a studio that isn't there fails in seconds, not after a long upload timeout.
         let here: StudioClient
         do {
@@ -619,7 +635,7 @@ struct StudioClient {
 
     private func uploadHere(_ scan: Scan, record: ScanRecord, into existing: String?,
                             created: @escaping @MainActor @Sendable (String) -> Void,
-                            progress: @escaping @MainActor @Sendable (Double) -> Void) async throws -> Sent {
+                            progress: @escaping @MainActor @Sendable (Int) -> Void) async throws -> Sent {
         if let existing {
             switch try await existingCapture(existing) {
             case .waiting: return try await sendModel(scan, into: existing, progress: progress)
@@ -678,13 +694,13 @@ struct StudioClient {
 
     /// Upload the model into capture `id` (one still waiting for its model: see `existingCapture`).
     private func sendModel(_ scan: Scan, into id: String,
-                           progress: @escaping @MainActor @Sendable (Double) -> Void) async throws -> Sent {
+                           progress: @escaping @MainActor @Sendable (Int) -> Void) async throws -> Sent {
         let obj = try Data(contentsOf: scan.obj)
         let answer = try await send(request("api/captures/\(id)/mesh", method: "PUT",
                                             query: [URLQueryItem(name: "ext", value: "obj"), URLQueryItem(name: "up", value: "y")],
                                             body: obj, contentType: "application/octet-stream"),
                                     timeout: 180, // the calibration object is scored before the answer comes back
-                                    watching: UploadProgress(progress))
+                                    progress: UploadProgress(progress))
         var accuracy: StudioAccuracy?
         if let acc = answer["accuracy"], !(acc is NSNull),
            let data = try? JSONSerialization.data(withJSONObject: acc) {
