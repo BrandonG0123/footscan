@@ -157,7 +157,7 @@ final class ScanLibrary {
         watch.cancel()
         work[scan.folder] = nil
         if case .failed(let message) = builder.phase {
-            let awayNow = UIApplication.shared.applicationState != .active
+            let awayNow = away.isAway || UIApplication.shared.applicationState == .background
             let sinceBack = away.backAt.map { Date().timeIntervalSince($0) }
             if Self.shouldResume(awayNow: awayNow, secondsSinceBack: sinceBack, resumesSoFar: resumes[scan.folder, default: 0]) {
                 interrupted.insert(scan.folder)
@@ -178,27 +178,33 @@ final class ScanLibrary {
     /// Builds cut off by the app leaving the screen: start each again, oldest first, picking up from the working
     /// data Object Capture kept (its Checkpoint folder). Call when the app is back in front.
     func resumeInterrupted(settings: AppSettings, studio: StudioConnection) async {
-        guard !resumingInterrupted else { return }
+        // a call while a pass runs (a resumed build that failed again just after a return) is kept for the end of
+        // that pass, not dropped: otherwise it waits for the next time the app leaves and comes back
+        guard !resumingInterrupted else { resumeAgain = true; return }
         resumingInterrupted = true
         defer { resumingInterrupted = false }
-        for scan in scans.reversed() where interrupted.contains(scan.folder) {
-            // left the screen again: the rest wait for the next return, without using up a try in the background
-            guard UIApplication.shared.applicationState == .active else { break }
-            if scan.hasOBJ || scan.photoCount == 0 {
-                // built by other means meanwhile, or nothing left to build from: nothing to say it will restart
+        repeat {
+            resumeAgain = false
+            for scan in scans.reversed() where interrupted.contains(scan.folder) {
+                // left the screen again: the rest wait for the next return, without using up a try in the background
+                guard UIApplication.shared.applicationState == .active else { break }
+                if scan.hasOBJ || scan.photoCount == 0 {
+                    // built by other means meanwhile, or nothing left to build from: nothing to say it will restart
+                    interrupted.remove(scan.folder)
+                    if problems[scan.folder] == Self.interruptedMessage { problems[scan.folder] = nil }
+                    continue
+                }
+                guard work[scan.folder] == nil else { continue } // busy: stays waiting for the next return
                 interrupted.remove(scan.folder)
-                if problems[scan.folder] == Self.interruptedMessage { problems[scan.folder] = nil }
-                continue
+                resumes[scan.folder, default: 0] += 1
+                autoResuming.insert(scan.folder)
+                await finish(scan, settings: settings, studio: studio)
+                autoResuming.remove(scan.folder)
             }
-            guard work[scan.folder] == nil else { continue } // busy: stays waiting for the next return
-            interrupted.remove(scan.folder)
-            resumes[scan.folder, default: 0] += 1
-            autoResuming.insert(scan.folder)
-            await finish(scan, settings: settings, studio: studio)
-            autoResuming.remove(scan.folder)
-        }
+        } while resumeAgain && UIApplication.shared.applicationState == .active
     }
     private var resumingInterrupted = false
+    private var resumeAgain = false
 
     /// The model was built but its studio copy (OBJ) wasn't made: make just that.
     func convert(_ scan: Scan) async {
@@ -312,10 +318,16 @@ final class ScanLibrary {
     }
 }
 
-/// While a model builds: whether the app went away from the screen, and when it last came back. Changed only on the
-/// main queue.
-private final class AwayFromScreen: @unchecked Sendable {
+/// While a model builds: whether the app went away from the screen (into the background), and when it last came
+/// back from there. Changed only on the main queue. Control Center, a notification or a call banner make the app
+/// inactive for a moment but leave it on screen, with the GPU it builds on: coming back from those isn't a return.
+final class AwayFromScreen: @unchecked Sendable {
     private(set) var backAt: Date?
-    func left() { backAt = nil }
-    func cameBack() { backAt = Date() }
+    private(set) var isAway = false
+    func left() { isAway = true; backAt = nil }
+    func cameBack(at now: Date = Date()) {
+        guard isAway else { return } // only active again after being inactive: it never left
+        isAway = false
+        backAt = now
+    }
 }

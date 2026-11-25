@@ -504,6 +504,20 @@ struct InterruptedBuilds {
         #expect(!ScanLibrary.shouldResume(awayNow: false, secondsSinceBack: 180, resumesSoFar: 0))
     }
 
+    @Test func aMomentInControlCenterIsNotLeavingTheScreen() {
+        let away = AwayFromScreen()
+        away.cameBack() // active again after Control Center or a call banner: the app never went to the background
+        #expect(away.backAt == nil && !away.isAway)
+
+        away.left()
+        #expect(away.isAway)
+        let back = Date(timeIntervalSince1970: 1_800_000_000)
+        away.cameBack(at: back)
+        #expect(away.backAt == back && !away.isAway)
+        away.cameBack(at: back + 60) // Control Center later on: the real return stays the one that counts
+        #expect(away.backAt == back)
+    }
+
     @Test func theMessageSaysItCarriesOnByItself() {
         #expect(ScanLibrary.interruptedMessage.localizedCaseInsensitiveContains("by itself"))
     }
