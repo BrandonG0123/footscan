@@ -16,9 +16,14 @@ struct RootView: View {
     @State private var showStudio = false
     @Environment(NetworkWatch.self) private var network
 
-    /// While the app is in front with a scan waiting because the studio didn't answer, it's tried again this often
-    /// (the studio computer may simply have been asleep, with nothing on the phone's side changing).
-    static let retryWaiting: Duration = .seconds(120)
+    /// While the app is in front with a scan waiting because the studio didn't answer, it's tried again after this
+    /// long (the studio computer may simply have been asleep, with nothing on the phone's side changing). Each try
+    /// sends the whole model, so a studio that stays silent is tried less often: 2 minutes, then 4, 8, and every
+    /// 16 after that. Once nothing is waiting, or the app comes back to the front, it starts at 2 minutes
+    /// again. A network change or a newly connected studio still tries at once, whatever the count.
+    static func retryDelay(afterTries tries: Int) -> Duration {
+        .seconds(120 << min(max(tries, 0), 3))
+    }
 
     var body: some View {
         ZStack {
@@ -46,10 +51,16 @@ struct RootView: View {
         .onChange(of: network.changes) { sendWaiting() }
         .task(id: scenePhase) {
             guard scenePhase == .active else { return }
+            var tries = 0
             while !Task.isCancelled {
-                try? await Task.sleep(for: Self.retryWaiting)
+                try? await Task.sleep(for: Self.retryDelay(afterTries: tries))
                 if Task.isCancelled { return }
-                if !library.unreachable.isEmpty { sendWaiting() }
+                if library.unreachable.isEmpty {
+                    tries = 0
+                } else {
+                    tries += 1
+                    sendWaiting()
+                }
             }
         }
     }
