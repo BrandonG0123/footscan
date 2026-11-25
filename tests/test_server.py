@@ -2570,3 +2570,18 @@ def test_accept_encoding_is_read_with_its_q_values(header, takes):
     from footscan.server import accepts_gzip
 
     assert accepts_gzip(header) is takes
+
+
+def test_no_script_written_into_a_page_runs_only_the_sites_own_files():
+    """The CSP forbids inline script, so no page may carry one: each page's script is a file under /assets."""
+    import re
+
+    from footscan.server import SECURITY_HEADERS
+
+    csp = dict(p.strip().split(" ", 1) for p in SECURITY_HEADERS["Content-Security-Policy"].split(";") if p.strip())
+    assert csp["script-src"] == "'self'"
+    for page in [*WEB_DIR.glob("*.html"), *WEB_DIR.glob("studio/*.html")]:
+        html = page.read_text(encoding="utf-8")
+        inline = [m for m in re.finditer(r"<script\b([^>]*)>(.*?)</script>", html, re.S) if m.group(2).strip()]
+        assert not inline, f"{page.name}: a script inside the page won't run; move it to a file under web/assets"
+        assert not re.search(r"\son[a-z]+\s*=", html), f"{page.name}: an onclick= (or the like) won't run"

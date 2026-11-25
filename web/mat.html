@@ -99,11 +99,6 @@
 </main>
 <script src="/vendor/motion/motion.js"></script>
 <script type="module" src="/assets/layout.js"></script>
-<script type="module">
-  import { DIAGRAM_CSS, matDiagram } from "/assets/diagrams.js";
-  document.head.insertAdjacentHTML("beforeend", `<style>${DIAGRAM_CSS}</style>`);
-  document.getElementById("mat-diagram").innerHTML = matDiagram();
-  import("/assets/interact.js").then(({ assembleMat }) => assembleMat(document.getElementById("mat-diagram")));
-</script>
+<script type="module" src="/assets/mat-page.js"></script>
 </body>
 </html>

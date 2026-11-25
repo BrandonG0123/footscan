@@ -147,8 +147,11 @@ SECURITY_HEADERS = {
     "Referrer-Policy": "no-referrer",  # studio keys and rescan tokens travel in URLs
     "X-Frame-Options": "DENY",
     "Permissions-Policy": "camera=(self), accelerometer=(self), gyroscope=(self), magnetometer=(self)",
+    # Scripts only from this server's own files: no script written into a page runs, so text that slipped into
+    # a page unescaped (a customer's scan summary was one, PR #20) can't run as code. Styles may be inline (the
+    # pages use style attributes); a style can't run code.
     "Content-Security-Policy": (
-        "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; "
+        "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
         "img-src 'self' blob: data:; media-src 'self' blob:; connect-src 'self'; frame-ancestors 'none'"
     ),
 }
