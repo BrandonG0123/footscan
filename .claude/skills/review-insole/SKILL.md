@@ -30,7 +30,8 @@ never suggest posting or any correction (the first fit has none). Every number y
    "Outline" line: a saved shoe, a scan of the shoe's insole, the generic insole outline, or the foot's own), the
    shoe in the packet's spec (today: ASICS Gel Resolution X, US men's 9.5, 275 mm chart length), and every
    **FLAG** in the plain checks. The outline should be the shoe's (a saved shoe), or else the generic insole
-   outline at the spec's length: the foot only shapes the top surface and the arch support.
+   outline at the spec's length: the foot only shapes the top surface and the arch support. Note the packet's
+   "Arch support as printed" line too: the "Highest fill" is the whole insole's and can be the heel's back.
 
 3. Look at `top.png`, `side.png` and, if present, `pair.png` with the Read tool. Answer every question under
    "Look at the pictures" with what you actually see, one line each, yes or no plus the reason. If a picture is

@@ -19,6 +19,7 @@ reconstructions are; mm, cm or m are detected. It writes:
 | `right-insole-summary.html` | The clinician summary sheet (SAFETY.md requirement 1): device parameters (posting 0°), scan measurements, warnings, sign-off block, break-in and stop rule. Print it. |
 | `print-notes.txt` | Starting points for TPU. Untested on this design (that's Phase 5). |
 | `right-insole-template.pdf` | The insole at full size on paper (US Letter, or `--paper a4`): check the outline in the shoe before a long print. See *The paper template* below. |
+| `right-insole-arch-trial.3mf` | Only with `--trial`: the insole's midfoot on its own, to print first. See *The arch trial* below. |
 | `right-insole.json` | Everything above as data. |
 
 `--pair` also writes the other foot's insole as this one's mirror image
@@ -569,6 +570,27 @@ its page yet; the header names the page the 50 mm square is on.
 Checked on SYNTHETIC insoles (`tests/test_template.py`): the outline's width
 on the page is the insole's to 0.2 mm, the square and the scale are 50 and
 100 mm, and a left insole's arch lands on the page's right.
+
+## The arch trial
+
+`footscan insole --trial` also writes `right-insole-arch-trial.3mf` (and
+`.stl`, and a `.txt` of what to look at): the insole between two flat cuts
+50 mm apart (`ARCH_TRIAL_MM`, a judgment), centred on the arch support as
+printed. Nothing else is changed, so it is the insole there: the arch, the
+rounded edge, the base, lying on the bed the same way. Printed first, with
+the filament and settings the insole will get and at 100%, it shows the
+arch's height and firmness in TPU and whether the rounded edge prints
+cleanly. On the right-foot sole-up scan
+`LIDAR_nwb_relaxed_R_20261027-151404-2349`, generic outline at 280 mm
+(2026-11-25): 50.0 x 79.8 x 15.0 mm, 32.8 cm3, 31% of the insole's
+106.5 cm3, from 69 to 119 mm forward of the back of the heel. Print time
+wasn't measured (the slicer is on the Mac).
+
+It is a test piece with cut ends, not an insole: its sheet says never to
+stand or walk on it. The checks are a thumb on the arch for firmness, and,
+seated, the foot resting on it to see whether the high side meets the
+arch. If it is too hard or too soft, the infill changes, not the shape.
+The studio doesn't offer it yet.
 
 ## What's been checked
 

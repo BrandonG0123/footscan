@@ -252,15 +252,31 @@ def cmd_insole(args) -> int:
     except (InsoleError, ValueError) as err:
         print(f"{args.mesh}: {err}", file=sys.stderr)
         return 1
-    from .insole import mirrored
+    from .insole import mirrored, write_arch_trial
 
     for one in [ins] + ([mirrored(ins)] if args.pair else []):
+        trial = {}
+        if args.trial:  # first, so insole.json has its numbers
+            try:
+                trial = write_arch_trial(one, Path(args.output), f"{one.foot}-insole")
+            except InsoleError as err:
+                print(f"  arch trial: not made ({err})", file=sys.stderr)
         files = write_outputs(one, Path(args.output), f"{one.foot}-insole", str(args.mesh), paper=args.paper)
+        files.update(trial)
         r = one.report
         print(f"first-fit {one.foot} insole{' (mirror image)' if r.get('mirrored_from') else ''}: {r['length_mm']} x "
               f"{r['width_mm']} mm, {r['volume_cm3']} cm3, highest fill {r['max_fill_mm']} mm (from {units})")
         print(f"  sole seen by the scan: {r['sole']['seen']:.0%} of the footprint, {r['sole']['seen_under_arch']:.0%} under the arch")
+        if r.get("arch_fill"):
+            a = r["arch_fill"]
+            print(f"  arch support as printed: {a['max_mm']} mm above the base, {a['side']} side, {a['share']:.0%} of "
+                  "the foot's length from the heel")
         print(f"  bed: {r['bed_fit']['how']}")
+        if r.get("arch_trial"):
+            a = r["arch_trial"]
+            print(f"  arch trial: {a['from_mm']:g} to {a['to_mm']:g} mm forward of the heel, {a['length_mm']} x "
+                  f"{a['width_mm']} mm, about {a['share_of_insole']:.0%} of the insole: print it first, the same way, "
+                  "at 100% (seated checks only)")
         t = r.get("template") or {}
         if t.get("error"):
             print(f"  paper template: not made ({t['error']})", file=sys.stderr)
@@ -526,6 +542,9 @@ def main(argv=None) -> int:
     ins.add_argument("--pair", action="store_true", help="also write the other foot's insole as this one's mirror "
                                                          "image (a matched pair when the other foot has no usable "
                                                          "scan; its sheet says it isn't that foot's own shape)")
+    ins.add_argument("--trial", action="store_true",
+                     help="also write <foot>-insole-arch-trial.3mf: the insole's midfoot on its own, to print first "
+                          "(arch height, firmness, the rounded edge) before the whole insole")
     ins.add_argument("--paper", default="letter", choices=["letter", "a4"],
                      help="paper for the full-size paper template (<foot>-insole-template.pdf; default letter)")
     shoes_folder(ins)

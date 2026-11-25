@@ -892,6 +892,74 @@ After printing: compare it with your shoe's own insole, trim the toe end if need
 """
 
 
+# ---------------------------------------------------------------------------
+# the arch trial: the insole's midfoot on its own, to print before the whole insole
+# ---------------------------------------------------------------------------
+ARCH_TRIAL_MM = 50.0  # how long the piece is, across the arch support's highest point (a judgment: the arch's
+                      # top and the slopes either side; on right scan 2349, generic outline at 280 mm, 31% of the
+                      # insole's volume)
+
+
+def arch_trial(insole: Insole):
+    """The insole's midfoot on its own: everything between two flat cuts across it, ``ARCH_TRIAL_MM`` apart and
+    centred on the arch support as printed (``arch_fill``; the middle of the arch band, from the end of the heel
+    zone to the start of the ball's cap, if there is none), kept inside the insole. Nothing else is changed, so
+    the arch, the rounded edge and the base are exactly the insole's there, and it lies on the bed as the insole
+    does. Printed first with the same filament and settings, it shows the arch's height and firmness in TPU and
+    whether the rounded edge prints cleanly, in a fraction of the whole print's time. Its cut ends are closed by
+    the slicer with walls the insole doesn't have there. -> (mesh, report), or InsoleError if the cut doesn't
+    come out as one closed solid."""
+    import manifold3d as m3
+    import trimesh
+
+    s, p = insole.surface or {}, insole.params
+    sil = s.get("foot_outline")
+    if sil is None:
+        raise InsoleError("this insole has no foot outline recorded (made by an older footscan): make it again")
+    fx0, _, fx1, _ = sil.bounds
+    length = fx1 - fx0
+    arch = insole.report.get("arch_fill")
+    mid = arch["x"] if arch else fx0 + (p.heel_zone + p.forefoot_from) / 2 * length
+    ix0, ix1 = float(insole.mesh.bounds[0, 0]), float(insole.mesh.bounds[1, 0])
+    a = float(np.clip(mid - ARCH_TRIAL_MM / 2, ix0 + 1.0, ix1 - 1.0 - ARCH_TRIAL_MM))
+    b = a + ARCH_TRIAL_MM
+    whole = m3.Manifold(m3.Mesh(vert_properties=np.asarray(insole.mesh.vertices, np.float32),
+                                tri_verts=np.asarray(insole.mesh.faces, np.uint32)))
+    if whole.status() != m3.Error.NoError:
+        raise InsoleError(f"the insole's solid can't be cut ({whole.status()}); please report the scan")
+    cut = whole.trim_by_plane((1.0, 0.0, 0.0), float(a)).trim_by_plane((-1.0, 0.0, 0.0), -float(b))
+    parts = cut.decompose()
+    out = cut.to_mesh()
+    mesh = trimesh.Trimesh(np.asarray(out.vert_properties)[:, :3], np.asarray(out.tri_verts), process=True)
+    if len(parts) != 1 or not mesh.is_watertight or mesh.volume <= 0:
+        raise InsoleError(f"the arch trial didn't come out as one closed piece ({len(parts)} parts); please report "
+                          "the scan")
+    lo, hi = mesh.bounds
+    report = dict(from_mm=round(float(a), 1), to_mm=round(float(b), 1), length_mm=round(float(hi[0] - lo[0]), 1),
+                  width_mm=round(float(hi[1] - lo[1]), 1), height_mm=round(float(hi[2] - lo[2]), 1),
+                  volume_cm3=round(float(mesh.volume) / 1000, 1),
+                  share_of_insole=round(float(mesh.volume / insole.mesh.volume), 2),
+                  arch_fill_mm=(insole.report.get("arch_fill") or {}).get("max_mm"),
+                  bed_fit=bed_fit_shape(np.asarray(mesh.vertices)[:, :2], p.bed_mm))
+    return mesh, report
+
+
+ARCH_TRIAL_NOTES = """Footscan arch trial: {foot} insole's midfoot, {from_mm:g} to {to_mm:g} mm forward of the back of the heel
+NOT A MEDICAL DEVICE, and NOT AN INSOLE: a test piece with cut ends. Never stand or walk on it.
+
+What it is: the insole between two flat cuts, nothing else changed ({length_mm} x {width_mm} x {height_mm} mm,
+{volume_cm3} cm3, about {share:.0%} of the insole). Its arch support stands {arch} above the base, as on the insole.
+How to print it: exactly as you will print the insole (same TPU, walls, infill, speed), at 100% scale. Never
+rescale it, or it says nothing about the insole.
+What to look at:
+- the rounded edge along the arch side: smooth, no stringing or sagging;
+- firmness: press the arch with a thumb. If it feels as hard as the floor or folds flat, change the infill before
+  printing the insole, not the shape;
+- seated, bare or in the sock you'll wear, rest the foot on it with the arch over the high side: does the high side
+  meet the arch, or sit in front of or behind it? Note what you find for the fit log, in your own words.
+"""
+
+
 CAPTURE_KINDS = {
     "sole_up": ("Sole up: lying face down, knee bent, the sole facing the ceiling",
                 "None (non-weight-bearing, relaxed). An unloaded arch stands higher than a standing one."),
@@ -1178,3 +1246,24 @@ def write_outputs(insole: Insole, out_dir: Path, name: str, scan_label: str, syn
     out_files = {k: str(v) for k, v in files.items()}
     out_files.update({f"preview_{k}": v for k, v in write_preview(insole, out, name).items()})
     return out_files
+
+
+def write_arch_trial(insole: Insole, out_dir: Path, name: str, synthetic: bool = False) -> dict:
+    """``<name>-arch-trial.3mf``, ``.stl`` and ``.txt`` (what it is, how to print it, what to look at) in out_dir:
+    the midfoot piece (``arch_trial``), to print before the whole insole. Its numbers go in insole.report as
+    ``arch_trial``."""
+    mesh, rep = arch_trial(insole)
+    out = Path(out_dir)
+    out.mkdir(parents=True, exist_ok=True)
+    tag = "SYNTHETIC TEST GEOMETRY, not a foot. " if synthetic else ""
+    files = dict(trial_3mf=out / f"{name}-arch-trial.3mf", trial_stl=out / f"{name}-arch-trial.stl",
+                 trial_notes=out / f"{name}-arch-trial.txt")
+    write_3mf(mesh, files["trial_3mf"], title=f"{tag}{name} arch trial",
+              notes=f"{tag}Footscan arch trial ({insole.foot} insole's midfoot). NOT A MEDICAL DEVICE and not an "
+                    "insole: a test piece, never stood or walked on.", bed_mm=insole.params.bed_mm)
+    mesh.export(files["trial_stl"])
+    arch = f"{rep['arch_fill_mm']} mm" if rep["arch_fill_mm"] is not None else "as on the insole"
+    files["trial_notes"].write_text(tag + ARCH_TRIAL_NOTES.format(foot=insole.foot, share=rep["share_of_insole"],
+                                                                  arch=arch, **rep), encoding="utf-8")
+    insole.report["arch_trial"] = rep
+    return {k: str(v) for k, v in files.items()}
