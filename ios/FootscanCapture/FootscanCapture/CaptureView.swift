@@ -27,6 +27,8 @@ struct CaptureView: View {
     /// A lap has been completed: Object Capture's ring has photos from every side. Finish waits for this.
     @State private var allSides = false
     @State private var startError: String?
+    /// Object Capture stopped by itself partway: what to say about it.
+    @State private var stopped: CaptureStopped.Words?
     @State private var releaseScreen: (() -> Void)?
 
     var body: some View {
@@ -48,6 +50,19 @@ struct CaptureView: View {
                              allSides: $allSides, part: .panel, onCancel: cancel)
                 }
                 .task { await follow(session) }
+            } else if let stopped {
+                VStack(spacing: 14) {
+                    Text(stopped.title).font(.title3.weight(.bold))
+                    Text(stopped.body)
+                    if let cause = stopped.cause {
+                        Label(cause, systemImage: "exclamationmark.triangle.fill").foregroundStyle(Color.fsWarn)
+                    }
+                    Text(stopped.detail).font(.footnote).foregroundStyle(.white.opacity(0.6))
+                    Button("Back", action: onCancel).buttonStyle(.borderedProminent).padding(.top, 6)
+                }
+                .foregroundStyle(.white)
+                .multilineTextAlignment(.center)
+                .padding(24)
             } else if let startError {
                 VStack(spacing: 16) {
                     Text(startError).foregroundStyle(.white).multilineTextAlignment(.center)
@@ -92,10 +107,17 @@ struct CaptureView: View {
                 onDone(scan)
                 return
             case .failed(let error):
+                let photos = session.numberOfShotsTaken
                 var rec = scan.record
                 rec?.error = error.localizedDescription
+                rec?.shotsTaken = photos
+                rec?.scanPasses = passes
                 if let rec { scan.save(rec) }
-                startError = "The capture stopped: \(error.localizedDescription)"
+                stopped = CaptureStopped.words(photos: photos, error: error.localizedDescription,
+                                               lowSpace: DiskSpace.captureProblem(),
+                                               hot: ProcessInfo.processInfo.thermalState.rawValue
+                                                   >= ProcessInfo.ThermalState.serious.rawValue)
+                UINotificationFeedbackGenerator().notificationOccurred(.error)
                 self.session = nil
                 return
             default:
@@ -108,6 +130,28 @@ struct CaptureView: View {
         session?.cancel()
         session = nil
         onCancel()
+    }
+}
+
+/// What the screen says when Object Capture stops by itself partway (it failed: not the person's own Stop). Its
+/// own error is technical, so it comes last; first what was kept, what to do, and a likely cause the phone can see.
+enum CaptureStopped {
+    struct Words: Equatable {
+        var title: String
+        var body: String
+        /// A cause the phone can see for itself (short of space, too hot), when there is one.
+        var cause: String?
+        var detail: String
+    }
+
+    static func words(photos: Int, error: String, lowSpace: String?, hot: Bool) -> Words {
+        let body = photos > 0
+            ? "The \(photos) photos taken so far are kept with the scan. Its page can build a model from them, though a "
+                + "capture stopped partway may be missing a side. Or go back and scan again."
+            : "No photos were taken, so nothing was kept. Go back and scan again."
+        let cause = lowSpace
+            ?? (hot ? "The phone is hot, and iOS slows a hot phone down. Let it cool, out of direct sun, before scanning again." : nil)
+        return Words(title: "The capture stopped", body: body, cause: cause, detail: "What the phone said: \(error)")
     }
 }
 

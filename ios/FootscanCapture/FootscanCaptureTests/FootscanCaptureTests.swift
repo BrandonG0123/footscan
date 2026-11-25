@@ -482,6 +482,30 @@ struct ScanList {
     }
 }
 
+// MARK: - a capture that stopped by itself
+
+@Suite("A capture that stopped by itself")
+struct CaptureStoppedWords {
+    @Test func photosTakenSoFarAreSaidToBeKeptAndTheErrorComesLast() {
+        let w = CaptureStopped.words(photos: 37, error: "Session interrupted", lowSpace: nil, hot: false)
+        #expect(w.body.hasPrefix("The 37 photos taken so far are kept"))
+        #expect(w.cause == nil)
+        #expect(w.detail == "What the phone said: Session interrupted")
+    }
+
+    @Test func withNoPhotosNothingIsSaidToBeKept() {
+        let w = CaptureStopped.words(photos: 0, error: "x", lowSpace: nil, hot: false)
+        #expect(w.body.hasPrefix("No photos were taken"))
+    }
+
+    @Test func aCauseThePhoneCanSeeIsNamedShortOfSpaceFirst() {
+        let space = DiskSpace.captureProblem(free: 200_000_000)
+        #expect(space != nil)
+        #expect(CaptureStopped.words(photos: 5, error: "x", lowSpace: space, hot: true).cause == space)
+        #expect(CaptureStopped.words(photos: 5, error: "x", lowSpace: nil, hot: true).cause?.hasPrefix("The phone is hot") == true)
+    }
+}
+
 // MARK: - free space
 
 @Suite("Free space before a capture")
