@@ -31,7 +31,7 @@ final class ModelBuilder {
             // built beside the scan under a working name and moved into place whole once done: a build cut off
             // while writing (the app ended) never leaves a half-written model.usdz that counts as a model
             let fm = FileManager.default
-            let staged = scan.folder.appending(path: "model-building.usdz")
+            let staged = scan.folder.appending(path: Self.buildingName)
             try? fm.removeItem(at: staged)
             defer { try? fm.removeItem(at: staged) }
             let session = try PhotogrammetrySession(input: scan.images, configuration: config)
@@ -66,23 +66,29 @@ final class ModelBuilder {
         }
     }
 
+    /// The working names a build and an export write under, beside the scan's files.
+    nonisolated static let buildingName = "model-building.usdz"
+    nonisolated static let exportFolderName = ".obj-export"
+
     /// USDZ -> OBJ with Model I/O. Geometry only matters for measuring; the
     /// OBJ keeps the model's own units (metres) and axes (Y up).
     ///
-    /// Written in a working folder beside it and moved into place whole: model.obj is what says a scan is ready to
-    /// send, so a half-written one (the app ended partway) must never exist. A failed export leaves what was there.
+    /// model.obj is what says a scan is ready to send, so it only ever stands for this model, whole: the old one goes
+    /// first (it was made from an earlier model), the new one is written in a working folder beside it and moved into
+    /// place last, in one rename. A failed export, or one cut off partway (the app ended), leaves no model.obj.
     nonisolated static func exportOBJ(from usdz: URL, to obj: URL) throws {
+        let fm = FileManager.default
+        try? fm.removeItem(at: obj)
         let asset = MDLAsset(url: usdz)
         guard asset.count > 0 else { throw ExportError.empty }
-        let fm = FileManager.default
         let folder = obj.deletingLastPathComponent()
-        let work = folder.appending(path: ".obj-export", directoryHint: .isDirectory)
+        let work = folder.appending(path: exportFolderName, directoryHint: .isDirectory)
         try? fm.removeItem(at: work)
         try fm.createDirectory(at: work, withIntermediateDirectories: true)
         defer { try? fm.removeItem(at: work) }
         let staged = work.appending(path: obj.lastPathComponent)
         try asset.export(to: staged)
-        guard fm.fileExists(atPath: staged.path()) else { throw ExportError.empty }
+        guard fm.fileExists(atPath: staged.path(percentEncoded: false)) else { throw ExportError.empty }
         // anything the export wrote beside it (a material file the OBJ names) first, the OBJ itself last
         for file in try fm.contentsOfDirectory(at: work, includingPropertiesForKeys: nil)
         where file.lastPathComponent != obj.lastPathComponent {
@@ -91,10 +97,18 @@ final class ModelBuilder {
         try putInPlace(staged, at: obj)
     }
 
+    /// What a build or export cut off partway (the app ended) left under its working names in a scan's folder:
+    /// cleared when the app starts, before anything is building.
+    nonisolated static func clearLeftovers(in folder: URL) {
+        let fm = FileManager.default
+        try? fm.removeItem(at: folder.appending(path: buildingName))
+        try? fm.removeItem(at: folder.appending(path: exportFolderName, directoryHint: .isDirectory))
+    }
+
     /// Move a finished file to where it belongs, replacing what's there, in one step (a rename on the same disk).
     nonisolated static func putInPlace(_ file: URL, at destination: URL) throws {
         let fm = FileManager.default
-        if fm.fileExists(atPath: destination.path()) {
+        if fm.fileExists(atPath: destination.path(percentEncoded: false)) {
             _ = try fm.replaceItemAt(destination, withItemAt: file)
         } else {
             try fm.moveItem(at: file, to: destination)

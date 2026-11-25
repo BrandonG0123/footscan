@@ -27,7 +27,11 @@ final class ScanLibrary {
     /// Bumped when a scan's files or record change, so views re-read them.
     private(set) var version = 0
 
-    init() { reload() }
+    init() {
+        reload()
+        // nothing is building yet: working files a build cut off last time left behind can go
+        for scan in scans { ModelBuilder.clearLeftovers(in: scan.folder) }
+    }
 
     func reload() {
         scans = ScanStore.all()

@@ -509,13 +509,29 @@ struct ModelFiles {
         #expect(!FileManager.default.fileExists(atPath: dir.appending(path: ".obj-export").path()))
     }
 
-    @Test func aFailedExportLeavesNoModelObj() throws {
+    @Test func aFailedExportLeavesNoModelObjNotEvenAnEarlierOne() throws {
         let dir = try folder()
         defer { try? FileManager.default.removeItem(at: dir) }
         let out = dir.appending(path: "model.obj")
+        try "v 9 9 9\n".write(to: out, atomically: true, encoding: .utf8) // from an earlier model
         #expect(throws: (any Error).self) { try ModelBuilder.exportOBJ(from: dir.appending(path: "missing.usdz"), to: out) }
         #expect(!FileManager.default.fileExists(atPath: out.path()))
         #expect(!FileManager.default.fileExists(atPath: dir.appending(path: ".obj-export").path()))
+    }
+
+    @Test func workingFilesACutOffBuildLeftAreClearedAndTheModelStays() throws {
+        let dir = try folder()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let model = dir.appending(path: "model.usdz")
+        try Data("model".utf8).write(to: model)
+        try Data("half".utf8).write(to: dir.appending(path: ModelBuilder.buildingName))
+        let export = dir.appending(path: ModelBuilder.exportFolderName, directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: export, withIntermediateDirectories: true)
+        try Data("half".utf8).write(to: export.appending(path: "model.obj"))
+        ModelBuilder.clearLeftovers(in: dir)
+        #expect(!FileManager.default.fileExists(atPath: dir.appending(path: ModelBuilder.buildingName).path()))
+        #expect(!FileManager.default.fileExists(atPath: export.path()))
+        #expect(FileManager.default.fileExists(atPath: model.path()))
     }
 
     @Test func puttingAFileInPlaceReplacesWhatWasThere() throws {
