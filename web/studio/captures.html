@@ -9,6 +9,7 @@
     .toolbar { display: flex; justify-content: space-between; align-items: end; gap: 12px; flex-wrap: wrap; margin-bottom: 18px; }
     .filters { display: flex; gap: 8px; flex-wrap: wrap; }
     .filters select { width: auto; }
+    .filters input[type=search] { width: auto; flex: 1 1 220px; min-width: 0; }
     .cap { display: grid; grid-template-columns: 132px 1fr; gap: 16px; padding: 14px; }
     .cap:target { outline: 3px solid var(--accent); }
     .cap img, .cap .noimg { width: 132px; aspect-ratio: 4 / 3; object-fit: cover; border-radius: 10px; background: var(--surface-2); }
@@ -29,6 +30,7 @@
       <h1 style="font-size:clamp(1.8rem,4vw,2.6rem);margin:0">Capture library</h1>
     </div>
     <div class="filters">
+      <input id="f-text" type="search" placeholder="Find by name, session or notes" aria-label="Find by name, session or notes" autocomplete="off">
       <select id="f-cond" aria-label="Filter by condition">
         <option value="">All conditions</option>
         <option value="nwb">nwb</option><option value="nwb_relaxed">nwb_relaxed</option>

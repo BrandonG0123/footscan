@@ -57,6 +57,12 @@ function renderAttention() {
   $("attention").innerHTML = parts.join("");
 }
 
+// The search box: every word typed is found somewhere in the capture's name, session or notes (any case)
+function matchesWords(c, typed) {
+  const hay = [c.capture_id, c.session, c.notes, c.foot && `${c.foot} foot`].filter(Boolean).join(" ").toLowerCase();
+  return typed.toLowerCase().split(/\s+/).filter(Boolean).every((w) => hay.includes(w));
+}
+
 function render() {
   const cond = $("f-cond").value, foot = $("f-foot").value;
   // Phase 0 counts photo scans only: LiDAR imports and object tests are a
@@ -70,12 +76,18 @@ function render() {
   }).join("");
 
   renderAttention();
+  const words = $("f-text").value;
   const rows = all.filter((c) => (!cond || c.condition === cond) && (!foot || c.foot === foot)
-    && (!onlyAttention || needsAttention(c)));
+    && (!onlyAttention || needsAttention(c)) && matchesWords(c, words));
   if (!rows.length) {
-    $("list").innerHTML = `<div class="card" style="text-align:center;padding:40px">
-      <h3>No captures yet</h3><p class="muted">Real captures you save from the capture page appear here.</p>
+    $("list").innerHTML = all.length
+      ? `<div class="card" style="text-align:center;padding:40px">
+      <h3>Nothing matches</h3><p class="muted">${all.length} capture${all.length === 1 ? "" : "s"} in the library, none of them with these filters.</p>
+      <button class="btn secondary" type="button" id="clear-filters">Show every capture</button></div>`
+      : `<div class="card" style="text-align:center;padding:40px">
+      <h3>No captures yet</h3><p class="muted">Real captures you save from the capture page, and scans the iPhone app sends, appear here.</p>
       <a class="btn" href="/studio/capture.html">Make the first capture</a></div>`;
+    showThumbs();
     return;
   }
   $("list").innerHTML = rows.map((c) => {
@@ -400,6 +412,9 @@ function remakeChoice(c) {
 // computer's attention), each with the outline and length it was made with
 document.addEventListener("click", async (e) => {
   if (e.target.closest("#only-attention")) { onlyAttention = !onlyAttention; render(); return; }
+  if (e.target.closest("#clear-filters")) {
+    $("f-cond").value = ""; $("f-foot").value = ""; $("f-text").value = ""; onlyAttention = false; render(); return;
+  }
   if (!e.target.closest("#remake-all") || remaking) return;
   const stale = all.filter((c) => c.insole?.stale && !building.has(c.capture_id));
   const todo = stale.map((c) => [c, remakeChoice(c)]).filter(([, pick]) => pick !== null);
@@ -461,4 +476,5 @@ function showThumbs() {
 
 $("f-cond").addEventListener("change", render);
 $("f-foot").addEventListener("change", render);
+$("f-text").addEventListener("input", render);
 load();
