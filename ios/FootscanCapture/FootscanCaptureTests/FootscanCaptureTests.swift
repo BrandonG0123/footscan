@@ -479,6 +479,69 @@ struct ScanList {
         dec.dateDecodingStrategy = .iso8601
         let rec = try dec.decode(ScanRecord.self, from: Data(json.utf8))
         #expect(rec.subject == .rightFoot && rec.subject.needsScale)
+        #expect(rec.stoppedEarly == nil)
+    }
+
+    /// A scan folder with `photos` empty files in its Images folder.
+    private func scanWithPhotos(_ photos: Int, in root: URL) throws -> Scan {
+        try makeScan(in: root, folder: "right-sole-p\(photos)", subject: .rightSole, created: Date(timeIntervalSince1970: 1_800_000_000))
+        let scan = Scan(folder: root.appending(path: "right-sole-p\(photos)", directoryHint: .isDirectory))
+        try FileManager.default.createDirectory(at: scan.images, withIntermediateDirectories: true)
+        for i in 0..<photos { try Data().write(to: scan.images.appending(path: "IMG_\(i).HEIC")) }
+        return scan
+    }
+
+    @Test func aCaptureWithPhotosAndNoModelWaitsToBeBuiltUnlessItWasStoppedPartway() throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString, directoryHint: .isDirectory)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let scan = try scanWithPhotos(12, in: root)
+        #expect(scan.waitsToBuild && !scan.keptNothing)
+        var rec = try #require(scan.record)
+        rec.stoppedEarly = Date()
+        scan.save(rec)
+        // kept (its page can still build it), but the home screen no longer asks for it
+        #expect(!scan.waitsToBuild && !scan.keptNothing && scan.photoCount == 12)
+        #expect(scan.record?.stoppedEarly != nil)
+        // built from its page anyway, but its studio copy wasn't saved: home asks again
+        try Data().write(to: scan.usdz)
+        #expect(scan.waitsToBuild)
+    }
+
+    @Test func aStoppedOrFailedCaptureIsNeverTakenForAnEmptyOne() throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString, directoryHint: .isDirectory)
+        defer { try? FileManager.default.removeItem(at: root) }
+        // stopped after shots the session counted, before their photos reached the folder
+        let stopped = try scanWithPhotos(0, in: root)
+        var rec = try #require(stopped.record)
+        rec.stoppedEarly = Date()
+        rec.shotsTaken = 3
+        stopped.save(rec)
+        #expect(!stopped.keptNothing)
+        // failed before the first photo: its error explains what happened
+        rec = try #require(stopped.record)
+        rec.stoppedEarly = nil
+        rec.shotsTaken = nil
+        rec.error = "The capture stopped"
+        stopped.save(rec)
+        #expect(!stopped.keptNothing)
+    }
+
+    @Test func aCaptureCancelledBeforeItsFirstPhotoKeptNothing() throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString, directoryHint: .isDirectory)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let scan = try scanWithPhotos(0, in: root)
+        #expect(scan.keptNothing && !scan.waitsToBuild)
+    }
+
+    @Test func deletingSaysWhatIsLost() throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString, directoryHint: .isDirectory)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let scan = try scanWithPhotos(3, in: root)
+        #expect(scan.deleteWarning.contains("photos and model will be gone"))
+        var rec = try #require(scan.record)
+        rec.studioCaptureID = "LIDAR_nwb_relaxed_R_1"
+        scan.save(rec)
+        #expect(scan.deleteWarning.contains("studio stays"))
     }
 }
 
