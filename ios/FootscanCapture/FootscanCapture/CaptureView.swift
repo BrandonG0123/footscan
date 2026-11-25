@@ -12,6 +12,7 @@
 //                 (after one lap: Finish, or Another lap higher up)
 //   finishing  -> it saves the last photos
 //   completed  -> on to building the model
+import Combine
 import RealityKit
 import SwiftUI
 
@@ -27,7 +28,16 @@ struct CaptureView: View {
     /// A lap has been completed: Object Capture's ring has photos from every side. Finish waits for this.
     @State private var allSides = false
     @State private var startError: String?
+    /// Object Capture stopped by itself partway: what to say about it.
+    @State private var stopped: CaptureStopped.Words?
     @State private var releaseScreen: (() -> Void)?
+    /// The X was tapped after photos were taken: ask before ending the scan (a helper's thumb can hit it halfway
+    /// round a foot, and the person scanned may have gone by the time anyone notices).
+    @State private var confirmCancel = false
+    /// Photos taken when the X was tapped: the session may end (fail) while the question is open.
+    @State private var shotsWhenAsked = 0
+    /// How hot the phone is: a long capture warms it, and iOS slows a hot phone down.
+    @State private var thermal = ProcessInfo.processInfo.thermalState
 
     var body: some View {
         ZStack {
@@ -41,13 +51,44 @@ struct CaptureView: View {
                     ObjectCaptureView(session: session)
                         .clipShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
                         .overlay(alignment: .top) {
-                            Controls(session: session, subject: scan.record?.subject ?? .other, retake: retake, passes: $passes,
-                                     allSides: $allSides, part: .top, onCancel: cancel)
+                            VStack(spacing: 6) {
+                                Controls(session: session, subject: scan.record?.subject ?? .other, retake: retake, passes: $passes,
+                                         allSides: $allSides, part: .top, onCancel: askCancel)
+                                // over the camera's top edge, like the hints: the camera view never changes size mid-lap
+                                if let hot = CaptureCoaching.thermalWarning(thermal) {
+                                    Label(hot, systemImage: "thermometer.sun.fill")
+                                        .font(.footnote.weight(.semibold))
+                                        .foregroundStyle(Color.fsAccentInk)
+                                        .padding(.horizontal, 14).padding(.vertical, 8)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                        .background(Color.fsAccent, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                                        .padding(.horizontal, 12)
+                                        .transition(.move(edge: .top).combined(with: .opacity))
+                                }
+                            }
                         }
                     Controls(session: session, subject: scan.record?.subject ?? .other, retake: retake, passes: $passes,
-                             allSides: $allSides, part: .panel, onCancel: cancel)
+                             allSides: $allSides, part: .panel, onCancel: askCancel)
                 }
                 .task { await follow(session) }
+            } else if let stopped {
+                VStack(spacing: 14) {
+                    Text(stopped.title).font(.title3.weight(.bold))
+                    Text(stopped.body)
+                    if let cause = stopped.cause {
+                        Label(cause, systemImage: "exclamationmark.triangle.fill").foregroundStyle(Color.fsWarn)
+                    }
+                    Text(stopped.detail).font(.footnote).foregroundStyle(.white.opacity(0.6))
+                    Button("Back") {
+                        // nothing was kept: no empty scan left in the list
+                        if scan.photoCount == 0 { ScanStore.delete(scan) }
+                        onCancel()
+                    }
+                    .buttonStyle(.borderedProminent).padding(.top, 6)
+                }
+                .foregroundStyle(.white)
+                .multilineTextAlignment(.center)
+                .padding(24)
             } else if let startError {
                 VStack(spacing: 16) {
                     Text(startError).foregroundStyle(.white).multilineTextAlignment(.center)
@@ -62,7 +103,27 @@ struct CaptureView: View {
             start()
         }
         .onDisappear { releaseScreen?(); releaseScreen = nil }
+        .onReceive(NotificationCenter.default.publisher(for: ProcessInfo.thermalStateDidChangeNotification)
+            .receive(on: DispatchQueue.main)) { _ in
+            let now = ProcessInfo.processInfo.thermalState
+            if now != thermal, let hot = CaptureCoaching.thermalWarning(now) { CaptureCoaching.announce(hot) }
+            withAnimation(.smooth) { thermal = now }
+        }
         .statusBarHidden()
+        .confirmationDialog("Stop this scan?", isPresented: $confirmCancel, titleVisibility: .visible) {
+            Button("Stop scanning", role: .destructive, action: cancel)
+            Button("Keep scanning", role: .cancel) {}
+        } message: {
+            Text("The photos taken so far stay on the phone, but this scan won't go on from here.")
+        }
+        // the session ended under the question (it failed, or finished): nothing left to stop
+        .onChange(of: session == nil) { _, ended in if ended { confirmCancel = false } }
+    }
+
+    /// Before any photo there's nothing to lose: cancel at once. After, ask first.
+    private func askCancel() {
+        shotsWhenAsked = session?.numberOfShotsTaken ?? 0
+        if shotsWhenAsked > 0 { confirmCancel = true } else { cancel() }
     }
 
     private func start() {
@@ -92,10 +153,19 @@ struct CaptureView: View {
                 onDone(scan)
                 return
             case .failed(let error):
+                // the photos actually saved (what the scan's page builds from), not the session's count, which can
+                // include shots it hadn't finished writing when it stopped
+                let photos = scan.photoCount
                 var rec = scan.record
                 rec?.error = error.localizedDescription
+                rec?.shotsTaken = photos
+                rec?.scanPasses = passes
                 if let rec { scan.save(rec) }
-                startError = "The capture stopped: \(error.localizedDescription)"
+                stopped = CaptureStopped.words(photos: photos, error: error.localizedDescription,
+                                               free: DiskSpace.available(),
+                                               hot: ProcessInfo.processInfo.thermalState.rawValue
+                                                   >= ProcessInfo.ThermalState.serious.rawValue)
+                UINotificationFeedbackGenerator().notificationOccurred(.error)
                 self.session = nil
                 return
             default:
@@ -105,9 +175,52 @@ struct CaptureView: View {
     }
 
     private func cancel() {
+        let shots = max(session?.numberOfShotsTaken ?? 0, shotsWhenAsked)
+        if shots > 0, var rec = scan.record {
+            // stopped partway on purpose: kept, but home doesn't ask for it to be built (ScanRecord.stoppedEarly)
+            rec.stoppedEarly = Date()
+            rec.shotsTaken = shots
+            rec.scanPasses = passes
+            scan.save(rec)
+        }
         session?.cancel()
         session = nil
         onCancel()
+    }
+}
+
+/// What the screen says when Object Capture stops by itself partway (it failed: not the person's own Stop). Its
+/// own error is technical, so it comes last; first what was kept, what to do, and a likely cause the phone can see.
+enum CaptureStopped {
+    struct Words: Equatable {
+        var title: String
+        var body: String
+        /// A cause the phone can see for itself (short of space, too hot), when there is one.
+        var cause: String?
+        var detail: String
+    }
+
+    /// Free space under this, after a capture has written its photos, makes a full phone a likely cause. A judgment,
+    /// not measured: a capture's photos take a few hundred MB, and the 1.5 GB asked for before a capture
+    /// (DiskSpace.neededForCapture) is often gone by the end of one that had nothing to do with space.
+    static let nearlyFull: Int64 = 300_000_000
+
+    /// `photos`: saved in the scan's folder. `free`: bytes free now (nil: not known). `hot`: thermal state serious or
+    /// critical, which outranks space (it's seen for certain; space only makes a cause likely).
+    static func words(photos: Int, error: String, free: Int64?, hot: Bool) -> Words {
+        let body = switch photos {
+        case 0: "No photos were saved, so nothing was kept. Go back and scan again."
+        case 1: "The 1 photo taken so far is kept with the scan, but a model needs many more. Go back and scan again."
+        default: "The \(photos) photos taken so far are kept with the scan. Its page can build a model from them, though "
+            + "a capture stopped partway may be missing a side. Or go back and scan again."
+        }
+        let cause: String? = if hot {
+            "The phone is hot, and iOS slows a hot phone down. Let it cool, out of direct sun, before scanning again."
+        } else if let free, free < nearlyFull {
+            "The phone is nearly full (\(ByteCountFormatter.string(fromByteCount: free, countStyle: .file)) free). Delete "
+                + "some old scans (Settings shows how much they use) or other files before scanning again."
+        } else { nil }
+        return Words(title: "The capture stopped", body: body, cause: cause, detail: "What the phone said: \(error)")
     }
 }
 
@@ -122,6 +235,9 @@ private struct Controls: View {
     enum Part { case top, panel }
     var part: Part
     var onCancel: () -> Void
+    @State private var announcedTips = TipRepeats()
+    /// Counts each warning said, for its buzz: the helper walking round may be watching the foot, not the screen.
+    @State private var warningsSaid = 0
 
     static let legsFlatPhotos = 40
     private var enoughPhotos: Bool { subject.scanKind == "sole_hanging" && session.numberOfShotsTaken >= Self.legsFlatPhotos }
@@ -168,7 +284,7 @@ private struct Controls: View {
                         Text(allSides ? "All sides" : "Sides").font(.callout.weight(allSides ? .bold : .regular))
                     }
                     .accessibilityElement(children: .combine)
-                    .accessibilityLabel("\(session.numberOfShotsTaken) photos. \(allSides ? "Every side has photos." : "Not every side has photos yet.")")
+                    .accessibilityLabel("\(Scan.photosWords(session.numberOfShotsTaken)). \(allSides ? "Every side has photos." : "Not every side has photos yet.")")
                     .foregroundStyle(.white)
                     .padding(.horizontal, 12).padding(.vertical, 8)
                     .background(.ultraThinMaterial, in: Capsule())
@@ -215,6 +331,18 @@ private struct Controls: View {
         // once any lap has gone all the way round, Finish stays available (a further lap only adds photos)
         .onChange(of: session.userCompletedScanPass, initial: true) { _, done in if done { allSides = true } }
         .sensoryFeedback(.impact(weight: .medium), trigger: stepIndex)
+        // VoiceOver reads each new instruction and warning out, so whoever holds the phone hears it without
+        // looking for it on screen (here only: the top part is a second copy of this view)
+        .onChange(of: instruction, initial: true) { _, said in CaptureCoaching.announce(said) }
+        .onChange(of: feedbackText) { _, tip in
+            // Object Capture's flags flicker on and off while walking round: the same tip at most every few seconds
+            if let tip, announcedTips.shouldSay(tip, at: Date()) {
+                CaptureCoaching.announce(tip)
+                warningsSaid += 1
+            }
+        }
+        // a light warning buzz with each new tip (same few-seconds rule, so a flickering flag doesn't keep buzzing)
+        .sensoryFeedback(.warning, trigger: warningsSaid)
     }
 
     /// Until capture starts: what went wrong last time (after a refusal), and the checks to make before Start.
@@ -256,7 +384,9 @@ private struct Controls: View {
                     ? "Enough photos. Another sweep a little higher or lower makes it better; or Finish."
                     : "Sweep slowly from the inner side, round behind the foot, to the outer side. Then again higher and lower."
             case ("sole_up", false): "Walk slowly all the way round the foot, looking down at the sole, until the ring is full. Finish unlocks then."
-            case ("sole_up", true): "Lap done. Now one more, closer, looking down at the arch, the toes and the back of the heel. Then Finish."
+            // the outer side too: a left sole scan whose outer edge came out 8-21 mm in was most likely missing it
+            // (docs/scanning-guide.md)
+            case ("sole_up", true): "Lap done. Now one more, closer: the arch, the toes, the back of the heel, and low along the outer (little-toe) side. Then Finish."
             case ("impression", false): "Walk slowly all the way round, looking down into the print, until the ring is full. Finish unlocks then."
             case ("impression", true): "Lap done. One more, higher up and looking straight down into the print, makes it better. Then Finish."
             case (_, true): "Lap done. Best results: 2 or 3 laps, one higher up looking down, one low. Then Finish."
@@ -308,16 +438,7 @@ private struct Controls: View {
     }
 
     /// Object Capture's own warnings, in footscan's words. The most useful one wins.
-    private var feedbackText: String? {
-        let f = session.feedback
-        if f.contains(.environmentTooDark) { return "Too dark. Turn on more lights." }
-        if f.contains(.environmentLowLight) { return "A bit dark. More light helps." }
-        if f.contains(.movingTooFast) { return "Slow down a little." }
-        if f.contains(.objectTooClose) { return "Step back a little." }
-        if f.contains(.objectTooFar) { return "Move a little closer." }
-        if f.contains(.outOfFieldOfView) { return "Keep it in the middle of the screen." }
-        return nil
-    }
+    private var feedbackText: String? { CaptureCoaching.tip(session.feedback) }
 }
 
 /// Three dots and labels: point at it, fit the box, walk round.
@@ -342,5 +463,54 @@ private struct StepDots: View {
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Step \(index + 1) of 3: \(labels[index])")
+    }
+}
+
+/// What the capture says beyond Object Capture's own coaching.
+enum CaptureCoaching {
+    /// Object Capture's own warnings, in footscan's words: the one most worth acting on first, or nil for none.
+    /// Light first (nothing else helps in the dark), then the ones that spoil the photos being taken now, then
+    /// the one that only wastes time.
+    static func tip(_ f: Set<ObjectCaptureSession.Feedback>) -> String? {
+        if f.contains(.environmentTooDark) { return "Too dark. Turn on more lights." }
+        if f.contains(.environmentLowLight) { return "A bit dark. More light helps." }
+        if f.contains(.movingTooFast) { return "Slow down a little." }
+        // it has lost what it was scanning: photos now don't add to the model
+        if f.contains(.objectNotDetected) { return "Lost track. Point the phone back at it." }
+        if f.contains(.objectTooClose) { return "Step back a little." }
+        if f.contains(.objectTooFar) { return "Move a little closer." }
+        if f.contains(.outOfFieldOfView) { return "Keep it in the middle of the screen." }
+        // enough from this angle: more photos here only fill the phone
+        if f.contains(.overCapturing) { return "Plenty from here. Move on round to a new angle." }
+        return nil
+    }
+
+    /// A warning when the phone is hot enough for iOS to slow it down; nil when it's fine.
+    static func thermalWarning(_ state: ProcessInfo.ThermalState) -> String? {
+        switch state {
+        case .serious: "This iPhone is getting hot. iOS slows a hot phone down, which can stop the capture: keep out of direct sun, and let it cool before another scan."
+        case .critical: "This iPhone is too hot and iOS is slowing it right down, which can stop the capture. Stop when you can, and let it cool before scanning again."
+        default: nil
+        }
+    }
+
+    /// Say it out loud to VoiceOver, if VoiceOver is on: queued after whatever it's saying, not cutting it off.
+    @MainActor static func announce(_ text: String) {
+        guard UIAccessibility.isVoiceOverRunning, !text.isEmpty else { return }
+        let queued = NSAttributedString(string: text, attributes: [.accessibilitySpeechQueueAnnouncement: true])
+        UIAccessibility.post(notification: .announcement, argument: queued)
+    }
+}
+
+/// When each of Object Capture's tips was last read out, so one that flickers on and off isn't read again and again.
+struct TipRepeats {
+    /// The same tip isn't read out again sooner than this.
+    static let quiet: TimeInterval = 8
+    private var last: [String: Date] = [:]
+
+    mutating func shouldSay(_ tip: String, at now: Date) -> Bool {
+        if let when = last[tip], now.timeIntervalSince(when) < Self.quiet { return false }
+        last[tip] = now
+        return true
     }
 }

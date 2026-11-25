@@ -42,6 +42,16 @@ struct StudioLink: Codable, Equatable {
     }
 
     static func host(of url: URL) -> String { url.host() ?? url.absoluteString }
+
+    /// Whether `other` is this same studio: the same pinned certificate, or (without pins to compare) an address
+    /// in common. A studio that made itself a new certificate counts as another one, which only means asking.
+    func isSameStudio(as other: StudioLink) -> Bool {
+        switch (fingerprint?.lowercased(), other.fingerprint?.lowercased()) {
+        case let (a?, b?): a == b
+        case (nil, nil): addresses.contains { a in other.addresses.contains { StudioStore.sameAddress(a, $0) } }
+        default: false
+        }
+    }
 }
 
 extension StudioLink {
@@ -265,10 +275,55 @@ enum StudioStore {
     }
 }
 
+/// How far an upload has got, in whole percents: each told once, in order, on the main thread. Rounded down, so 100
+/// means every byte has gone. If the phone starts sending the body again (a connection reset partway), the count
+/// starts again from there rather than staying at the old, higher figure.
+final class UploadProgress: @unchecked Sendable {
+    /// The counting itself, without the threads.
+    struct Count: Equatable {
+        private(set) var percent = -1
+        private var bytes: Int64 = -1
+
+        /// The whole percent `sent` of `total` is, if it's a new figure; nil when it isn't, or the size isn't known.
+        mutating func next(sent: Int64, total: Int64) -> Int? {
+            guard total > 0, sent >= 0 else { return nil }
+            if sent < bytes { percent = -1 } // sending again from the start
+            bytes = sent
+            let now = Int(min(sent, total) * 100 / total)
+            guard now != percent else { return nil }
+            percent = now
+            return now
+        }
+    }
+
+    private let report: @MainActor @Sendable (Int) -> Void
+    private let lock = NSLock()
+    private var count = Count()
+    init(_ report: @escaping @MainActor @Sendable (Int) -> Void) { self.report = report }
+
+    /// From URLSession's queue, for each chunk sent.
+    func sent(_ total: Int64, of expected: Int64) {
+        guard let percent = lock.withLock({ count.next(sent: total, total: expected) }) else { return }
+        let report = report
+        // the main queue keeps the reports in the order they were made (separate Tasks needn't)
+        DispatchQueue.main.async { MainActor.assumeIsolated { report(percent) } }
+    }
+}
+
 /// Trusts exactly the pinned certificate (when there is one); otherwise the phone's normal checks.
 final class PinnedTrust: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
     let fingerprint: String?
-    init(fingerprint: String?) { self.fingerprint = fingerprint }
+    /// Told how an upload goes (one session per request, so this is that request's).
+    let progress: UploadProgress?
+    init(fingerprint: String?, progress: UploadProgress? = nil) {
+        self.fingerprint = fingerprint
+        self.progress = progress
+    }
+
+    func urlSession(_ session: URLSession, task: URLSessionTask, didSendBodyData bytesSent: Int64,
+                    totalBytesSent: Int64, totalBytesExpectedToSend: Int64) {
+        progress?.sent(totalBytesSent, of: totalBytesExpectedToSend)
+    }
 
     private let lock = NSLock()
     private var refused = false
@@ -276,11 +331,13 @@ final class PinnedTrust: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
     /// a wrong certificate, said for certain, not guessed from the error it ended with.
     var refusedCertificate: Bool { lock.withLock { refused } }
 
-    func urlSession(_ session: URLSession, didReceive challenge: URLAuthenticationChallenge,
-                    completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
+    // The async form: the completion-handler form's handler type differs between SDKs in how it's isolated, which
+    // the compiler warns about (an error in Swift 6 mode). Same decision either way.
+    func urlSession(_ session: URLSession, didReceive challenge: URLAuthenticationChallenge) async
+        -> (URLSession.AuthChallengeDisposition, URLCredential?) {
         let (disposition, credential) = Self.decide(challenge, fingerprint: fingerprint)
         if disposition == .cancelAuthenticationChallenge { lock.withLock { refused = true } }
-        completionHandler(disposition, credential)
+        return (disposition, credential)
     }
 
     /// Never follow a redirect. The studio never sends one, and following it would carry the key and the scan
@@ -308,7 +365,8 @@ final class PinnedTrust: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
     }
 }
 
-/// What the studio answers about an imported calibration object.
+/// What the studio answers about an imported calibration object (recon/imported.py `summarize`). The `_mm`
+/// sizes are the scan minus the reference (the design, or the caliper readings when there are some), not the sizes.
 struct StudioAccuracy: Codable, Equatable {
     var median_mm: Double?
     var p95_mm: Double?
@@ -317,7 +375,11 @@ struct StudioAccuracy: Codable, Equatable {
     var length_mm: Double?
     var width_mm: Double?
     var dome_apex_mm: Double?
+    /// How far the scan's size is off as a whole, in percent: the mean of its length and width.
+    var scale_pct: Double?
     var reference: String?
+    /// What the studio noticed about the scan, in its own words (a made-up bottom, a size off, a part it couldn't measure).
+    var warnings: [String]?
     var error: String?
 }
 
@@ -362,11 +424,13 @@ struct StudioClient {
         /// (empty from a studio that doesn't send it).
         /// `unreachable`: none of the studio's addresses answered as the studio, in the order they were tried.
         /// `dropped`: the studio answered, then the connection failed partway through sending.
+        /// `troubled`: the studio answered with a fault of its own (HTTP 500 and up), not a no to this scan.
         case refused(String), unreachable([Missed], pinned: Bool), incomplete([String], advice: [RetakeAdvice]),
-             dropped(host: String)
+             dropped(host: String), troubled(String)
         var errorDescription: String? {
             switch self {
             case .refused(let why): "The studio said no: \(why)"
+            case .troubled(let why): "The studio had a problem of its own (\(why)). Try again; the scan is still on this phone."
             case .incomplete(let why, _): "Scan again: the studio didn't keep this scan. \(why.joined(separator: " "))"
             case .unreachable(let misses, let pinned): Self.explain(misses, pinned: pinned)
             case .dropped(let host): "The connection to the studio at \(host) dropped partway through sending. Try again; the scan is still on this phone."
@@ -449,15 +513,16 @@ struct StudioClient {
                     .flatMap { try? JSONDecoder().decode([RetakeAdvice].self, from: $0) }
                 return .incomplete(missing, advice: advice ?? [])
             }
-            return .refused(json["error"] as? String ?? "HTTP \(status)")
+            let why = json["error"] as? String ?? "HTTP \(status)"
+            return status >= 500 ? .troubled(why) : .refused(why)
         }
     }
 
-    private func session(timeout: TimeInterval = 20) -> (URLSession, PinnedTrust) {
+    private func session(timeout: TimeInterval = 20, progress: UploadProgress? = nil) -> (URLSession, PinnedTrust) {
         let config = URLSessionConfiguration.ephemeral
         config.timeoutIntervalForRequest = timeout
         config.waitsForConnectivity = false
-        let trust = PinnedTrust(fingerprint: link.fingerprint)
+        let trust = PinnedTrust(fingerprint: link.fingerprint, progress: progress)
         return (URLSession(configuration: config, delegate: trust, delegateQueue: nil), trust)
     }
 
@@ -475,8 +540,16 @@ struct StudioClient {
         return req
     }
 
-    private func send(_ req: URLRequest, timeout: TimeInterval = 20) async throws -> [String: Any] {
-        let (s, trust) = session(timeout: timeout)
+    private func send(_ req: URLRequest, timeout: TimeInterval = 20,
+                      progress: UploadProgress? = nil) async throws -> [String: Any] {
+        try await sendForJSON(req, timeout: timeout, progress: progress) as? [String: Any] ?? [:]
+    }
+
+    /// The studio's answer as whatever JSON it is (a list, for api/captures). `progress`: told how the upload goes,
+    /// by the same session delegate that checks the pin and refuses redirects.
+    private func sendForJSON(_ req: URLRequest, timeout: TimeInterval = 20,
+                             progress: UploadProgress? = nil) async throws -> Any {
+        let (s, trust) = session(timeout: timeout, progress: progress)
         defer { s.finishTasksAndInvalidate() }
         let data: Data, response: URLResponse
         do {
@@ -486,9 +559,9 @@ struct StudioClient {
             throw Failure.unreachable([Missed(address: link.url, miss: Miss(error, pinRefused: trust.refusedCertificate))],
                                       pinned: link.fingerprint != nil)
         }
-        let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
+        let json = (try? JSONSerialization.jsonObject(with: data)) ?? [String: Any]()
         let code = (response as? HTTPURLResponse)?.statusCode ?? 0
-        guard (200..<300).contains(code) else { throw Failure.from(status: code, json: json) }
+        guard (200..<300).contains(code) else { throw Failure.from(status: code, json: json as? [String: Any] ?? [:]) }
         return json
     }
 
@@ -555,8 +628,13 @@ struct StudioClient {
     /// `link`: the studio, with the address the scan went to as the one in use.
     struct Sent { var captureID: String; var accuracy: StudioAccuracy?; var link: StudioLink }
 
-    /// Make a research capture for this scan and upload its model, at whichever address answers.
-    func upload(_ scan: Scan, record: ScanRecord) async throws -> Sent {
+    /// Make a research capture for this scan and upload its model, at whichever address answers. `created` is told
+    /// the new capture's id as soon as the studio makes it, so a try that fails after that can be finished by the next
+    /// (`into`: the capture an earlier try made at this studio; see `existingCapture`).
+    /// `progress` is told the whole percent of the model sent so far while it goes (UploadProgress).
+    func upload(_ scan: Scan, record: ScanRecord, into existing: String? = nil,
+                created: @escaping @MainActor @Sendable (String) -> Void = { _ in },
+                progress: @escaping @MainActor @Sendable (Int) -> Void = { _ in }) async throws -> Sent {
         // A quick hello first: a studio that isn't there fails in seconds, not after a long upload timeout.
         let here: StudioClient
         do {
@@ -566,7 +644,7 @@ struct StudioClient {
             throw Failure.dropped(host: link.host)
         }
         do {
-            return try await here.uploadHere(scan, record: record)
+            return try await here.uploadHere(scan, record: record, into: existing, created: created, progress: progress)
         } catch Failure.unreachable {
             throw Failure.dropped(host: here.link.host) // it answered the hello: not a question of which Wi-Fi
         } catch is CancellationError {
@@ -575,7 +653,49 @@ struct StudioClient {
         }
     }
 
-    private func uploadHere(_ scan: Scan, record: ScanRecord) async throws -> Sent {
+    private func uploadHere(_ scan: Scan, record: ScanRecord, into existing: String?,
+                            created: @escaping @MainActor @Sendable (String) -> Void,
+                            progress: @escaping @MainActor @Sendable (Int) -> Void) async throws -> Sent {
+        if let existing {
+            switch try await existingCapture(existing) {
+            case .waiting: return try await sendModel(scan, into: existing, progress: progress)
+            case .done(let accuracy): return Sent(captureID: existing, accuracy: accuracy, link: link)
+            case .gone: break // removed in the studio meanwhile: a new one, below
+            }
+        }
+        let id = try await createCapture(record)
+        await created(id)
+        return try await sendModel(scan, into: id, progress: progress)
+    }
+
+    /// Where a capture an earlier try made stands in the studio.
+    enum ExistingCapture: Equatable {
+        /// Still waiting for its model: send it.
+        case waiting
+        /// It has a model already (the earlier upload got there and only its answer was lost), or something was made
+        /// from it: it's sent. Never sent into again: a new model would replace an insole or shoe made from it.
+        case done(StudioAccuracy?)
+        /// The studio doesn't have it.
+        case gone
+    }
+
+    /// Read from the studio's list of captures (api/captures, what the studio's own pages read).
+    private func existingCapture(_ id: String) async throws -> ExistingCapture {
+        let list = try await sendForJSON(request("api/captures")) as? [[String: Any]] ?? []
+        return Self.existing(id, in: list)
+    }
+
+    static func existing(_ id: String, in list: [[String: Any]]) -> ExistingCapture {
+        guard let meta = list.first(where: { $0["capture_id"] as? String == id }) else { return .gone }
+        let has = { (key: String) in meta[key] != nil && !(meta[key] is NSNull) }
+        guard (meta["status"] as? String) == "complete" || has("mesh") || has("insole") || has("clog") else { return .waiting }
+        let accuracy = meta["accuracy"].flatMap { $0 is NSNull ? nil : try? JSONSerialization.data(withJSONObject: $0) }
+            .flatMap { try? JSONDecoder().decode(StudioAccuracy.self, from: $0) }
+        return .done(accuracy)
+    }
+
+    /// The studio's research capture for this scan: what was scanned, how, on what phone. -> its id.
+    private func createCapture(_ record: ScanRecord) async throws -> String {
         let (condition, foot) = record.subject.studioCondition
         var setup: [String: Any] = [
             "condition": condition, "session": "LIDAR", "method": "imported_mesh",
@@ -589,11 +709,18 @@ struct StudioClient {
         let created = try await send(request("api/captures", method: "POST",
                                              body: try JSONSerialization.data(withJSONObject: setup)))
         guard let id = created["id"] as? String else { throw Failure.refused("no capture id came back") }
+        return id
+    }
+
+    /// Upload the model into capture `id` (one still waiting for its model: see `existingCapture`).
+    private func sendModel(_ scan: Scan, into id: String,
+                           progress: @escaping @MainActor @Sendable (Int) -> Void) async throws -> Sent {
         let obj = try Data(contentsOf: scan.obj)
         let answer = try await send(request("api/captures/\(id)/mesh", method: "PUT",
                                             query: [URLQueryItem(name: "ext", value: "obj"), URLQueryItem(name: "up", value: "y")],
                                             body: obj, contentType: "application/octet-stream"),
-                                    timeout: 180) // the calibration object is scored before the answer comes back
+                                    timeout: 180, // the calibration object is scored before the answer comes back
+                                    progress: UploadProgress(progress))
         var accuracy: StudioAccuracy?
         if let acc = answer["accuracy"], !(acc is NSNull),
            let data = try? JSONSerialization.data(withJSONObject: acc) {
