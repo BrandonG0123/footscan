@@ -102,3 +102,26 @@ def test_the_checkout_version_is_read_from_git_files_loose_or_packed(tmp_path):
     (git / "HEAD").write_text("garbage")
     assert checkout_version(tmp_path) is None
     assert checkout_version(tmp_path / "nowhere") is None
+
+
+def test_a_model_replaced_while_its_picture_is_drawn_is_drawn_again_never_kept_under_the_old_name(tmp_path, monkeypatch):
+    import os
+
+    from footscan import thumbnails
+
+    model = tmp_path / "mesh.ply"
+    model.write_bytes(b"first version")
+    drawn = []
+
+    def draw(path, up="y"):
+        drawn.append(path.read_bytes())
+        if len(drawn) == 1:  # the phone sends the scan again mid-draw
+            model.write_bytes(b"second version, longer")
+            os.utime(model, ns=(1, 10**18))
+        return PNG + path.read_bytes()
+
+    monkeypatch.setattr(thumbnails, "draw", draw)
+    pic = thumbnails.thumbnail(tmp_path, model)
+    assert len(drawn) == 2 and pic == thumbnails.thumb_path(tmp_path, model)
+    assert pic.read_bytes() == PNG + b"second version, longer"
+    assert [p.name for p in tmp_path.glob("thumb-*.png")] == [pic.name]

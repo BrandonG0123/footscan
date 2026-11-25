@@ -45,7 +45,19 @@ test("only a JSON answer with a success status counts as ok", async () => {
     globalThis.fetch = async () => new Response("<html></html>", { status: 200, headers: { "Content-Type": "text/html" } });
     assert.equal((await ask("/api/x"))[0], false);
     globalThis.fetch = async () => json({ ok: true });
-    assert.deepEqual(await ask("/api/x"), [true, { ok: true }]);
+    assert.deepEqual(await ask("/api/x"), [true, { ok: true }, 200]);
+  } finally {
+    globalThis.fetch = real;
+  }
+});
+
+test("the answer's status comes back too: 0 when the studio couldn't be reached", async () => {
+  const real = globalThis.fetch;
+  try {
+    globalThis.fetch = async () => json({ error: "not found" }, 404);
+    assert.equal((await ask("/api/x"))[2], 404);
+    globalThis.fetch = async () => { throw new TypeError("Failed to fetch"); };
+    assert.equal((await ask("/api/x"))[2], 0);
   } finally {
     globalThis.fetch = real;
   }

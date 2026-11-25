@@ -1190,7 +1190,8 @@ def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check
             except OSError as e:
                 disk = dict(error=str(e))
             captures = list_captures(captures_dir)
-            insoles = [c["insole"] for c in captures if c.get("insole")]
+            made = [c["insole"] for c in captures if c.get("insole")]
+            insoles = [i for i in made if "error" not in i]
             return dict(
                 checkout=checkout_version(ROOT), python=sys.version.split()[0],
                 system=f"{platform.system()} {platform.release()}".strip(),
@@ -1201,7 +1202,7 @@ def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check
                 data=dict(folder=str(data_dir), disk=disk,
                           captures=len(captures), sole_scans=sum(1 for c in captures if _checked(c)),
                           insoles=len(insoles), insoles_out_of_date=sum(1 for i in insoles if i.get("stale")),
-                          insoles_failed=sum(1 for i in insoles if "error" in i),
+                          insoles_failed=sum(1 for i in made if "error" in i),
                           shoes_saved=len(shoes_mod.listed(shoes_dir)),
                           submissions=len(list_submissions(submissions_dir))),
                 claude=dict(check_scans=second_look is not None, describe_shoes=describe_with_claude,
@@ -1669,8 +1670,9 @@ def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check
 
 # ---- files: revalidation and compression -----------------------------------------
 
-# Kinds of file worth compressing: text, and the 3-D previews (arrays of floats, about half the size gzipped). Not
-# JPEG, PNG or 3MF (already compressed), and not a file too small to gain from it.
+# Kinds of file worth compressing: text, and the 3-D previews (arrays of floats: a SYNTHETIC curved foot's
+# viewer.bin went from 4.65 to 2.34 MB, its insole-preview.bin from 0.86 to 0.31 MB, gzip level 6, 2026-11-25).
+# Not JPEG, PNG or 3MF (already compressed), and not a file too small to gain from it.
 COMPRESSIBLE_TYPES = ("text/", "application/json", "application/javascript", "image/svg+xml", "model/stl",
                       "application/octet-stream")
 GZIP_MIN_BYTES = 1024
@@ -1686,13 +1688,25 @@ def compressible(ctype: str, size: int) -> bool:
 
 
 def accepts_gzip(accept_encoding: str) -> bool:
-    """Does the browser take gzip (Accept-Encoding: gzip, deflate, br; a "gzip;q=0" refuses it)?"""
+    """Does the browser take gzip? (Accept-Encoding: "gzip, deflate, br" does; "gzip;q=0" refuses it; "*" takes
+    anything not refused by name.) Each coding's q is read from every entry, the named one before "*"."""
+    q = {}
     for part in accept_encoding.split(","):
-        name, _, params = part.strip().partition(";")
-        if name.strip().lower() in ("gzip", "x-gzip"):
-            q = params.strip().lower()
-            return not (q.startswith("q=") and q[2:].strip() in ("0", "0.0", "0.00", "0.000"))
-    return False
+        name, *params = [x.strip() for x in part.split(";")]
+        weight = 1.0
+        for prm in params:
+            k, _, v = prm.partition("=")
+            if k.strip().lower() == "q":
+                try:
+                    weight = float(v)
+                except ValueError:
+                    weight = 0.0
+        if name:
+            q[name.lower()] = max(q.get(name.lower(), 0.0), weight) if name.lower() in q else weight
+    for name in ("gzip", "x-gzip"):
+        if name in q:
+            return q[name] > 0
+    return q.get("*", 0.0) > 0
 
 
 def etag_matches(if_none_match: str, tag: str) -> bool:

@@ -52,7 +52,7 @@ function renderAttention() {
       <p class="btn-row" style="margin:10px 0 0">
         ${stale.length ? `<button class="btn" type="button" id="remake-all" ${remaking || building.size ? "disabled" : ""}>Make the out-of-date ones again</button>` : ""}
         <button class="btn secondary" type="button" id="only-attention" aria-pressed="${onlyAttention}">${onlyAttention ? "Show every scan" : "Show only these"}</button></p>
-      <p class="hint" style="margin:8px 0 0">Each is made again with the outline and length it was made with (the card's menu shows which).</p></div>`);
+      <p class="hint" style="margin:8px 0 0">Each is made again with the outline and length it was made with. One cut to a shoe that is no longer saved is left for you to choose.</p></div>`);
   }
   $("attention").innerHTML = parts.join("");
 }
@@ -82,7 +82,7 @@ function render() {
     const s = c.summary || {};
     // a picture of the 3-D model from above (drawn by the studio the first time it's asked for; a few seconds)
     const thumb = c.mesh
-      ? `<img class="thumb" data-thumb src="/api/captures/${encodeURIComponent(c.capture_id)}/thumb.png" alt="The 3D model of ${esc(c.capture_id)}, seen from above" loading="lazy">`
+      ? `<img class="thumb" data-thumb data-src="/api/captures/${encodeURIComponent(c.capture_id)}/thumb.png" alt="The 3D model of ${esc(c.capture_id)}, seen from above">`
       : c.frame_files?.length
       ? `<img src="/api/captures/${esc(c.capture_id)}/frames/1.jpg" alt="First frame of ${esc(c.capture_id)}" loading="lazy">`
       : `<div class="noimg"></div>`;
@@ -113,7 +113,7 @@ function render() {
         ${c.foot && (c.frame_files?.length || c.mesh)
           ? `<a class="btn secondary" href="/studio/landmarks.html?capture=${encodeURIComponent(c.capture_id)}">Landmarks</a>` : ""}
         ${c.condition === "shoe_insole" && c.mesh
-          ? `<button class="btn secondary" type="button" data-save-shoe="${esc(c.capture_id)}" aria-expanded="false">Save as a shoe</button>` : ""}
+          ? `<button class="btn secondary" type="button" data-save-shoe="${esc(c.capture_id)}" aria-expanded="${Boolean(shoeForms[c.capture_id]?.open)}">Save as a shoe</button>` : ""}
         ${c.foot && (c.frame_files?.length || c.mesh)
           ? `${shoePicker(c)}<span class="shoe-len"><input type="number" inputmode="decimal" min="150" max="360" step="1"
                placeholder="shoe insole, mm" aria-label="Shoe insole length in mm (optional)" data-length-for="${esc(c.capture_id)}"
@@ -127,6 +127,7 @@ function render() {
       ${compareHtml(c)}
     </div></article>`;
   }).join("");
+  showThumbs();
 }
 
 // The insole's outline: a saved shoe's (one outline per shoe model and size, footscan/shoes.py), a scanned
@@ -194,19 +195,32 @@ document.addEventListener("change", (e) => {
 
 // Save a shoe's-insole scan as a saved shoe: its outline, kept for that shoe model and size. A small form on the
 // card (not the browser's prompt boxes, which a phone shows one at a time over the page)
+// What is open and typed in each card's form, kept here so the list being drawn again (an insole finishing on
+// another card) doesn't close it or lose what was typed
+const shoeForms = {}; // capture id -> {open, name, size, default, msg, saving}
+
 function saveShoeForm(c) {
   const id = esc(c.capture_id);
-  return `<form class="card" data-save-shoe-form="${id}" hidden style="margin-top:10px;padding:12px;display:grid;gap:10px">
+  const f = shoeForms[c.capture_id] || {};
+  return `<form class="card" data-save-shoe-form="${id}" ${f.open ? "" : "hidden"} style="margin-top:10px;padding:12px;display:grid;gap:10px">
     <div class="field"><label for="shoe-name-${id}">Which shoe is this insole from?</label>
-      <input id="shoe-name-${id}" name="name" type="text" maxlength="60" required placeholder="e.g. ASICS Gel Resolution X"></div>
+      <input id="shoe-name-${id}" name="name" type="text" maxlength="60" required placeholder="e.g. ASICS Gel Resolution X" value="${esc(f.name)}"></div>
     <div class="field"><label for="shoe-size-${id}">Which size?</label>
-      <input id="shoe-size-${id}" name="size" type="text" maxlength="24" required placeholder="e.g. US men's 9.5"></div>
-    <label style="display:flex;gap:8px;align-items:center"><input type="checkbox" name="default" style="width:auto">
+      <input id="shoe-size-${id}" name="size" type="text" maxlength="24" required placeholder="e.g. US men's 9.5" value="${esc(f.size)}"></div>
+    <label style="display:flex;gap:8px;align-items:center"><input type="checkbox" name="default" style="width:auto" ${f.default ? "checked" : ""}>
       Make it the default: new insoles take this shoe's outline unless another is chosen</label>
-    <p class="btn-row" style="margin:0"><button class="btn" type="submit">Save the shoe</button>
+    <p class="btn-row" style="margin:0"><button class="btn" type="submit" ${f.saving ? "disabled" : ""}>Save the shoe</button>
       <button class="btn secondary" type="button" data-save-shoe-cancel>Cancel</button></p>
-    <p class="hint" role="status" style="margin:0"></p></form>`;
+    <p class="hint" role="status" style="margin:0">${esc(f.msg)}</p></form>`;
 }
+
+function shoeFormState(form) {
+  const id = form.dataset.saveShoeForm;
+  return (shoeForms[id] = { ...shoeForms[id], name: form.elements.name.value, size: form.elements.size.value,
+    default: form.elements.default.checked });
+}
+document.addEventListener("input", (e) => { const f = e.target.closest("[data-save-shoe-form]"); if (f) shoeFormState(f); });
+document.addEventListener("change", (e) => { const f = e.target.closest("[data-save-shoe-form]"); if (f) shoeFormState(f); });
 
 document.addEventListener("click", (e) => {
   const btn = e.target.closest("[data-save-shoe], [data-save-shoe-cancel]");
@@ -215,6 +229,7 @@ document.addEventListener("click", (e) => {
     ? document.querySelector(`[data-save-shoe-form="${CSS.escape(btn.dataset.saveShoe)}"]`) : btn.closest("form");
   if (!form) return;
   form.hidden = !form.hidden;
+  shoeFormState(form).open = !form.hidden;
   const opener = document.querySelector(`[data-save-shoe="${CSS.escape(form.dataset.saveShoeForm)}"]`);
   opener?.setAttribute("aria-expanded", String(!form.hidden));
   if (!form.hidden) form.elements.name.focus();
@@ -224,17 +239,22 @@ document.addEventListener("submit", async (e) => {
   const form = e.target.closest("[data-save-shoe-form]");
   if (!form) return;
   e.preventDefault();
-  const msg = form.querySelector("[role=status]");
-  const name = form.elements.name.value.trim(), size = form.elements.size.value.trim();
-  if (!name || !size) { msg.textContent = "Say which shoe and which size."; return; }
-  const submit = form.querySelector("button[type=submit]");
-  submit.disabled = true;
-  msg.textContent = "Reading the insole's outline…";
+  const id = form.dataset.saveShoeForm;
+  const f = shoeFormState(form);
+  // the message and the button through the state, so a redraw meanwhile shows them too
+  const say = (msg, saving = false) => {
+    Object.assign(f, { msg, saving });
+    const now = document.querySelector(`[data-save-shoe-form="${CSS.escape(id)}"]`);
+    if (now) { now.querySelector("[role=status]").textContent = msg; now.querySelector("button[type=submit]").disabled = saving; }
+  };
+  const name = f.name.trim(), size = f.size.trim();
+  if (!name || !size) return say("Say which shoe and which size.");
+  say("Reading the insole's outline…", true);
   const [ok, out] = await ask("/api/shoes", { method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ capture: form.dataset.saveShoeForm, name, size, default: form.elements.default.checked }) });
-  submit.disabled = false;
-  if (!ok) { msg.textContent = `Couldn't save the shoe: ${out.error || "the studio refused"}`; return; }
-  note = `Saved: ${out.name}, ${out.size} (${out.length_mm} × ${out.width_mm} mm)${form.elements.default.checked ? ", the default for new insoles" : ""}.`;
+    body: JSON.stringify({ capture: id, name, size, default: f.default }) });
+  if (!ok) return say(`Couldn't save the shoe: ${out.error || "the studio refused"}`);
+  delete shoeForms[id];
+  note = `Saved: ${out.name}, ${out.size} (${out.length_mm} × ${out.width_mm} mm)${f.default ? ", the default for new insoles" : ""}.`;
   await load(); // the captures too: insoles cut to an earlier save of this shoe are stale now
 });
 
@@ -343,10 +363,12 @@ async function makeInsole(c, pick, len) {
   // remembered only once an insole was made with it (a refused length isn't offered again)
   if (ok && !out.error && len && takesLength(pick ?? "generic")) rememberShoeLength(len);
   // Keep the result with the capture, then redraw from that, so filtering (even
-  // mid-build) neither loses it nor brings back an older one.
-  c.insole = ok ? out : { error: `Couldn't make it: ${out.error || "the studio refused"}` };
+  // mid-build) neither loses it nor brings back an older one. The list may have been loaded again meanwhile (a
+  // shoe saved): the result goes on the capture as it is now listed.
+  const now = all.find((x) => x.capture_id === id) || c;
+  now.insole = ok ? out : { error: `Couldn't make it: ${out.error || "the studio refused"}` };
   render();
-  return !c.insole.error;
+  return !now.insole.error;
 }
 
 document.addEventListener("click", async (e) => {
@@ -361,38 +383,79 @@ document.addEventListener("click", async (e) => {
   await makeInsole(capture, pick, len);
 });
 
+// The outline an out-of-date insole is made again with: the one it was made with, from its own record. A shoe it
+// was cut to that is no longer there (or the saved shoes couldn't be listed) gives null: that insole is left for
+// a person to choose, never quietly cut to another shoe. One made with the default outline, or the foot's own
+// before the generic outline was the default, takes what its card's menu shows.
+function remakeChoice(c) {
+  const shoe = c.insole?.shoe;
+  if (shoe?.saved) return saved.shoes.some((s) => s.id === shoe.saved) ? `saved:${shoe.saved}` : null;
+  if (shoe?.capture) return all.some((s) => s.capture_id === shoe.capture && s.mesh) ? `scan:${shoe.capture}` : null;
+  return outlineChoice(c);
+}
+
 // Every out-of-date insole made again, one at a time (each takes the studio a few seconds and the whole
-// computer's attention), each with the outline and length its card shows
+// computer's attention), each with the outline and length it was made with
 document.addEventListener("click", async (e) => {
   if (e.target.closest("#only-attention")) { onlyAttention = !onlyAttention; render(); return; }
   if (!e.target.closest("#remake-all") || remaking) return;
-  const todo = all.filter((c) => c.insole?.stale && !building.has(c.capture_id));
+  const stale = all.filter((c) => c.insole?.stale && !building.has(c.capture_id));
+  const todo = stale.map((c) => [c, remakeChoice(c)]).filter(([, pick]) => pick !== null);
+  const skipped = stale.length - todo.length;
   remaking = { done: 0, of: todo.length };
   note = "";
   render();
   let failed = 0;
-  for (const c of todo) {
-    const pick = outlineChoice(c);
+  for (const [c, pick] of todo) {
     const len = takesLength(pick) ? String(c.insole?.shoe_length_mm ?? "") : "";
     if (!(await makeInsole(c, pick, len))) failed += 1;
     remaking.done += 1;
     render();
   }
   remaking = null;
-  note = `Made ${todo.length - failed} insole${todo.length - failed === 1 ? "" : "s"} again`
-    + (failed ? `; ${failed} couldn't be made (the card says why).` : ".");
+  const made = todo.length - failed;
+  note = `Made ${made} insole${made === 1 ? "" : "s"} again.`
+    + (failed ? ` ${failed} couldn't be made (the card says why).` : "")
+    + (skipped ? ` ${skipped} left as ${skipped === 1 ? "it was" : "they were"}: the shoe ${skipped === 1 ? "it was" : "they were"} cut to`
+      + " is no longer saved (or the saved shoes couldn't be listed); choose an outline on the card and press Remake insole." : "");
   render();
 });
 
-// a model the studio couldn't draw: the plain box, as before pictures
-document.addEventListener("error", (e) => {
-  if (!e.target.matches?.("img[data-thumb]")) return;
+// The pictures of the models (thumb.png), asked for two at a time, newest first: the studio draws each the first
+// time (a second or so), and a library of 30 new scans asking at once would fill every connection the browser
+// keeps to the studio, so Make insole would wait behind them. One already fetched is shown at once.
+const thumbs = new Map(); // src -> "queued" | "loading" | "done" | "failed"
+let thumbsLoading = 0;
+const THUMBS_AT_ONCE = 2;
+
+function plainBox(img) { // a model the studio couldn't draw: the plain box, as before pictures
   const box = document.createElement("div");
   box.className = "noimg";
   box.style.cssText = "display:grid;place-items:center;font-weight:700;color:var(--brand)";
   box.textContent = "3D";
-  e.target.replaceWith(box);
-}, true);
+  img.replaceWith(box);
+}
+
+function showThumbs() {
+  for (const img of document.querySelectorAll("img[data-thumb]:not([src])")) {
+    const state = thumbs.get(img.dataset.src);
+    if (state === "done") img.src = img.dataset.src;
+    else if (state === "failed") plainBox(img);
+    else if (!state) thumbs.set(img.dataset.src, "queued");
+  }
+  while (thumbsLoading < THUMBS_AT_ONCE) {
+    const next = [...thumbs].find(([, state]) => state === "queued");
+    if (!next) return;
+    const src = next[0];
+    thumbs.set(src, "loading");
+    thumbsLoading += 1;
+    const probe = new Image();
+    const settle = (state) => { thumbs.set(src, state); thumbsLoading -= 1; showThumbs(); };
+    probe.addEventListener("load", () => settle("done"));
+    probe.addEventListener("error", () => settle("failed"));
+    probe.src = src;
+  }
+}
 
 $("f-cond").addEventListener("change", render);
 $("f-foot").addEventListener("change", render);

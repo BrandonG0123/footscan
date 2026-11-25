@@ -2565,7 +2565,8 @@ def test_photos_are_never_gzipped(servers):
 
 @pytest.mark.parametrize("header,takes", [("gzip", True), ("deflate, gzip;q=0.8", True), ("GZIP", True),
                                           ("gzip;q=0", False), ("gzip; q=0.0", False), ("br, deflate", False),
-                                          ("", False)])
+                                          ("", False), ("x-gzip;q=0, gzip", True), ("*", True),
+                                          ("gzip;q=0, *", False), ("br, *;q=0.1", True), ("gzip;q=x", False)])
 def test_accept_encoding_is_read_with_its_q_values(header, takes):
     from footscan.server import accepts_gzip
 

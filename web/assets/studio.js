@@ -33,14 +33,17 @@ export async function answer(r) {
   return { error: `the studio answered ${r.status} ${r.statusText || ""} with no data`.trim() };
 }
 
-/** fetch() whose failures become {error}: no network (studio off, phone off the Wi-Fi) included. -> [ok, data] */
+/**
+ * fetch() whose failures become {error}: no network (studio off, phone off the Wi-Fi) included.
+ * -> [ok, data, status]; status 0 when the studio couldn't be reached at all.
+ */
 export async function ask(url, init) {
   let r;
   try {
     r = await fetch(url, init);
   } catch {
-    return [false, { error: "can't reach the studio (is it running, and is this device on its Wi-Fi or Tailscale?)" }];
+    return [false, { error: "can't reach the studio (is it running, and is this device on its Wi-Fi or Tailscale?)" }, 0];
   }
   const isJson = (r.headers.get("Content-Type") || "").includes("application/json");
-  return [r.ok && isJson, await answer(r)];
+  return [r.ok && isJson, await answer(r), r.status];
 }

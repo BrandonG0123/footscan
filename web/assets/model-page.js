@@ -48,12 +48,15 @@ async function init() {
 
 async function refresh() {
   clearTimeout(timer);
-  const [, s] = await ask(api);
+  const [, s, status] = await ask(api);
   if (s.error && s.state === undefined) {
-    // shown, and asked again in a while: weak Wi-Fi drops a request now and then while a model builds
+    // Unreachable, or the studio's own trouble (5xx): shown, and asked again in a while (weak Wi-Fi drops a
+    // request now and then while a model builds). A refusal (no such capture, not the studio's operator) won't
+    // change by asking again: shown once.
+    const again = status === 0 || status >= 500;
     $("root").innerHTML = `<div class="callout stop"><p>Couldn't ask the studio about this model: ${esc(s.error)}.
-      Asking again in a few seconds…</p></div>`;
-    timer = setTimeout(refresh, 5000);
+      ${again ? "Asking again in a few seconds…" : ""}</p></div>`;
+    if (again) timer = setTimeout(refresh, 5000);
     return;
   }
   render(s);

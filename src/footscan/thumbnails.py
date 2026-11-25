@@ -25,7 +25,8 @@ from . import atomic
 from .filestamp import file_stamp
 
 PICTURE_PX = 360          # the picture's long side, about (plus the renderer's margin)
-# Pictures drawn at once: each takes about a second of one core, and a library page asks for all of them together.
+# Pictures drawn at once: a library page asks for all of them together, and each takes a while (about 1 s of one
+# core for a SYNTHETIC curved foot's 4.9 MB mesh.ply in the cloud container, 2026-11-25).
 _drawing = threading.BoundedSemaphore(2)
 
 
@@ -60,24 +61,36 @@ def draw(model: Path, up: str = "y") -> bytes:
 
 def thumbnail(folder: Path, model: Path, up: str = "y") -> Path:
     """The picture of ``model``, drawn now if there isn't one for this version of it. Raises if it can't be drawn
-    (an unreadable model): the page then shows its box without a picture."""
-    path = thumb_path(folder, model)
-    if path is None:
-        raise FileNotFoundError(model)
-    if path.is_file():
-        return path
-    with _drawing:
-        if path.is_file():  # drawn by another request while this one waited
-            return path
-        png = draw(model, up)
-        tmp = path.with_name(f".{path.name}.{secrets.token_hex(4)}.tmp")
-        try:
-            tmp.write_bytes(png)
-            atomic.replace(tmp, path)
-        finally:
-            tmp.unlink(missing_ok=True)
+    (an unreadable model): the page then shows its box without a picture.
+
+    The model can be replaced while it is drawn (the iPhone app sending the scan again): the picture is kept only
+    if the model is still the version it was named for, else it is drawn again from the new one (once), so a
+    picture never carries another version's name. Only pictures of versions other than the current one are
+    removed afterwards."""
+    for _ in range(2):
+        path = thumb_path(folder, model)
+        if path is None:
+            raise FileNotFoundError(model)
+        if path.is_file():
+            break
+        with _drawing:
+            if path.is_file():  # drawn by another request while this one waited
+                break
+            png = draw(model, up)
+            if thumb_path(folder, model) != path:  # replaced while it was drawn: draw the new one instead
+                continue
+            tmp = path.with_name(f".{path.name}.{secrets.token_hex(4)}.tmp")
+            try:
+                tmp.write_bytes(png)
+                atomic.replace(tmp, path)
+            finally:
+                tmp.unlink(missing_ok=True)
+        break
+    else:
+        raise FileNotFoundError(model)  # replaced twice while drawing: asked again later, when it's settled
+    current = thumb_path(folder, model)
     for old in Path(folder).glob("thumb-*.png"):  # pictures of models since replaced
-        if old != path:
+        if old != current and old != path:
             try:
                 old.unlink(missing_ok=True)
             except OSError:  # being sent right now (Windows won't remove an open file): removed next time
