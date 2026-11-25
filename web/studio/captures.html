@@ -12,6 +12,7 @@
     .cap { display: grid; grid-template-columns: 132px 1fr; gap: 16px; padding: 14px; }
     .cap:target { outline: 3px solid var(--accent); }
     .cap img, .cap .noimg { width: 132px; aspect-ratio: 4 / 3; object-fit: cover; border-radius: 10px; background: var(--surface-2); }
+    .cap img.thumb { object-fit: contain; background: #fff; }
     .cap h3 { margin: 0 0 6px; font-size: 1rem; }
     .cap dl { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 6px 14px; margin: 10px 0 0; font-size: 0.88rem; }
     .cap dt { color: var(--muted); font-size: 0.75rem; }
@@ -133,8 +134,9 @@
     }
     $("list").innerHTML = rows.map((c) => {
       const s = c.summary || {};
+      // a picture of the 3-D model from above (drawn by the studio the first time it's asked for; a few seconds)
       const thumb = c.mesh
-        ? `<div class="noimg" style="display:grid;place-items:center;font-weight:700;color:var(--brand)">3D</div>`
+        ? `<img class="thumb" data-thumb src="/api/captures/${encodeURIComponent(c.capture_id)}/thumb.png" alt="The 3D model of ${esc(c.capture_id)}, seen from above" loading="lazy">`
         : c.frame_files?.length
         ? `<img src="/api/captures/${esc(c.capture_id)}/frames/1.jpg" alt="First frame of ${esc(c.capture_id)}" loading="lazy">`
         : `<div class="noimg"></div>`;
@@ -435,6 +437,16 @@
       + (failed ? `; ${failed} couldn't be made (the card says why).` : ".");
     render();
   });
+
+  // a model the studio couldn't draw: the plain box, as before pictures
+  document.addEventListener("error", (e) => {
+    if (!e.target.matches?.("img[data-thumb]")) return;
+    const box = document.createElement("div");
+    box.className = "noimg";
+    box.style.cssText = "display:grid;place-items:center;font-weight:700;color:var(--brand)";
+    box.textContent = "3D";
+    e.target.replaceWith(box);
+  }, true);
 
   $("f-cond").addEventListener("change", render);
   $("f-foot").addEventListener("change", render);
