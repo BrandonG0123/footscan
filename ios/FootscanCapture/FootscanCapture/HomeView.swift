@@ -5,6 +5,7 @@
 // goes straight to the camera, and the model is built (and sent, with a
 // studio connected) by itself. A scan the studio refused has Scan again,
 // which shows what to change before the camera opens and while the box is set.
+import AVFoundation
 import RealityKit
 import SwiftUI
 
@@ -88,6 +89,11 @@ struct HomeView: View {
     @State private var retake: [RetakeAdvice] = []
     /// Delete, from a card's long-press menu: asked first, as on the scan's own page.
     @State private var deleting: Scan?
+    /// The camera is off for this app (the intro's "Not now", or turned off in Settings): say so, with the way to
+    /// turn it on, instead of opening a capture that can't see.
+    @State private var cameraOff: CameraAccess?
+    /// iOS is asking whether Footscan may use the camera: the Scan button waits for the answer.
+    @State private var askingCamera = false
 
     struct PrepRequest: Identifiable {
         let subject: Subject
@@ -252,7 +258,7 @@ struct HomeView: View {
                     .contentTransition(.numericText())
             }
             .buttonStyle(PrimaryButtonStyle())
-            .disabled(findingStudio != nil)
+            .disabled(findingStudio != nil || askingCamera)
             .animation(.smooth, value: subjectRaw)
             .animation(.smooth, value: method)
 
@@ -268,7 +274,24 @@ struct HomeView: View {
                 }
                 Spacer()
             }
+            if let cameraOff, let message = cameraOff.message {
+                VStack(alignment: .leading, spacing: 8) {
+                    Label(message, systemImage: "camera.badge.ellipsis")
+                        .font(.footnote).foregroundStyle(Color.fsStop)
+                    if cameraOff == .off {
+                        Button("Open Settings") {
+                            if let url = URL(string: UIApplication.openSettingsURLString) { UIApplication.shared.open(url) }
+                        }
+                        .font(.subheadline.weight(.semibold))
+                    }
+                }
+                .transition(.opacity)
+            }
             if let error { Text(error).font(.footnote).foregroundStyle(Color.fsStop) }
+        }
+        // back from Settings with the camera turned on: the note goes
+        .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in
+            if cameraOff != nil && CameraAccess.state() == .allowed { withAnimation(.smooth) { cameraOff = nil } }
         }
     }
 
@@ -416,6 +439,27 @@ struct HomeView: View {
     }
 
     private func begin(_ s: Subject) {
+        switch CameraAccess.state() {
+        case .allowed:
+            cameraOff = nil
+        case let access where access.message != nil:
+            withAnimation(.smooth) { cameraOff = access; error = nil }
+            UINotificationFeedbackGenerator().notificationOccurred(.warning)
+            return
+        default:
+            // never asked (the intro's "Not now"): iOS asks now, and the scan starts if it's allowed and nothing else
+            // was started or chosen meanwhile
+            guard !askingCamera else { return }
+            askingCamera = true
+            Task {
+                _ = await AVCaptureDevice.requestAccess(for: .video)
+                askingCamera = false
+                guard CameraAccess.state() != .notAsked, subject == s, capturing == nil, photoCapture == nil,
+                      prep == nil else { return }
+                begin(s)
+            }
+            return
+        }
         if method == .photos {
             // photos go straight to the studio: nothing big is kept on the phone
             guard studio.client != nil else { showStudio = true; return }

@@ -1,6 +1,7 @@
 // Tests for the iPhone app's own logic: the parts that don't need a camera.
 // Run: xcodebuild test -project FootscanCapture.xcodeproj -scheme FootscanCapture
 //      -destination 'platform=iOS Simulator,name=iPhone 17 Pro'
+import AVFoundation
 import Foundation
 import Testing
 @testable import FootscanCapture
@@ -722,6 +723,26 @@ struct InterruptedBuilds {
 
     @Test func theMessageSaysItCarriesOnByItself() {
         #expect(ScanLibrary.interruptedMessage.localizedCaseInsensitiveContains("by itself"))
+    }
+}
+
+// MARK: - the camera
+
+@Suite("The camera before a scan")
+struct CameraBeforeAScan {
+    @Test func theCamerasPermissionIsReadAsAllowedOffBlockedOrNotAsked() {
+        #expect(CameraAccess.from(.authorized) == .allowed)
+        #expect(CameraAccess.from(.notDetermined) == .notAsked)
+        #expect(CameraAccess.from(.denied) == .off)
+        #expect(CameraAccess.from(.restricted) == .blocked)
+    }
+
+    @Test func onlyACameraThatCantBeUsedHasSomethingToSay() {
+        #expect(CameraAccess.allowed.message == nil && CameraAccess.notAsked.message == nil)
+        // turned off for Footscan: where to turn it on
+        #expect(CameraAccess.off.message?.contains("Settings > Footscan > Camera") == true)
+        // blocked for the whole phone: there's no switch for Footscan, so it doesn't send them looking for one
+        #expect(CameraAccess.blocked.message?.contains("Settings > Footscan") == false)
     }
 }
 
