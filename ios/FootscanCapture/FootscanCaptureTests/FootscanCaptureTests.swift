@@ -496,10 +496,11 @@ struct CaptureCoachingTests {
     @Test func aTipThatFlickersIsReadOutOnceEveryFewSeconds() {
         var tips = TipRepeats()
         let t0 = Date(timeIntervalSince1970: 1_800_000_000)
-        #expect(tips.shouldSay("Slow down a little.", at: t0))
-        #expect(!tips.shouldSay("Slow down a little.", at: t0 + 1))
-        #expect(tips.shouldSay("Move a little closer.", at: t0 + 1))  // another tip isn't held back
-        #expect(tips.shouldSay("Slow down a little.", at: t0 + TipRepeats.quiet))
+        let first = tips.shouldSay("Slow down a little.", at: t0)
+        let again = tips.shouldSay("Slow down a little.", at: t0 + 1)
+        let another = tips.shouldSay("Move a little closer.", at: t0 + 1)  // another tip isn't held back
+        let later = tips.shouldSay("Slow down a little.", at: t0 + TipRepeats.quiet)
+        #expect(first && !again && another && later)
     }
 }
 
