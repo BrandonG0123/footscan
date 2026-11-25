@@ -59,6 +59,10 @@ struct ScanDetailView: View {
             StepAnnouncement.post(StepAnnouncement.words(step: "Studio", from: old, to: new, detail: studioDetail(scan.record),
                                                          problem: library.problems[scan.folder]))
         }
+        // and a tap you can feel when the send ends: a success, or an error when it stopped with a problem
+        .sensoryFeedback(trigger: studioState(rec)) { old, new in
+            StepAnnouncement.feedback(from: old, to: new, problem: library.problems[scan.folder] != nil)
+        }
         .navigationTitle(rec?.subject.label ?? "Scan")
         .navigationBarTitleDisplayMode(.inline)
         .sheet(isPresented: $showStudio) { StudioView() }
@@ -342,6 +346,16 @@ enum StepAnnouncement {
         case .done: return "\(step) done. \(detail)"
         case .failed: return "\(step) needs a look. \(problem ?? detail)"
         case .todo, .working: return problem.map { "\(step) stopped. \($0)" }
+        }
+    }
+
+    /// What the phone does in the hand when a step that was under way ends.
+    static func feedback(from old: StepState, to new: StepState, problem: Bool) -> SensoryFeedback? {
+        guard old == .working, new != .working else { return nil }
+        switch new {
+        case .done: return .success
+        case .failed: return .error
+        case .todo, .working: return problem ? .error : nil
         }
     }
 

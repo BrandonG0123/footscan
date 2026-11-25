@@ -3,6 +3,7 @@
 //      -destination 'platform=iOS Simulator,name=iPhone 17 Pro'
 import Foundation
 import Testing
+import SwiftUI
 @testable import FootscanCapture
 
 // MARK: - studio connect codes
@@ -552,6 +553,13 @@ struct StepAnnouncements {
                 == "3D model needs a look. Ran out of space.")
         #expect(StepAnnouncement.words(step: "Studio", from: .working, to: .failed, detail: "Not kept: scan this foot again.", problem: nil)
                 == "Studio needs a look. Not kept: scan this foot again.")
+    }
+
+    @Test func theEndOfASendCanBeFelt() {
+        #expect(StepAnnouncement.feedback(from: .working, to: .done, problem: false) == .success)
+        #expect(StepAnnouncement.feedback(from: .working, to: .todo, problem: true) == .error)
+        #expect(StepAnnouncement.feedback(from: .working, to: .failed, problem: false) == .error)
+        #expect(StepAnnouncement.feedback(from: .todo, to: .done, problem: false) == nil) // opened on a sent scan
     }
 
     @Test func nothingIsSaidForAStepThatWasNotUnderWay() {
