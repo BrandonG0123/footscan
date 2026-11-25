@@ -29,6 +29,9 @@ final class ScanLibrary {
     /// Model builds cut off because the app left the screen (iOS doesn't lend the graphics chip to an app in the
     /// background): started again by themselves once it's back in front (`resumeInterrupted`).
     private(set) var interrupted: Set<URL> = []
+    /// A capture (3D or Photos + mat) fills the screen: cut-off builds wait for it to close rather than start a
+    /// model build on the graphics chip beside a live capture.
+    var captureOnScreen = false
     /// How many times each scan's build has been started again that way, this run: a build that keeps failing
     /// stops being retried and shows its own error instead.
     private var resumes: [URL: Int] = [:]
@@ -42,6 +45,9 @@ final class ScanLibrary {
     /// Start a cut-off build again by itself? Only if the failure came while the app was away from the screen, or
     /// within `backGrace` seconds of it coming back (a failure later than that, on screen, is a real one, and
     /// shows its own error), and not more than `maxResumes` times.
+    /// Whether a cut-off build may start again now: the app in front, and no capture on screen.
+    nonisolated static func mayResume(appActive: Bool, captureOnScreen: Bool) -> Bool { appActive && !captureOnScreen }
+
     nonisolated static func shouldResume(awayNow: Bool, secondsSinceBack: TimeInterval?, resumesSoFar: Int) -> Bool {
         let causedByLeaving = awayNow || (secondsSinceBack.map { $0 <= backGrace } ?? false)
         return causedByLeaving && resumesSoFar < maxResumes
@@ -162,8 +168,8 @@ final class ScanLibrary {
             if Self.shouldResume(awayNow: awayNow, secondsSinceBack: sinceBack, resumesSoFar: resumes[scan.folder, default: 0]) {
                 interrupted.insert(scan.folder)
                 problems[scan.folder] = Self.interruptedMessage
-                // the builder saved the system's own words for it; the message above says what happened
-                if var rec = scan.record { rec.error = nil; scan.save(rec) }
+                // the builder's own words stay in the record (Details' Last problem): if the app is closed before
+                // the restart, or the failure was a real one after all, the reason isn't lost
             } else {
                 problems[scan.folder] = message
             }
@@ -186,8 +192,10 @@ final class ScanLibrary {
         repeat {
             resumeAgain = false
             for scan in scans.reversed() where interrupted.contains(scan.folder) {
-                // left the screen again: the rest wait for the next return, without using up a try in the background
-                guard UIApplication.shared.applicationState == .active else { break }
+                // left the screen again, or a capture opened: the rest wait (for the next return, or for the capture
+                // to close), without using up a try
+                guard Self.mayResume(appActive: UIApplication.shared.applicationState == .active,
+                                     captureOnScreen: captureOnScreen) else { break }
                 if scan.hasOBJ || scan.photoCount == 0 {
                     // built by other means meanwhile, or nothing left to build from: nothing to say it will restart
                     interrupted.remove(scan.folder)

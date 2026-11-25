@@ -518,6 +518,12 @@ struct InterruptedBuilds {
         #expect(away.backAt == back)
     }
 
+    @Test func aCutOffBuildWaitsForACaptureOnScreenToClose() {
+        #expect(!ScanLibrary.mayResume(appActive: true, captureOnScreen: true))  // not beside a live capture
+        #expect(!ScanLibrary.mayResume(appActive: false, captureOnScreen: false)) // not in the background
+        #expect(ScanLibrary.mayResume(appActive: true, captureOnScreen: false))
+    }
+
     @Test func theMessageSaysItCarriesOnByItself() {
         #expect(ScanLibrary.interruptedMessage.localizedCaseInsensitiveContains("by itself"))
     }
