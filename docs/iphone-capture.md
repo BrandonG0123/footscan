@@ -180,8 +180,9 @@ the simulator (see *Tests*).
   another empty one.
 - **No studio in reach.** A scan waiting on a studio that didn't answer goes
   again by itself when the phone joins a network (a Wi-Fi, or Tailscale
-  coming on), every 2 minutes while the app is open, and when the app comes
-  back to the front. Pulling the home screen down tries straight away. Until
+  coming on), every so often while the app is open (after 2 minutes, then
+  less often, up to every 16, so a silent studio doesn't cost a whole upload
+  every 2 minutes), and when the app comes back to the front. Pulling the home screen down tries straight away. Until
   one gets through, the dot on the studio button (top left) is amber, not
   green.
 - **How far a send has got.** The card reads *Sending 42%* while the model goes
