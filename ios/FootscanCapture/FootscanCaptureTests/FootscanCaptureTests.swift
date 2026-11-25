@@ -535,3 +535,41 @@ struct Ring {
         #expect(model.lit == [0, 11])
     }
 }
+
+// MARK: - a link to another studio
+
+@Suite("A link to a different studio asks first")
+struct OtherStudioLinks {
+    let pinA = String(repeating: "a", count: 64)
+    let pinB = String(repeating: "b", count: 64)
+
+    func link(_ address: String, fp: String?, alt: [String] = []) -> StudioLink {
+        StudioLink(url: URL(string: address)!, fingerprint: fp, alternates: alt.map { URL(string: $0)! })
+    }
+
+    @Test func theSameCertificateIsTheSameStudioAtAnyAddress() {
+        let home = link("https://192.168.1.20:8766", fp: pinA)
+        #expect(home.isSameStudio(as: link("https://100.113.53.83:8766", fp: pinA.uppercased())))
+        #expect(!home.isSameStudio(as: link("https://192.168.1.20:8766", fp: pinB))) // a new certificate: ask
+    }
+
+    @Test func withoutPinsAnAddressInCommonIsTheSameStudio() {
+        let home = link("https://192.168.1.20:8766", fp: nil, alt: ["https://100.113.53.83:8766"])
+        #expect(home.isSameStudio(as: link("https://100.113.53.83:8766", fp: nil)))
+        #expect(!home.isSameStudio(as: link("https://192.168.1.99:8766", fp: nil)))
+        #expect(!home.isSameStudio(as: link("https://192.168.1.20:8766", fp: pinA))) // one pinned, one not: ask
+    }
+
+    @MainActor @Test func onlyACodeForAnotherStudioIsAskedAbout() {
+        let studio = StudioConnection()
+        let saved = studio.link
+        defer { studio.link = saved }
+        let code = { (address: String, pin: String) in "footscan-capture://connect?url=\(address)&key=k&fp=\(pin)" }
+        studio.link = nil
+        #expect(studio.otherStudio(in: code("https://192.168.1.99:8766", pinB)) == nil) // nothing connected yet
+        studio.link = link("https://192.168.1.20:8766", fp: pinA)
+        #expect(studio.otherStudio(in: code("https://192.168.1.20:8766", pinA)) == nil) // the same one again
+        #expect(studio.otherStudio(in: "not a code") == nil)                           // connect() says why
+        #expect(studio.otherStudio(in: code("https://192.168.1.99:8766", pinB)) == "192.168.1.99 (home Wi-Fi)")
+    }
+}

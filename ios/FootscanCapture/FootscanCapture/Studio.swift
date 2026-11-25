@@ -42,6 +42,16 @@ struct StudioLink: Codable, Equatable {
     }
 
     static func host(of url: URL) -> String { url.host() ?? url.absoluteString }
+
+    /// Whether `other` is this same studio: the same pinned certificate, or (without pins to compare) an address
+    /// in common. A studio that made itself a new certificate counts as another one, which only means asking.
+    func isSameStudio(as other: StudioLink) -> Bool {
+        switch (fingerprint?.lowercased(), other.fingerprint?.lowercased()) {
+        case let (a?, b?): a == b
+        case (nil, nil): !Set(addresses).isDisjoint(with: other.addresses)
+        default: false
+        }
+    }
 }
 
 extension StudioLink {

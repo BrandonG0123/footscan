@@ -14,6 +14,14 @@ struct RootView: View {
     @Environment(ScanLibrary.self) private var library
     @Environment(\.scenePhase) private var scenePhase
     @State private var showStudio = false
+    /// A link to a different studio from the one connected, waiting for a yes.
+    @State private var otherStudio: OtherStudio?
+
+    struct OtherStudio: Identifiable {
+        let code: String
+        let address: String
+        var id: String { code }
+    }
 
     var body: some View {
         ZStack {
@@ -27,8 +35,26 @@ struct RootView: View {
         // The studio's code, read by the iPhone's own Camera app, opens here,
         // whatever is on screen (even the intro, on a brand-new install).
         .onOpenURL { url in
+            let code = url.absoluteString
+            // a link to another studio doesn't swap studios by itself: waiting scans would go there
+            if let address = studio.otherStudio(in: code) {
+                otherStudio = OtherStudio(code: code, address: address)
+                return
+            }
             showStudio = true
-            Task { await studio.connect(url.absoluteString) }
+            Task { await studio.connect(code) }
+        }
+        .confirmationDialog("Connect to a different studio?", isPresented: Binding(
+            get: { otherStudio != nil }, set: { if !$0 { otherStudio = nil } }), titleVisibility: .visible,
+            presenting: otherStudio) { other in
+            Button("Connect to \(other.address)") {
+                showStudio = true
+                Task { await studio.connect(other.code) }
+            }
+            Button("Keep \(studio.link.map { StudioConnection.describe($0.url) } ?? "this studio")", role: .cancel) {}
+        } message: { other in
+            Text("This link is for the studio at \(other.address). Scans waiting to be sent would go there instead. "
+                 + "Only connect if it's your own studio.")
         }
         .sheet(isPresented: $showStudio) { StudioView() }
         // Scans that couldn't go before go now: when a studio is connected

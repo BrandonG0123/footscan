@@ -54,6 +54,15 @@ final class StudioConnection {
         return true
     }
 
+    /// A connect code that came from outside the app (a link, or the iPhone's own Camera app) and would put a
+    /// different studio in place of the connected one: that studio's address, to ask first. nil when nothing is
+    /// connected, when it's the same studio again (a new key, say), or when it isn't a studio code at all
+    /// (connect() then says why). Asked because scans waiting to go would go to the new studio by themselves.
+    func otherStudio(in text: String) -> String? {
+        guard let link, let parsed = StudioStore.parse(text), !link.isSameStudio(as: parsed.link) else { return nil }
+        return Self.describe(parsed.link.url)
+    }
+
     /// Test the connection: try every address the studio has, and say which one answered.
     func check() async {
         guard let client else { return }
