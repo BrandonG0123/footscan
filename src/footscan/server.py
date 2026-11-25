@@ -600,6 +600,10 @@ def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check
         protocol_version = "HTTP/1.1"
         timeout = KEEPALIVE_TIMEOUT_S
 
+        def send_response(self, code, message=None):
+            self._answer_started = True
+            super().send_response(code, message)
+
         def log_message(self, fmt, *args):  # skip static asset noise
             if args and "/api/" in str(args[0]):
                 # the request line: a studio key or upload token in it (?key=, &t=) never goes into the log
@@ -711,6 +715,7 @@ def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check
             self._body_read = False
             self._extra_headers = {}
             self._json = None
+            self._answer_started = False
             self.__dict__.pop("headers", None)  # the request before's: a request line refused before its headers
             if not super().parse_request():
                 return False
@@ -914,6 +919,21 @@ def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check
                 # Input of the wrong shape (a list where a number was expected, ...):
                 # answer, rather than dropping the connection.
                 self.send_json({"error": f"invalid input: {e}"}, HTTPStatus.BAD_REQUEST)
+            except ConnectionError:
+                raise  # the browser went away: nobody to answer
+            except Exception as e:  # noqa: BLE001 - anything else: said, and logged, not a dropped connection
+                # Without this the connection just closed, which a page reads as "the studio can't be reached"
+                # (and the 3-D model page then kept asking). The details go to the studio's log, not the answer.
+                import sys
+                import traceback
+
+                where = SECRET_IN_URL.sub(r"\1=…", self.path)
+                sys.stderr.write(f"[{now_iso()}] unexpected error on {method} {where}:\n{traceback.format_exc()}")
+                if self._answer_started:
+                    self.close_connection = True  # part of an answer already went out: it can't be replaced
+                    return
+                self.send_json({"error": f"the studio hit a problem it didn't expect ({type(e).__name__}); its log "
+                                         "has the details"}, HTTPStatus.INTERNAL_SERVER_ERROR)
 
         def is_studio_path(self, path: str) -> bool:
             """Anything that ends up inside web/studio, however it was spelt.

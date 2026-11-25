@@ -2668,3 +2668,19 @@ def test_a_wrong_studio_key_is_said_so_and_the_page_asked_for_keeps_its_settings
     assert b'<input type="hidden" name="capture" value="ABC_1">' in page and b'value="not-the-key"' not in page
     st, page, _ = call(f"{phone}/studio/?capture=%22%3E%3Cscript%3E")
     assert b"doesn't match" not in page and b"<script>" not in page  # no key given; a setting is escaped
+
+
+def test_an_unexpected_error_is_answered_500_in_words_and_logged_not_a_dropped_connection(servers, monkeypatch, capsys):
+    from footscan import server
+
+    op, _, _ = servers
+
+    def broken(*a, **k):
+        raise RuntimeError("something inside broke")
+
+    monkeypatch.setattr(server, "list_captures", broken)
+    status, raw, _ = call(f"{op}/api/captures?key={KEY}")
+    assert status == 500 and "didn't expect (RuntimeError)" in json.loads(raw)["error"]
+    assert b"something inside broke" not in raw  # the details are the log's, not the answer's
+    err = capsys.readouterr().err
+    assert "something inside broke" in err and "GET /api/captures?key=…" in err and KEY not in err
