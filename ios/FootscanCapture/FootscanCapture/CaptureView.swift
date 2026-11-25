@@ -12,6 +12,7 @@
 //                 (after one lap: Finish, or Another lap higher up)
 //   finishing  -> it saves the last photos
 //   completed  -> on to building the model
+import Combine
 import RealityKit
 import SwiftUI
 
@@ -28,6 +29,8 @@ struct CaptureView: View {
     @State private var allSides = false
     @State private var startError: String?
     @State private var releaseScreen: (() -> Void)?
+    /// How hot the phone is: a long capture warms it, and iOS slows a hot phone down.
+    @State private var thermal = ProcessInfo.processInfo.thermalState
 
     var body: some View {
         ZStack {
@@ -38,6 +41,16 @@ struct CaptureView: View {
                 // progress ring: the hints sit along its top edge, the
                 // instructions and buttons in a panel below it.
                 VStack(spacing: 8) {
+                    if let hot = CaptureCoaching.thermalWarning(thermal) {
+                        Label(hot, systemImage: "thermometer.sun.fill")
+                            .font(.footnote.weight(.semibold))
+                            .foregroundStyle(Color.fsAccentInk)
+                            .padding(.horizontal, 14).padding(.vertical, 8)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(Color.fsAccent, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                            .padding(.horizontal, 12)
+                            .transition(.move(edge: .top).combined(with: .opacity))
+                    }
                     ObjectCaptureView(session: session)
                         .clipShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
                         .overlay(alignment: .top) {
@@ -62,6 +75,10 @@ struct CaptureView: View {
             start()
         }
         .onDisappear { releaseScreen?(); releaseScreen = nil }
+        .onReceive(NotificationCenter.default.publisher(for: ProcessInfo.thermalStateDidChangeNotification)
+            .receive(on: DispatchQueue.main)) { _ in
+            withAnimation(.smooth) { thermal = ProcessInfo.processInfo.thermalState }
+        }
         .statusBarHidden()
     }
 
@@ -215,6 +232,10 @@ private struct Controls: View {
         // once any lap has gone all the way round, Finish stays available (a further lap only adds photos)
         .onChange(of: session.userCompletedScanPass, initial: true) { _, done in if done { allSides = true } }
         .sensoryFeedback(.impact(weight: .medium), trigger: stepIndex)
+        // VoiceOver reads each new instruction and warning out, so whoever holds the phone hears it without
+        // looking for it on screen (here only: the top part is a second copy of this view)
+        .onChange(of: instruction) { _, said in CaptureCoaching.announce(said) }
+        .onChange(of: feedbackText) { _, tip in if let tip { CaptureCoaching.announce(tip) } }
     }
 
     /// Until capture starts: what went wrong last time (after a refusal), and the checks to make before Start.
@@ -342,5 +363,23 @@ private struct StepDots: View {
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Step \(index + 1) of 3: \(labels[index])")
+    }
+}
+
+/// What the capture says beyond Object Capture's own coaching.
+enum CaptureCoaching {
+    /// A warning when the phone is hot enough for iOS to slow it down; nil when it's fine.
+    static func thermalWarning(_ state: ProcessInfo.ThermalState) -> String? {
+        switch state {
+        case .serious: "This iPhone is getting hot. iOS slows a hot phone down, which can stop the capture: keep out of direct sun, and let it cool before another scan."
+        case .critical: "This iPhone is too hot and iOS is slowing it right down. Finish now if you can, then let it cool before scanning again."
+        default: nil
+        }
+    }
+
+    /// Say it out loud to VoiceOver, if VoiceOver is on.
+    @MainActor static func announce(_ text: String) {
+        guard UIAccessibility.isVoiceOverRunning, !text.isEmpty else { return }
+        UIAccessibility.post(notification: .announcement, argument: text)
     }
 }

@@ -482,6 +482,18 @@ struct ScanList {
     }
 }
 
+// MARK: - coaching during a capture
+
+@Suite("Coaching during a capture")
+struct CaptureCoachingTests {
+    @Test func aHotPhoneIsWarnedAboutAndACoolOneIsNot() {
+        #expect(CaptureCoaching.thermalWarning(.nominal) == nil)
+        #expect(CaptureCoaching.thermalWarning(.fair) == nil)
+        #expect(CaptureCoaching.thermalWarning(.serious)?.contains("cool") == true)
+        #expect(CaptureCoaching.thermalWarning(.critical)?.contains("cool") == true)
+    }
+}
+
 // MARK: - free space
 
 @Suite("Free space before a capture")
