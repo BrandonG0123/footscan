@@ -65,7 +65,10 @@ covered by tests.
 - **Limits:** frames are capped at 8 MB each and 200 per scan, 3D files at
   150 MB, and new submissions at 20 per client per hour.
 - **Headers:** a Content-Security-Policy, `nosniff`, no framing, and no
-  `Referer`, so keys and tokens in URLs don't leak to other sites.
+  `Referer`, so keys and tokens in URLs don't leak to other sites. The policy
+  runs scripts only from the site's own files (`script-src 'self'`): no page
+  carries a script inside it (a test checks), so text that slips into a page
+  unescaped can't run as code.
 - **Deletion:** the studio can delete a person's photos and answers
   completely.
 

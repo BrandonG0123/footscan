@@ -218,6 +218,15 @@ then in the studio's **Research library** press **Make insole** on that
 scan's card. It shows the size, the arch fill and any warnings, with
 buttons for the 3MF, the summary sheet, the print notes and an STL.
 
+**Insoles to make again.** An insole that no longer matches what it was made
+from (the foot's model replaced, the shoe it was cut to saved again, the way
+sole scans are prepared changed, or the foot's own outline from before the
+generic one) can't be downloaded; its card says why. The top of the library
+counts them, with **Make the out-of-date ones again**: each is made again, one
+at a time, with the outline and length it was made with. One cut to a shoe
+that is no longer saved is left alone for you to choose an outline, never cut
+to another shoe instead. **Show only these** hides the rest.
+
 **3D preview** (the card's *3D preview* button, `studio/insole.html`): the
 insole coloured by how much it fills under the foot (light where flat, deep
 teal at the 20 mm cap), with the scanned sole it was made from, which can be
