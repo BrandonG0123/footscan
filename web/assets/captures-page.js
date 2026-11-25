@@ -462,7 +462,7 @@ function remakeChoice(c) {
 // Every out-of-date insole made again, one at a time (each takes the studio a few seconds and the whole
 // computer's attention), each with the outline and length it was made with
 document.addEventListener("click", async (e) => {
-  if (e.target.closest("#only-attention")) { onlyAttention = !onlyAttention; render(); return; }
+  if (e.target.closest("#only-attention")) { onlyAttention = !onlyAttention; refilter(); return; }
   if (e.target.closest("#clear-filters")) {
     $("f-cond").value = ""; $("f-foot").value = ""; $("f-text").value = ""; onlyAttention = false; refilter(); return;
   }
@@ -530,6 +530,7 @@ function showThumbs() {
 const FILTERS = [["q", "f-text"], ["condition", "f-cond"], ["foot", "f-foot"]];
 function filtersFromAddress() {
   const q = new URLSearchParams(location.search);
+  onlyAttention = q.get("attention") === "1";  // ?attention=1: only the insoles to make again (the Status page links it)
   for (const [name, id] of FILTERS) {
     const v = q.get(name);
     // a menu takes only one of its own choices: anything else in the address is left out
@@ -539,6 +540,7 @@ function filtersFromAddress() {
 function filtersToAddress() {
   const q = new URLSearchParams(location.search);
   for (const [name, id] of FILTERS) { if ($(id).value) q.set(name, $(id).value); else q.delete(name); }
+  if (onlyAttention) q.set("attention", "1"); else q.delete("attention");
   const search = q.toString();
   history.replaceState(history.state, "", `${location.pathname}${search ? `?${search}` : ""}${location.hash}`);
 }

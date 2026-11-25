@@ -80,7 +80,7 @@ export function statusHtml(st) {
       ["Disk free", disk.error ? "couldn't be read" : `${esc(size(disk.free_bytes))} of ${esc(size(disk.total_bytes))}`],
       ["Captures", esc(d.captures)],
       ["Sole scans", esc(d.sole_scans)],
-      ["Insoles", `${esc(d.insoles)}${d.insoles_out_of_date ? ` (${esc(d.insoles_out_of_date)} out of date)` : ""}${d.insoles_failed ? ` (${esc(d.insoles_failed)} failed)` : ""}`],
+      ["Insoles", `${esc(d.insoles)}${d.insoles_out_of_date ? ` (<a href="/studio/captures.html?attention=1">${esc(d.insoles_out_of_date)} out of date</a>)` : ""}${d.insoles_failed ? ` (${esc(d.insoles_failed)} failed)` : ""}`],
       ["Saved shoes", esc(d.shoes_saved)],
       ["Submissions", esc(d.submissions)],
     ])}</section>

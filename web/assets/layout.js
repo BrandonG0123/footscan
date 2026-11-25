@@ -98,6 +98,12 @@ function mountLayout() {
 
   document.body.prepend(header);
   document.body.prepend(strip);
+  // On a phone the menu scrolls sideways: bring this page's own entry into view (centred), not the first few
+  const nav = header.querySelector(".nav"), current = nav.querySelector('[aria-current="page"]');
+  if (current && nav.scrollWidth > nav.clientWidth) {
+    const n = nav.getBoundingClientRect(), c = current.getBoundingClientRect();
+    nav.scrollLeft += c.left - n.left - (n.width - c.width) / 2;
+  }
   document.body.append(footer);
   addPageGlow();
   if (area === "customer") {
