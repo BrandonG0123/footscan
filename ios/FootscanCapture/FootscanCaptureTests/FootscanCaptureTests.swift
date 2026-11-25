@@ -482,6 +482,54 @@ struct ScanList {
     }
 }
 
+// MARK: - the model's files
+
+@Suite("Saving the model's files")
+struct ModelFiles {
+    func folder() throws -> URL {
+        let dir = FileManager.default.temporaryDirectory.appending(path: "model-files-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir
+    }
+
+    /// A single triangle, as a model Model I/O can read (SYNTHETIC: test geometry only).
+    func triangle(in dir: URL) throws -> URL {
+        let url = dir.appending(path: "source.obj")
+        try "v 0 0 0\nv 0.1 0 0\nv 0 0 0.1\nf 1 2 3\n".write(to: url, atomically: true, encoding: .utf8)
+        return url
+    }
+
+    @Test func theExportLandsWholeAndLeavesNoWorkingFolder() throws {
+        let dir = try folder()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let out = dir.appending(path: "model.obj")
+        try ModelBuilder.exportOBJ(from: try triangle(in: dir), to: out)
+        let text = try String(contentsOf: out, encoding: .utf8)
+        #expect(text.contains("v "))
+        #expect(!FileManager.default.fileExists(atPath: dir.appending(path: ".obj-export").path()))
+    }
+
+    @Test func aFailedExportLeavesNoModelObj() throws {
+        let dir = try folder()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let out = dir.appending(path: "model.obj")
+        #expect(throws: (any Error).self) { try ModelBuilder.exportOBJ(from: dir.appending(path: "missing.usdz"), to: out) }
+        #expect(!FileManager.default.fileExists(atPath: out.path()))
+        #expect(!FileManager.default.fileExists(atPath: dir.appending(path: ".obj-export").path()))
+    }
+
+    @Test func puttingAFileInPlaceReplacesWhatWasThere() throws {
+        let dir = try folder()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let old = dir.appending(path: "model.usdz"), new = dir.appending(path: "model-building.usdz")
+        try Data("old".utf8).write(to: old)
+        try Data("new".utf8).write(to: new)
+        try ModelBuilder.putInPlace(new, at: old)
+        #expect(try Data(contentsOf: old) == Data("new".utf8))
+        #expect(!FileManager.default.fileExists(atPath: new.path()))
+    }
+}
+
 // MARK: - free space
 
 @Suite("Free space before a capture")
