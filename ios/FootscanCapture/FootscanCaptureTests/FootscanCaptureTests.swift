@@ -535,3 +535,30 @@ struct Ring {
         #expect(model.lit == [0, 11])
     }
 }
+
+// MARK: - Settings
+
+@Suite("Delete all says what is lost")
+struct DeleteAllWarning {
+    @Test func scansOnlyOnThisPhoneAreCounted() {
+        #expect(DeleteAllWords.message(total: 5, unsent: 2)
+                == "2 of them haven't been sent to the studio: their photos and models will be gone for good. Copies already in the studio stay there.")
+        #expect(DeleteAllWords.message(total: 5, unsent: 1).hasPrefix("1 of them hasn't been sent"))
+    }
+
+    @Test func allSentSaysTheStudioKeepsThem() {
+        #expect(DeleteAllWords.message(total: 3, unsent: 0) == "Copies already in the studio stay there.")
+    }
+
+    @Test func noneSentSaysAllAreGone() {
+        #expect(DeleteAllWords.message(total: 3, unsent: 3).hasPrefix("None of them has been sent"))
+        #expect(DeleteAllWords.message(total: 1, unsent: 1) == "It hasn't been sent to the studio: its photos and model will be gone for good.")
+    }
+
+    @Test func theVersionShowsItsBuildNumber() {
+        #expect(AppVersion.shown(version: "1.0", build: "3") == "1.0 (3)")
+        #expect(AppVersion.shown(version: "1.0", build: "1.0") == "1.0")
+        #expect(AppVersion.shown(version: "1.0", build: nil) == "1.0")
+        #expect(AppVersion.shown(version: nil, build: "3") == "?")
+    }
+}
