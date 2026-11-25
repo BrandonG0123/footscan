@@ -1512,3 +1512,16 @@ struct StudioPillTests {
         #expect(StudioPill.State(host: nil, notAnswering: false).words == "Studio: not connected")
     }
 }
+
+// MARK: - the sole scan's second lap
+
+@Suite("Sole scan tips")
+struct SoleScanTips {
+    @Test func theSoleUpSecondLapGoesLowAlongTheOuterSide() {
+        // a left sole scan read 8-21 mm narrow on its outer side, most likely because that side wasn't captured
+        for subject in [Subject.rightSole, .leftSole] {
+            let laps = subject.checklist.first { $0.1 == "A helper scans, two laps" }
+            #expect(laps?.2.contains("low along the outer (little-toe) side") == true)
+        }
+    }
+}

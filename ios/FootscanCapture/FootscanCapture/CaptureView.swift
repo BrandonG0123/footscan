@@ -384,7 +384,9 @@ private struct Controls: View {
                     ? "Enough photos. Another sweep a little higher or lower makes it better; or Finish."
                     : "Sweep slowly from the inner side, round behind the foot, to the outer side. Then again higher and lower."
             case ("sole_up", false): "Walk slowly all the way round the foot, looking down at the sole, until the ring is full. Finish unlocks then."
-            case ("sole_up", true): "Lap done. Now one more, closer, looking down at the arch, the toes and the back of the heel. Then Finish."
+            // the outer side too: a left sole scan whose outer edge came out 8-21 mm in was most likely missing it
+            // (docs/scanning-guide.md)
+            case ("sole_up", true): "Lap done. Now one more, closer: the arch, the toes, the back of the heel, and low along the outer (little-toe) side. Then Finish."
             case ("impression", false): "Walk slowly all the way round, looking down into the print, until the ring is full. Finish unlocks then."
             case ("impression", true): "Lap done. One more, higher up and looking straight down into the print, makes it better. Then Finish."
             case (_, true): "Lap done. Best results: 2 or 3 laps, one higher up looking down, one low. Then Finish."
