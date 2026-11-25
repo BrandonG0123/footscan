@@ -320,7 +320,13 @@ def generic_shape(placed, foot, params):
     if not (b0 <= ball <= b1 and h0 <= heel <= h1):
         raise ValueError(f"the default (generic outline) insole isn't an insole's shape: {ball:.3f} of its length "
                          f"across the ball, {heel:.3f} across the heel")
-    return round(ball, 3), round(heel, 3)
+    # recorded, not judged: the heel cup's rim as printed (inner / back / outer, above the base), the tallest edge
+    # forward of the heel, after its top corner is rounded, and the arch support as printed (insole.heel_cup_rim,
+    # insole.edge_height, insole.arch_support)
+    rim, edge = g.report.get("heel_cup_rim_mm") or {}, g.report.get("edge_beyond_heel") or {}
+    arch = g.report.get("arch_fill") or {}
+    return (round(ball, 3), round(heel, 3), (rim.get("inner"), rim.get("back"), rim.get("outer")), edge.get("max_mm"),
+            arch.get("max_mm"))
 
 
 def _longest(poly) -> float:
@@ -336,7 +342,9 @@ def row(m):
     w = "; ".join(x.split(":")[0][:48] for x in m["warnings"]) or "-"
     return (f"| {m['kind']} | {m['name']} | {m['foot']} | {m['bias']:+.2f} | {m['rms']:.2f} | {m['p95']:.2f} | "
             f"{m['arch']:+.2f} | {m['tilt']:.2f} ({m['pitch']:.2f} / {m['roll']:.2f}) | {m['length']:+.1f} | "
-            f"{'yes' if m['side'] else 'NO'} | {m['noise']} | {m['generic'][0]:.3f} / {m['generic'][1]:.3f} | {w} |")
+            f"{'yes' if m['side'] else 'NO'} | {m['noise']} | {m['generic'][0]:.3f} / {m['generic'][1]:.3f} | "
+            f"{' / '.join(f'{v:g}' if v is not None else '-' for v in m['generic'][2])} | {m['generic'][3]} | "
+            f"{m['generic'][4] if m['generic'][4] is not None else '-'} | {w} |")
 
 
 def main(argv=None) -> int:
@@ -371,10 +379,13 @@ def main(argv=None) -> int:
         "`scripts/benchmark_prep.py`; heights in mm, tilt in degrees.",
         "",
         "The generic column is the default insole's (the generic outline, sized from the foot) width across the ball /",
-        "across the heel, as shares of its length; outside 0.33-0.42 / 0.22-0.29 the case fails.",
+        "across the heel, as shares of its length; outside 0.33-0.42 / 0.22-0.29 the case fails. The same insole's heel",
+        "cup rim as printed (inner / back / outer, mm above the base; 12 asked for) and its tallest edge forward of the",
+        "heel (mm, after the top corner is rounded) and its arch support as printed (the highest printed fill from 30% to",
+        "62% of the foot's length, mm above the base) are recorded, not judged.",
         "",
-        "| scan | case | foot | bias | rms | p95 | arch | floor tilt (wedge: heel-toe / side) | length | inner side | noise read | generic | warnings |",
-        "|---|---|---|---|---|---|---|---|---|---|---|---|---|",
+        "| scan | case | foot | bias | rms | p95 | arch | floor tilt (wedge: heel-toe / side) | length | inner side | noise read | generic | heel cup rim | edge | arch support | warnings |",
+        "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|",
         *[row(m) if "error" not in m else f"| {m['kind']} | {m['name']} | {m['foot']} | FAILED: {m['error']} |" for m in results],
         "",
     ]

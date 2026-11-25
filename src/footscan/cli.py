@@ -252,16 +252,44 @@ def cmd_insole(args) -> int:
     except (InsoleError, ValueError) as err:
         print(f"{args.mesh}: {err}", file=sys.stderr)
         return 1
-    files = write_outputs(ins, Path(args.output), f"{args.foot}-insole", str(args.mesh))
-    r = ins.report
-    print(f"first-fit {args.foot} insole: {r['length_mm']} x {r['width_mm']} mm, {r['volume_cm3']} cm3, "
-          f"highest fill {r['max_fill_mm']} mm (from {units})")
-    print(f"  sole seen by the scan: {r['sole']['seen']:.0%} of the footprint, {r['sole']['seen_under_arch']:.0%} under the arch")
-    print(f"  bed: {r['bed_fit']['how']}")
-    for w in r["warnings"]:
-        print(f"  warning: {w}", file=sys.stderr)
-    for k, v in files.items():
-        print(f"  {k}: {v}")
+    from .insole import clear_arch_trial, mirrored, write_arch_trial
+
+    for one in [ins] + ([mirrored(ins)] if args.pair else []):
+        trial = {}
+        clear_arch_trial(Path(args.output), f"{one.foot}-insole")  # never one left from another make
+        if args.trial:  # first, so insole.json has its numbers
+            try:
+                trial = write_arch_trial(one, Path(args.output), f"{one.foot}-insole")
+            except Exception as err:  # noqa: BLE001 - a test piece that can't be cut mustn't cost the insole its files
+                clear_arch_trial(Path(args.output), f"{one.foot}-insole")
+                print(f"  arch trial: not made ({err if isinstance(err, InsoleError) else f'{type(err).__name__}: {err}'})",
+                      file=sys.stderr)
+        files = write_outputs(one, Path(args.output), f"{one.foot}-insole", str(args.mesh), paper=args.paper)
+        files.update(trial)
+        r = one.report
+        print(f"first-fit {one.foot} insole{' (mirror image)' if r.get('mirrored_from') else ''}: {r['length_mm']} x "
+              f"{r['width_mm']} mm, {r['volume_cm3']} cm3, highest fill {r['max_fill_mm']} mm (from {units})")
+        print(f"  sole seen by the scan: {r['sole']['seen']:.0%} of the footprint, {r['sole']['seen_under_arch']:.0%} under the arch")
+        if r.get("arch_fill"):
+            a = r["arch_fill"]
+            print(f"  arch support as printed: {a['max_mm']} mm above the base, {a['side']} side, {a['share']:.0%} of "
+                  "the foot's length from the heel")
+        print(f"  bed: {r['bed_fit']['how']}")
+        if r.get("arch_trial"):
+            a = r["arch_trial"]
+            print(f"  arch trial: {a['from_mm']:g} to {a['to_mm']:g} mm forward of the heel, {a['length_mm']} x "
+                  f"{a['width_mm']} mm, about {a['share_of_insole']:.0%} of the insole: print it first, the same way, "
+                  "at 100% (seated checks only)")
+        t = r.get("template") or {}
+        if t.get("error"):
+            print(f"  paper template: not made ({t['error']})", file=sys.stderr)
+        elif t:
+            print(f"  paper template: {t['pages']} {t['paper']} page(s): print at Actual size and check the 50 mm "
+                  f"square (page {t.get('square_page', 1)}) before trusting it")
+        for w in r["warnings"]:
+            print(f"  warning: {w}", file=sys.stderr)
+        for k, v in files.items():
+            print(f"  {k}: {v}")
     print("NOT A MEDICAL DEVICE. No posting. Walking-only break-in; no sport until the summary sheet is signed.")
     return 0
 
@@ -514,6 +542,14 @@ def main(argv=None) -> int:
     ins.add_argument("--shoe-up", default="y", choices=["y", "z"], help="the shoe scan's up axis (default y)")
     ins.add_argument("--foot-outline", action="store_true",
                      help="the foot's own outline instead of a shoe's or the generic insole outline")
+    ins.add_argument("--pair", action="store_true", help="also write the other foot's insole as this one's mirror "
+                                                         "image (a matched pair when the other foot has no usable "
+                                                         "scan; its sheet says it isn't that foot's own shape)")
+    ins.add_argument("--trial", action="store_true",
+                     help="also write <foot>-insole-arch-trial.3mf: the insole's midfoot on its own, to print first "
+                          "(arch height, firmness, the rounded edge) before the whole insole")
+    ins.add_argument("--paper", default="letter", choices=["letter", "a4"],
+                     help="paper for the full-size paper template (<foot>-insole-template.pdf; default letter)")
     shoes_folder(ins)
     ins.set_defaults(func=cmd_insole)
 
