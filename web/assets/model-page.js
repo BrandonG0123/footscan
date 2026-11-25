@@ -1,8 +1,9 @@
 // Studio: build a capture's 3D model (Phase 2) and read the results.
 // Everything numeric on this page comes from the reconstruction's report;
 // nothing is estimated or filled in here.
+import { ask, esc } from "./studio.js";
+
 const $ = (id) => document.getElementById(id);
-const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 const q = new URLSearchParams(location.search);
 const capture = q.get("capture");
 const submission = q.get("submission");
@@ -33,8 +34,8 @@ let timer = null;
 async function init() {
   if (capture) {
     $("back").innerHTML = `Research capture <a class="mono" href="/studio/captures.html#${esc(capture)}">${esc(capture)}</a>`;
-    const list = await fetch("/api/captures").then((r) => r.json()).catch(() => []);
-    meta = list.find((c) => c.capture_id === capture) || {};
+    const [ok, one] = await ask(base);  // this capture alone, not the whole library
+    meta = ok ? one : {};
     $("title").textContent = meta.condition === "calibration" ? "Calibration object" :
       meta.foot ? `${meta.foot} foot · ${meta.condition}` : `${meta.condition || "Capture"}`;
   } else {
@@ -47,11 +48,12 @@ async function init() {
 
 async function refresh() {
   clearTimeout(timer);
-  let s;
-  try {
-    s = await fetch(api).then((r) => r.json());
-  } catch {
-    $("root").innerHTML = `<div class="callout stop"><p>Can't reach the footscan server.</p></div>`;
+  const [, s] = await ask(api);
+  if (s.error && s.state === undefined) {
+    // shown, and asked again in a while: weak Wi-Fi drops a request now and then while a model builds
+    $("root").innerHTML = `<div class="callout stop"><p>Couldn't ask the studio about this model: ${esc(s.error)}.
+      Asking again in a few seconds…</p></div>`;
+    timer = setTimeout(refresh, 5000);
     return;
   }
   render(s);
@@ -61,9 +63,8 @@ async function refresh() {
 async function build() {
   const btn = $("btn-build");
   if (btn) btn.disabled = true;
-  const r = await fetch(api, { method: "POST" });
-  const body = await r.json().catch(() => ({}));
-  if (!r.ok) {
+  const [ok, body] = await ask(api, { method: "POST" });
+  if (!ok) {
     $("build-error").textContent = body.error || "Couldn't start.";
     if (btn) btn.disabled = false;
     return;
@@ -218,9 +219,8 @@ function render(s) {
   $("caliper-form")?.addEventListener("submit", async (e) => {
     e.preventDefault();
     const body = Object.fromEntries(new FormData(e.target));
-    const r = await fetch(`${base}/calipers`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-    const out = await r.json().catch(() => ({}));
-    if (!r.ok) { $("caliper-msg").textContent = out.error || "Couldn't save."; return; }
+    const [ok, out] = await ask(`${base}/calipers`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    if (!ok) { $("caliper-msg").textContent = out.error || "Couldn't save."; return; }
     $("caliper-msg").textContent = out.updating ? "Saved. Updating the comparison…" : "Saved. Build the model to compare against them.";
     if (out.updating) setTimeout(refresh, 800);
   });

@@ -34,6 +34,7 @@ GET  /api/submissions/<id>                              detail
 GET  /api/submissions/<id>/scans/<foot>/frames/<n>.jpg
 POST /api/submissions/<id>/status                       {status, note}
 GET/POST/PUT /api/captures...                           research captures (Phase 0)
+GET  /api/captures/<id>                                 one capture, as the list shows it (insole marked stale or not)
 POST /api/captures/<id>/recon                           build the 3D model (Phase 2), in the background
 GET  /api/captures/<id>/recon                           its progress and results
 GET  /api/captures/<id>/recon/<file>                    mesh.ply, report.json, ... (download)
@@ -1463,6 +1464,8 @@ def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check
             d = captures_dir / p[0]
             if not (d / "capture.json").exists():
                 raise FileNotFoundError
+            if p[1:] == [] and method == "GET":  # one capture, as the library lists it
+                return self.send_json(listed_capture(d, read_json(d / "capture.json")))
             if len(p) == 3 and p[1] == "frames":
                 if method == "PUT":
                     n = int(p[2])
@@ -2292,6 +2295,19 @@ def list_submissions(submissions_dir: Path) -> list[dict]:
     return sorted(out, key=lambda m: m.get("created", ""), reverse=True)
 
 
+def listed_capture(folder: Path, meta: dict) -> dict:
+    """A capture as the library shows it: without its per-frame data, its insole and shoe marked stale (and why)
+    when they no longer match what they were made from."""
+    meta = dict(meta)
+    meta.pop("frames", None)
+    why = insole_stale_reason(folder, meta) if meta.get("insole") else None
+    if why:
+        meta["insole"] = {**meta["insole"], "stale": True, "stale_reason": why, "stale_message": STALE_MESSAGES[why]}
+    if meta.get("clog") and clog_is_stale(folder, meta):
+        meta["clog"] = {**meta["clog"], "stale": True}
+    return meta
+
+
 def list_captures(captures_dir: Path) -> list[dict]:
     out = []
     for f in captures_dir.glob("*/capture.json") if captures_dir.exists() else []:
@@ -2299,13 +2315,7 @@ def list_captures(captures_dir: Path) -> list[dict]:
             meta = read_json(f)
         except (ValueError, OSError):  # garbled or not UTF-8, or removed since the glob saw it (a refused upload)
             continue
-        meta.pop("frames", None)
-        why = insole_stale_reason(f.parent, meta) if meta.get("insole") else None
-        if why:
-            meta["insole"] = {**meta["insole"], "stale": True, "stale_reason": why, "stale_message": STALE_MESSAGES[why]}
-        if meta.get("clog") and clog_is_stale(f.parent, meta):
-            meta["clog"] = {**meta["clog"], "stale": True}
-        out.append(meta)
+        out.append(listed_capture(f.parent, meta))
     return sorted(out, key=lambda m: m.get("created", ""), reverse=True)
 
 

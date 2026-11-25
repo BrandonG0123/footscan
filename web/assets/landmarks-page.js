@@ -1,9 +1,9 @@
 // Studio: click landmarks on a scan's 3-D model, save them as a pick, see the measurements.
 import { MeshViewer } from "./mesh-viewer.js";
+import { ask, esc } from "./studio.js";
 import { parseViewerBin, snapToSticker, vec } from "./viewer-math.js";
 
 const $ = (id) => document.getElementById(id);
-const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 const q = new URLSearchParams(location.search);
 const capture = q.get("capture"), submission = q.get("submission"), scanKey = q.get("scan");
 const base = capture
@@ -34,9 +34,9 @@ async function init() {
   $("back").innerHTML = capture
     ? `Research capture <a class="mono" href="/studio/captures.html#${esc(capture)}">${esc(capture)}</a> · <a href="/studio/model.html?capture=${encodeURIComponent(capture)}">3D model</a>`
     : `Submission <a class="mono" href="/studio/submission.html?id=${esc(submission)}">${esc(submission)}</a> · scan ${esc(scanKey)}`;
-  const r = await fetch(`${base}/picks`);
-  info = await r.json();
-  if (!r.ok) return showMsg(esc(info.error || "Couldn't load this scan."));
+  const [ok, got] = await ask(`${base}/picks`);
+  info = got;
+  if (!ok) return showMsg(esc(info.error || "Couldn't load this scan."));
   $("title").textContent = `Landmarks · ${info.foot} foot · ${info.condition}`;
   if (!info.has_model) {
     return showMsg(`No 3-D model yet. <a href="/studio/model.html?${capture ? `capture=${encodeURIComponent(capture)}` : `submission=${encodeURIComponent(submission)}&scan=${encodeURIComponent(scanKey)}`}">Build it first</a>.`);
@@ -246,11 +246,10 @@ function drawLabels() {
 $("btn-save").addEventListener("click", async () => {
   $("btn-save").disabled = true;
   $("save-error").textContent = "";
-  const r = await fetch(`${base}/picks/${current}`, {
+  const [ok, rec] = await ask(`${base}/picks/${current}`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ landmarks: points, snapped, mesh_sha256: info.mesh_sha256 }),
   });
-  const rec = await r.json().catch(() => ({}));
-  if (!r.ok) {
+  if (!ok) {
     $("save-error").textContent = rec.error || "Couldn't save.";
     $("btn-save").disabled = false;
     return;

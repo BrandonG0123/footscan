@@ -148,8 +148,8 @@
 <script src="/vendor/qrcode/qrcode.js"></script>
 <script type="module" src="/assets/layout.js"></script>
 <script type="module">
+  import { ask, esc } from "/assets/studio.js";
   const $ = (id) => document.getElementById(id);
-  const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
   let file = null;
 
   // "condition:kind" for the scans that show the sole (sole up, foam print); plain condition otherwise
@@ -184,9 +184,8 @@
     }
     $("pair-msg").textContent = "";
     try {
-      const r = await fetch("/api/studio/pairing");
-      const p = await r.json();
-      if (!r.ok) throw new Error(p.error || "couldn't ask the studio");
+      const [ok, p] = await ask("/api/studio/pairing");
+      if (!ok) throw new Error(p.error || "couldn't ask the studio");
       if (!p.available) { $("pair-msg").textContent = p.reason; return; }
       const q = new URLSearchParams({ url: p.url, key: p.key });
       if (p.fingerprint) q.set("fp", p.fingerprint);
@@ -215,11 +214,10 @@
     e.preventDefault();
     const body = Object.fromEntries(new FormData(e.target));
     $("caliper-msg").textContent = "Re-scoring…";
-    const r = await fetch(`/api/captures/${encodeURIComponent(importedId)}/calipers`, {
+    const [ok, out] = await ask(`/api/captures/${encodeURIComponent(importedId)}/calipers`, {
       method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
     });
-    const out = await r.json().catch(() => ({}));
-    if (!r.ok) { $("caliper-msg").textContent = out.error || "Couldn't save."; return; }
+    if (!ok) { $("caliper-msg").textContent = out.error || "Couldn't save."; return; }
     showAccuracy(out.accuracy, importedId);
     $("caliper-msg").textContent = "Saved. The numbers above now use your readings.";
   });
@@ -265,7 +263,7 @@
     btn.disabled = true;
     btn.textContent = cond === "calibration" ? "Importing and measuring…" : "Importing…";
     try {
-      const r = await fetch("/api/captures", {
+      const [made, created] = await ask("/api/captures", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           condition: cond, foot: NOT_A_FOOT.has(cond) ? null : $("foot").value, session: $("session").value.trim(),
@@ -273,13 +271,12 @@
           ...(NOT_A_FOOT.has(cond) ? {} : { scan_kind: kind }),
         }),
       });
-      const created = await r.json();
-      if (!r.ok) throw new Error(created.error);
-      const up = await fetch(`/api/captures/${created.id}/mesh?ext=${ext}&up=${$("up").value}`, {
+      if (!made) throw new Error(created.error);
+      btn.textContent = cond === "calibration" ? "Sending and measuring…" : "Sending the model…";
+      const [sent, data] = await ask(`/api/captures/${created.id}/mesh?ext=${ext}&up=${$("up").value}`, {
         method: "PUT", headers: { "Content-Type": "application/octet-stream" }, body: file,
       });
-      const data = await up.json();
-      if (!up.ok) throw Object.assign(new Error(data.error), { retake: data.retake });
+      if (!sent) throw Object.assign(new Error(data.error), { retake: data.retake });
       const m = data.mesh;
       $("facts").innerHTML = [
         ["Length", `${m.extents_mm[0]} mm`], ["Width", `${m.extents_mm[1]} mm`], ["Height", `${m.extents_mm[2]} mm`],

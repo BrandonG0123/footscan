@@ -2,10 +2,10 @@
 // scanned sole it was made from. Every number here comes from the insole's own report.
 // Not a medical device: first fit, no posting, walking-only until a clinician signs the sheet.
 import { MeshViewer } from "./mesh-viewer.js";
+import { answer, esc } from "./studio.js";
 import { mergeMeshes, parseViewerBin } from "./viewer-math.js";
 
 const $ = (id) => document.getElementById(id);
-const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 const capture = new URLSearchParams(location.search).get("capture");
 const base = `/api/captures/${encodeURIComponent(capture || "")}/insole/`;
 // The same stops as insole.FILL_RAMP (light where flat, deep teal at the 20 mm arch cap).
@@ -14,13 +14,17 @@ const RAMP = "linear-gradient(90deg, rgb(237,230,214), rgb(95,194,182), rgb(14,7
 let viewer, insoleMesh, soleMesh, report;
 const state = { sole: true, lift: 15 };
 
+// Why a file of this insole can't be had, in the studio's own words where it gave them (409: why the insole no
+// longer matches what it was made from, which the server says)
+async function refusal(r, name) {
+  if (r.status === 404) return name.endsWith(".bin")
+    ? "this insole was made before the 3D preview existed: press Remake insole" : "no insole has been made for this scan yet";
+  return (await answer(r)).error || `${name}: ${r.status}`;
+}
+
 async function bin(name) {
   const r = await fetch(base + name);
-  if (!r.ok) {
-    throw new Error(r.status === 409 ? "this insole no longer matches its scan: make it again"
-      : r.status === 404 ? "this insole was made before the 3D preview existed: press Make insole again"
-      : `${name}: ${r.status}`);
-  }
+  if (!r.ok) throw new Error(await refusal(r, name));
   return parseViewerBin(await r.arrayBuffer());
 }
 
@@ -56,10 +60,9 @@ async function init() {
   }
   $("back").innerHTML = `Research capture <a class="mono" href="/studio/captures.html#${esc(capture)}">${esc(capture)}</a>`;
   try {
-    report = await fetch(base + "insole.json").then((r) => {
-      if (!r.ok) throw new Error(r.status === 409 ? "this insole no longer matches its scan: make it again" : `no insole yet (${r.status})`);
-      return r.json();
-    });
+    const r = await fetch(base + "insole.json");
+    if (!r.ok) throw new Error(await refusal(r, "insole.json"));
+    report = await r.json();
     insoleMesh = await bin("insole-preview.bin");
     soleMesh = await bin("insole-preview-sole.bin").catch(() => null);
   } catch (err) {

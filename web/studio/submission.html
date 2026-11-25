@@ -38,7 +38,7 @@
 </main>
 <script type="module" src="/assets/layout.js"></script>
 <script type="module">
-  import { STATUS, esc, fmtDate } from "/assets/studio.js";
+  import { STATUS, ask, esc, fmtDate } from "/assets/studio.js";
   const id = new URLSearchParams(location.search).get("id");
   let schema = null;
   const root = document.getElementById("root");
@@ -50,10 +50,15 @@
   };
 
   async function load() {
-    const r = await fetch(`/api/submissions/${encodeURIComponent(id)}`);
-    if (!r.ok) { root.innerHTML = `<div class="callout stop"><p>Submission not found.</p></div>`; return; }
-    schema = (await (await fetch("/api/survey")).json()).sections;
-    render(await r.json());
+    const [[ok, sub], [surveyOk, survey]] = await Promise.all([
+      ask(`/api/submissions/${encodeURIComponent(id)}`), ask("/api/survey")]);
+    if (!ok || !surveyOk) {
+      const why = !ok ? sub.error : survey.error;
+      root.innerHTML = `<div class="callout stop"><p>${why === "not found" ? "Submission not found." : `Couldn't load it: ${esc(why)}.`}</p></div>`;
+      return;
+    }
+    schema = survey.sections;
+    render(sub);
   }
 
   function answerText(q, a) {
@@ -213,25 +218,25 @@
 
     root.querySelectorAll("button[data-status]").forEach((b) => b.addEventListener("click", async () => {
       b.disabled = true;
-      const r = await fetch(`/api/submissions/${encodeURIComponent(s.id)}/status`, {
+      const [ok, out] = await ask(`/api/submissions/${encodeURIComponent(s.id)}/status`, {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ status: b.dataset.status, note: document.getElementById("note").value }),
       });
-      if (r.ok) render(await r.json()); else { b.disabled = false; alert((await r.json()).error); }
+      if (ok) render(out); else { b.disabled = false; alert(out.error); }
     }));
 
     document.getElementById("btn-rescan").addEventListener("click", async (e) => {
       const keys = [...document.querySelectorAll("#rescan-keys input:checked")].map((i) => i.value);
       if (!keys.length) return alert("Tick at least one scan to redo.");
       e.target.disabled = true;
-      const r = await fetch(`/api/submissions/${encodeURIComponent(s.id)}/rescan`, {
+      const [ok, data] = await ask(`/api/submissions/${encodeURIComponent(s.id)}/rescan`, {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ scans: keys, note: document.getElementById("rescan-note").value }),
       });
-      const data = await r.json();
-      if (!r.ok) { e.target.disabled = false; return alert(data.error); }
+      if (!ok) { e.target.disabled = false; return alert(data.error); }
       // Point the link at the address phones use, not at localhost.
-      const info = await fetch("/api/studio").then((x) => x.json()).catch(() => ({}));
+      const [infoOk, info] = await ask("/api/studio");
+      if (!infoOk) info.scan_url = null;
       const base = (info.scan_url || location.origin + "/").replace(/\/$/, "");
       const link = base + data.path;
       await load();
@@ -248,8 +253,8 @@
 
     document.getElementById("btn-delete").addEventListener("click", async () => {
       if (!confirm(`Delete everything for ${s.name}? This can't be undone.`)) return;
-      const r = await fetch(`/api/submissions/${encodeURIComponent(s.id)}`, { method: "DELETE" });
-      if (r.ok) location.href = "/studio/"; else alert((await r.json()).error);
+      const [ok, out] = await ask(`/api/submissions/${encodeURIComponent(s.id)}`, { method: "DELETE" });
+      if (ok) location.href = "/studio/"; else alert(`Couldn't delete it: ${out.error}`);
     });
   }
   load();

@@ -1,4 +1,4 @@
-"""The library's picture of each capture's 3-D model (thumbnails.py, GET /api/captures/<id>/thumb.png)."""
+"""The studio library's server side: one capture as listed, and the picture of each 3-D model (thumbnails.py)."""
 
 from test_server import _object_capture_foot, body, call, servers  # noqa: F401 - servers is a fixture
 
@@ -56,3 +56,14 @@ def test_a_model_that_cant_be_drawn_is_answered_not_dropped(servers, monkeypatch
     monkeypatch.setattr(thumbnails, "draw", broken)
     status, raw, _ = call(f"{op}/api/captures/{cid}/thumb.png")
     assert status == 422 and "couldn't draw" in body((status, raw))["error"]
+
+
+def test_one_capture_is_answered_as_the_library_lists_it(servers):
+    op, phone, _ = servers
+    cid = _imported(op)
+    one = body(call(f"{op}/api/captures/{cid}"))
+    listed = next(c for c in body(call(f"{op}/api/captures")) if c["capture_id"] == cid)
+    assert one == listed and "frames" not in one
+    assert call(f"{op}/api/captures/nope")[0] == 404
+    assert call(f"{phone}/api/captures/{cid}")[0] == 403
+
