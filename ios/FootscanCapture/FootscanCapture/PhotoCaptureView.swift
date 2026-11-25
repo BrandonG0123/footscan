@@ -286,6 +286,9 @@ private struct StudioWebView: UIViewRepresentable {
             pinRefused = false
             // nothing to say (the view's own cancel with the page still there): leave loading to the newer navigation
             guard let said else { return }
+            // the message covers the page and Try again loads it from the start: a cancel on that load is no
+            // longer the view's own with the page still behind it
+            pageShown = false
             parent.loading = false
             parent.failure = said
         }
@@ -293,6 +296,8 @@ private struct StudioWebView: UIViewRepresentable {
         // iOS ended the page's process (it does that to a camera page when the phone is short of memory): the page
         // is blank and its photos not yet saved are gone
         func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+            pageShown = false // nothing is shown now: Try again starts over
+            pinRefused = false
             parent.loading = false
             parent.failure = PhotoPageWords.pageStopped
         }
