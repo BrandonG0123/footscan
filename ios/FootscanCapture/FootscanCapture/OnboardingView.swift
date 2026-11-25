@@ -90,9 +90,12 @@ struct OnboardingView: View {
                 .font(.system(size: min(headlineSize, 64), weight: .bold, design: .rounded)) // capped at 64 points, so it still fits under the scene
                 .foregroundStyle(Color.fsInk)
                 .accessibilityAddTraits(.isHeader)
+            // the not-a-medical-device line is on the first screen at every text size: at the Accessibility sizes
+            // the paragraph runs below the button, so the line goes above it there
+            if typeSize.isAccessibilitySize { SafetyStrip() }
             Text("Footscan turns a walk round your foot with your iPhone into a 3D model in real millimetres. Try it: drag the phone round the foot above.")
                 .font(.body).foregroundStyle(Color.fsMuted)
-            SafetyStrip()
+            if !typeSize.isAccessibilitySize { SafetyStrip() }
         }
     }
 
