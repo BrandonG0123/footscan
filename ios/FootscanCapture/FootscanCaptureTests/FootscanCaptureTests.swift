@@ -535,3 +535,19 @@ struct Ring {
         #expect(model.lit == [0, 11])
     }
 }
+
+// MARK: - the studio button
+
+@Suite("The studio button says when the studio isn't answering")
+struct StudioPillTests {
+    @Test func aStudioThatDidntAnswerTheLastSendIsNotShownAsFine() {
+        #expect(StudioPill.State(host: "192.168.1.20", notAnswering: true) == .notAnswering("192.168.1.20"))
+        #expect(StudioPill.State(host: "192.168.1.20", notAnswering: true).words.contains("didn't answer"))
+    }
+
+    @Test func connectedAndAnsweringOrNotConnected() {
+        #expect(StudioPill.State(host: "192.168.1.20", notAnswering: false) == .connected("192.168.1.20"))
+        #expect(StudioPill.State(host: nil, notAnswering: true) == .notConnected) // nothing to answer without a studio
+        #expect(StudioPill.State(host: nil, notAnswering: false).words == "Studio: not connected")
+    }
+}
