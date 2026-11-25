@@ -768,6 +768,28 @@ struct BatteryBeforeAScan {
     }
 }
 
+// MARK: - coaching during a capture
+
+@Suite("Coaching during a capture")
+struct CaptureCoachingTests {
+    @Test func aHotPhoneIsWarnedAboutAndACoolOneIsNot() {
+        #expect(CaptureCoaching.thermalWarning(.nominal) == nil)
+        #expect(CaptureCoaching.thermalWarning(.fair) == nil)
+        #expect(CaptureCoaching.thermalWarning(.serious)?.contains("cool") == true)
+        #expect(CaptureCoaching.thermalWarning(.critical)?.contains("cool") == true)
+    }
+
+    @Test func aTipThatFlickersIsReadOutOnceEveryFewSeconds() {
+        var tips = TipRepeats()
+        let t0 = Date(timeIntervalSince1970: 1_800_000_000)
+        let first = tips.shouldSay("Slow down a little.", at: t0)
+        let again = tips.shouldSay("Slow down a little.", at: t0 + 1)
+        let another = tips.shouldSay("Move a little closer.", at: t0 + 1)  // another tip isn't held back
+        let later = tips.shouldSay("Slow down a little.", at: t0 + TipRepeats.quiet)
+        #expect(first && !again && another && later)
+    }
+}
+
 // MARK: - free space
 
 @Suite("Free space before a capture")
