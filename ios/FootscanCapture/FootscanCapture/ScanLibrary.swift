@@ -47,6 +47,16 @@ final class ScanLibrary {
         reload()
     }
 
+    /// Give a scan a name, or take its name away (an empty one). Not while something is running on it: the build and
+    /// the send save its record when they end, from the copy they started with, which would drop the name.
+    @discardableResult func rename(_ scan: Scan, to typed: String) -> Bool {
+        guard work[scan.folder] == nil, var record = scan.record else { return false }
+        record.name = ScanRecord.cleanName(typed)
+        scan.save(record)
+        reload()
+        return true
+    }
+
     func deleteAll() {
         guard !busy else { return }
         for s in scans { ScanStore.delete(s) }

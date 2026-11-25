@@ -63,6 +63,8 @@ struct HomeView: View {
     @State private var findingStudio: Subject?
     /// Scanning again after a refusal: what to change, for the get-ready sheet and the camera.
     @State private var retake: [RetakeAdvice] = []
+    /// The scan being named, from its card's menu.
+    @State private var naming: Scan?
 
     struct PrepRequest: Identifiable {
         let subject: Subject
@@ -108,6 +110,7 @@ struct HomeView: View {
                 }
             }
             .navigationDestination(for: Scan.self) { ScanDetailView(scan: $0, onScanAgain: scanAgain) }
+            .modifier(NameScanAlert(scan: $naming))
             .refreshable { library.reload() }
         }
         .tint(.fsBrand)
@@ -267,6 +270,8 @@ struct HomeView: View {
                             .buttonStyle(PressableStyle())
                             .scrollReveal()
                             .contextMenu {
+                                Button { naming = scan } label: { Label("Name this scan", systemImage: "pencil") }
+                                    .disabled(library.work[scan.folder] != nil)
                                 if scan.hasOBJ { ShareLink(item: scan.obj) { Label("Share model.obj", systemImage: "square.and.arrow.up") } }
                                 Button(role: .destructive) { withAnimation { library.delete(scan) } } label: {
                                     Label("Delete", systemImage: "trash")
@@ -284,9 +289,9 @@ struct HomeView: View {
     private var needsYou: (scan: Scan, title: String, detail: String)? {
         for s in library.scans where library.work[s.folder] == nil {
             guard let r = s.record else { continue }
-            if let p = library.problems[s.folder] { return (s, "\(r.subject.label) needs a look", p) }
+            if let p = library.problems[s.folder] { return (s, "\(r.heading) needs a look", p) }
             if r.retake != nil || r.heldByPhoneCheck, !library.scans.contains(where: { newer in
-                newer.record.map { $0.subject == r.subject && $0.created > r.created } ?? false
+                newer.record.map { $0.sameFoot(as: r) && $0.created > r.created } ?? false
             }) {
                 // what went wrong, in short; the steps to fix it are on the scan's page, with Scan again
                 let what = r.nextTime.map(\.title).joined(separator: ". ")
@@ -461,9 +466,12 @@ struct ScanCard: View {
             ScanThumb(scan: scan)
                 .frame(width: 72, height: 72)
             VStack(alignment: .leading, spacing: 6) {
-                Text(rec?.subject.label ?? scan.folder.lastPathComponent).font(.headline).foregroundStyle(Color.fsInk)
-                if let d = rec?.created {
-                    Text("\(d.formatted(date: .abbreviated, time: .shortened)) · \(scan.photoCount) photos")
+                Text(rec?.heading ?? scan.folder.lastPathComponent).font(.headline).foregroundStyle(Color.fsInk)
+                if let rec {
+                    // a named scan still says what kind it is
+                    Text(((rec.name != nil ? [rec.subject.label] : [])
+                          + [rec.created.formatted(date: .abbreviated, time: .shortened), "\(scan.photoCount) photos"])
+                        .joined(separator: " · "))
                         .font(.caption).foregroundStyle(Color.fsMuted)
                 }
                 ScanStatus(scan: scan)
@@ -657,5 +665,29 @@ private struct InsolePath: View {
                         animation: { _ in .easeOut(duration: 1.6) }
             }
         }
+    }
+}
+
+/// "Name this scan": the name to type, for a card's menu and the scan's page. Saved on the phone only.
+struct NameScanAlert: ViewModifier {
+    @Binding var scan: Scan?
+    @Environment(ScanLibrary.self) private var library
+    @State private var typed = ""
+
+    func body(content: Content) -> some View {
+        content
+            .alert("Name this scan", isPresented: Binding(get: { scan != nil }, set: { if !$0 { scan = nil } })) {
+                TextField("Sam, left foot", text: $typed)
+                    .textInputAutocapitalization(.words)
+                Button("Save") {
+                    if let scan { library.rename(scan, to: typed) }
+                    scan = nil
+                }
+                Button("Cancel", role: .cancel) { scan = nil }
+            } message: {
+                Text("To tell scans of the same kind apart, such as two people's left soles. Kept on this phone, not sent "
+                     + "to the studio. Leave it empty to take the name away.")
+            }
+            .onChange(of: scan) { _, now in typed = now?.record?.name ?? "" }
     }
 }

@@ -15,6 +15,7 @@ struct ScanDetailView: View {
     @State private var showStudio = false
     @State private var confirmDelete = false
     @State private var preview: URL?
+    @State private var naming: Scan?
     @FocusState private var loadFocused: Bool
 
     var body: some View {
@@ -48,8 +49,14 @@ struct ScanDetailView: View {
                 Spacer()
                 Button("Done") { loadFocused = false }
             }
+            ToolbarItem(placement: .topBarTrailing) {
+                Button { naming = scan } label: { Image(systemName: "pencil") }
+                    .accessibilityLabel("Name this scan")
+                    .disabled(library.work[scan.folder] != nil)
+            }
         }
-        .navigationTitle(rec?.subject.label ?? "Scan")
+        .modifier(NameScanAlert(scan: $naming))
+        .navigationTitle(rec?.heading ?? "Scan")
         .navigationBarTitleDisplayMode(.inline)
         .sheet(isPresented: $showStudio) { StudioView() }
         .quickLookPreview($preview)
@@ -289,6 +296,8 @@ struct ScanDetailView: View {
     private func details(_ rec: ScanRecord?) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("Details").font(.headline)
+            // with a name in the title, what was scanned is said here
+            if let rec, rec.name != nil { row("What", rec.subject.label) }
             if let d = rec?.created { row("Scanned", d.formatted(date: .abbreviated, time: .shortened)) }
             row("Phone", "\(ScanStore.phoneName(rec?.device ?? "?")), iOS \(rec?.systemVersion ?? "?")")
             if let l = rec?.loadKg { row("Scale reading", String(format: "%.1f kg", l)) }
