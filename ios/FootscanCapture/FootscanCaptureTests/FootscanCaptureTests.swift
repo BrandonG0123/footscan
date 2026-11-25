@@ -859,6 +859,49 @@ struct StudioCameraPage {
     }
 }
 
+// MARK: - naming a scan
+
+@Suite("Naming a scan")
+struct ScanNames {
+    func record(_ subject: Subject = .leftSole, name: String? = nil) -> ScanRecord {
+        var r = ScanRecord(subject: subject, created: Date(timeIntervalSince1970: 1_700_000_000), device: "iPhone16,1",
+                           systemVersion: "18.1", appVersion: "1.0")
+        r.name = name
+        return r
+    }
+
+    @Test func aTypedNameIsTidiedAndAnEmptyOneMeansNoName() {
+        #expect(ScanRecord.cleanName("  Sam,   left foot ") == "Sam, left foot")
+        #expect(ScanRecord.cleanName("   ") == nil)
+        #expect(ScanRecord.cleanName("") == nil)
+        #expect(ScanRecord.cleanName(String(repeating: "a", count: 60))?.count == ScanRecord.nameLimit)
+        // cut at 40 just after a space: the space goes too
+        #expect(ScanRecord.cleanName(String(repeating: "a", count: 39) + " b") == String(repeating: "a", count: 39))
+    }
+
+    @Test func theCardShowsTheNameElseWhatWasScanned() {
+        #expect(record().heading == "Left sole")
+        #expect(record(name: "Sam").heading == "Sam")
+    }
+
+    @Test func aNewerScanReplacesAnOlderOneOnlyForTheSameNamedFoot() {
+        #expect(record().sameFoot(as: record()))
+        #expect(record(name: "Sam").sameFoot(as: record(name: "Sam")))
+        #expect(!record(name: "Sam").sameFoot(as: record()))  // someone else's left sole
+        #expect(record(name: "Zoë").sameFoot(as: record(name: "zoe")))  // capitals and accents don't matter
+        #expect(!record(.rightSole).sameFoot(as: record()))
+    }
+
+    @Test func aRecordSavedBeforeNamesStillReads() throws {
+        let json = #"{"subject":"left-sole","created":"2026-11-01T10:00:00Z","device":"iPhone16,1","systemVersion":"18.1","appVersion":"1.0","modelBuiltOnPhone":false,"units":"m","note":"x"}"#
+        let dec = JSONDecoder()
+        dec.dateDecodingStrategy = .iso8601
+        let r = try dec.decode(ScanRecord.self, from: Data(json.utf8))
+        #expect(r.name == nil)
+        #expect(r.heading == "Left sole")
+    }
+}
+
 // MARK: - free space
 
 @Suite("Free space before a capture")
