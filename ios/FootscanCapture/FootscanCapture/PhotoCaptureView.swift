@@ -56,8 +56,16 @@ struct PhotoCaptureView: View {
                     VStack(spacing: 12) {
                         Image(systemName: "wifi.exclamationmark").font(.largeTitle).foregroundStyle(Color.fsWarn)
                         Text(failure).multilineTextAlignment(.center).foregroundStyle(Color.fsMuted)
+                        // the page again, from the start, without going back to the home screen
+                        Button("Try again") {
+                            self.failure = nil
+                            loading = true
+                            handle.open(url)
+                        }
+                        .buttonStyle(.borderedProminent)
                     }
                     .padding(30)
+                    .background(Color.fsBackground)
                 }
             }
             .navigationTitle("Photos + mat")
@@ -88,10 +96,32 @@ struct PhotoCaptureView: View {
     }
 }
 
+/// What the Photos + mat screen says when the studio's page can't be shown.
+enum PhotoPageWords {
+    static func unreachable(_ studio: String) -> String {
+        "Couldn't reach the studio at \(studio). Check Footscan is running on the studio computer and this phone can reach "
+            + "it (same Wi-Fi, or Tailscale on); if its address changed, reconnect with its code."
+    }
+
+    static let pageStopped = "The studio's page stopped: iOS ended it, which it does when the phone is short of memory. "
+        + "Photos already saved to the studio are kept there; any not yet saved are gone. Close other apps, then try again."
+
+    /// A load the web view cancelled itself (NSURLErrorCancelled, or WebKit's "frame load interrupted" when a link
+    /// goes to Safari instead), as opposed to one that failed.
+    static func isOwnCancel(_ error: Error) -> Bool {
+        let e = error as NSError
+        return (e.domain == NSURLErrorDomain && e.code == NSURLErrorCancelled)
+            || (e.domain == "WebKitErrorDomain" && e.code == 102)
+    }
+}
+
 /// Lets the SwiftUI side ask the page about its state.
 @MainActor
 final class WebHandle {
     weak var webView: WKWebView?
+
+    /// Load the page again from the start (after it couldn't be reached, or stopped).
+    func open(_ url: URL) { webView?.load(URLRequest(url: url)) }
 
     struct State: Decodable { let uploading: Bool; let unsaved: Int }
 
@@ -217,9 +247,26 @@ private struct StudioWebView: UIViewRepresentable {
         }
 
         func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+            failed(error)
+        }
+
+        // the page started loading, then the connection went (a Wi-Fi drop partway)
+        func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+            failed(error)
+        }
+
+        private func failed(_ error: Error) {
             parent.loading = false
-            parent.failure = "Couldn't reach the studio at \(StudioConnection.describe(parent.link.url)). Check Footscan is running "
-                + "on the studio computer and this phone can reach it (same Wi-Fi, or Tailscale on); if its address changed, reconnect with its code."
+            // a load this view cancelled itself (a link sent to Safari, a new load over an old one) isn't a failure
+            guard !PhotoPageWords.isOwnCancel(error) else { return }
+            parent.failure = PhotoPageWords.unreachable(StudioConnection.describe(parent.link.url))
+        }
+
+        // iOS ended the page's process (it does that to a camera page when the phone is short of memory): the page
+        // is blank and its photos not yet saved are gone
+        func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+            parent.loading = false
+            parent.failure = PhotoPageWords.pageStopped
         }
     }
 }

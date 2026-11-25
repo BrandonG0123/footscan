@@ -482,6 +482,23 @@ struct ScanList {
     }
 }
 
+// MARK: - the Photos + mat page failing
+
+@Suite("The Photos + mat page failing")
+struct PhotoPageFailing {
+    @Test func aLoadTheViewCancelledItselfIsNotAFailure() {
+        #expect(PhotoPageWords.isOwnCancel(NSError(domain: NSURLErrorDomain, code: NSURLErrorCancelled)))
+        #expect(PhotoPageWords.isOwnCancel(NSError(domain: "WebKitErrorDomain", code: 102)))
+        #expect(!PhotoPageWords.isOwnCancel(NSError(domain: NSURLErrorDomain, code: NSURLErrorTimedOut)))
+        #expect(!PhotoPageWords.isOwnCancel(NSError(domain: NSURLErrorDomain, code: NSURLErrorNotConnectedToInternet)))
+    }
+
+    @Test func aStoppedPageSaysWhatIsKeptAndWhatIsGone() {
+        #expect(PhotoPageWords.pageStopped.contains("already saved to the studio are kept"))
+        #expect(PhotoPageWords.pageStopped.contains("not yet saved are gone"))
+    }
+}
+
 // MARK: - free space
 
 @Suite("Free space before a capture")
