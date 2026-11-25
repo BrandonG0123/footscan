@@ -75,6 +75,17 @@ def draw(model: Path, up: str = "y") -> bytes:
     return png_bytes(shaded_view(P, N, np.array([0.0, 0.0, 1.0]), right, mm_per_px, pad=8))
 
 
+def _refuse_if_failed(failed: Path) -> None:
+    """Raises CantDraw (with the kind of error the note keeps) if this version failed within the last hour."""
+    if not _recent(failed):
+        return
+    try:
+        kind = failed.read_text(encoding="utf-8", errors="replace").partition(":")[0].strip()
+    except OSError:  # removed just now (drawn by another request after all): not refused
+        return
+    raise CantDraw(kind or "it couldn't be drawn")
+
+
 def thumbnail(folder: Path, model: Path, up: str = "y") -> Path:
     """The picture of ``model``, drawn now if there isn't one for this version of it. Raises if it can't be drawn
     (an unreadable model): the page then shows its box without a picture.
@@ -90,23 +101,29 @@ def thumbnail(folder: Path, model: Path, up: str = "y") -> Path:
         if path.is_file():
             break
         failed = path.with_suffix(".failed")
-        if _recent(failed):
-            raise CantDraw(failed.read_text(encoding="utf-8", errors="replace") or "it couldn't be drawn")
+        _refuse_if_failed(failed)
         with _drawing:
             if path.is_file():  # drawn by another request while this one waited
                 break
+            _refuse_if_failed(failed)  # or failed for another request while this one waited
             try:
                 png = draw(model, up)
             except (FileNotFoundError, PermissionError, MemoryError):
                 raise  # the model went, or a moment's trouble: not the model's fault, so not remembered
             except Exception as e:
                 # remembered beside the model (named for this version of it), so the next visit doesn't try again
-                why = f"{type(e).__name__}: {e}"[:300]
+                # (the error's text, which can name folders, stays in the note and the log; the answer gets its kind)
+                for old in Path(folder).glob("thumb-*.failed"):  # earlier versions' notes: that model is gone
+                    if old != failed:
+                        try:
+                            old.unlink(missing_ok=True)
+                        except OSError:
+                            pass
                 try:
-                    failed.write_text(why, encoding="utf-8")
+                    failed.write_text(f"{type(e).__name__}: {e}"[:300], encoding="utf-8")
                 except OSError:
                     pass  # not remembered: tried again next time, no worse than before
-                raise CantDraw(why) from e
+                raise CantDraw(type(e).__name__) from e
             if thumb_path(folder, model) != path:  # replaced while it was drawn: draw the new one instead
                 continue
             tmp = path.with_name(f".{path.name}.{secrets.token_hex(4)}.tmp")

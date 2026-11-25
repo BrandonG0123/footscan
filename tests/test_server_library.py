@@ -70,14 +70,17 @@ def test_a_model_that_couldnt_be_drawn_isnt_tried_again_on_every_visit_until_an_
 
     def broken(model, up="y"):
         tries.append(1)
-        raise ValueError("no faces")
+        raise ValueError("no faces in /Users/someone/model.ply")
 
     monkeypatch.setattr(thumbnails, "draw", broken)
     for _ in range(3):
         status, raw, _ = call(f"{op}/api/captures/{cid}/thumb.png")
-        assert status == 422 and "ValueError: no faces" in body((status, raw))["error"]
+        error = body((status, raw))["error"]
+        # the kind of error is said; its text (which can name the computer's folders) stays in the note
+        assert status == 422 and "ValueError" in error and "/Users" not in error
     assert len(tries) == 1
     marker = next((data / "captures" / cid).glob("thumb-*.failed"))
+    assert "no faces in /Users/someone" in marker.read_text()
     old = time.time() - thumbnails.FAILED_RETRY_S - 5
     os.utime(marker, (old, old))  # an hour on: tried again (the studio may have been fixed meanwhile)
     call(f"{op}/api/captures/{cid}/thumb.png")
@@ -87,6 +90,37 @@ def test_a_model_that_couldnt_be_drawn_isnt_tried_again_on_every_visit_until_an_
     os.utime(marker, (old, old))
     assert call(f"{op}/api/captures/{cid}/thumb.png")[0] == 200
     assert not list((data / "captures" / cid).glob("thumb-*.failed"))
+
+
+def test_a_request_waiting_to_draw_isnt_drawn_again_once_another_failed_meanwhile(tmp_path, monkeypatch):
+    import threading
+    import time
+
+    from footscan import thumbnails
+
+    model = tmp_path / "mesh.ply"
+    model.write_bytes(b"ply")
+    tries = []
+    monkeypatch.setattr(thumbnails, "draw", lambda model, up="y": tries.append(1))
+    held = [thumbnails._drawing.acquire() for _ in range(2)]  # both drawing slots busy (two other models)
+    out = []
+    waiting = threading.Thread(target=lambda: out.append(_raised(thumbnails.thumbnail, tmp_path, model)))
+    waiting.start()
+    time.sleep(0.5)  # past the note check before the wait: it is waiting for a slot now
+    # the request that held a slot failed on this model while the other one waited
+    thumbnails.thumb_path(tmp_path, model).with_suffix(".failed").write_text("ValueError: no faces")
+    for _ in held:
+        thumbnails._drawing.release()
+    waiting.join(10)
+    assert not tries and isinstance(out[0], thumbnails.CantDraw) and str(out[0]) == "ValueError"
+
+
+def _raised(fn, *args):
+    try:
+        fn(*args)
+    except Exception as e:  # noqa: BLE001
+        return e
+    return None
 
 
 def test_one_capture_is_answered_as_the_library_lists_it(servers):

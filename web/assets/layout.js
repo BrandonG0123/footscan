@@ -54,11 +54,13 @@ function useStudioKey(key) {
     }
     return fetchWithKey(input, init);
   };
-  addEventListener("DOMContentLoaded", () => {
-    for (const a of document.querySelectorAll('a[href^="/studio/"]')) {
-      if (!a.href.includes("key=")) a.href += (a.href.includes("?") ? "&" : "?") + `key=${encodeURIComponent(key)}`;
-    }
-  });
+  const withKey = (a) => {
+    if (!a.href.includes("key=")) a.href += (a.href.includes("?") ? "&" : "?") + `key=${encodeURIComponent(key)}`;
+  };
+  addEventListener("DOMContentLoaded", () => { for (const a of document.querySelectorAll('a[href^="/studio/"]')) withKey(a); });
+  // links a page writes later (library cards, the Status page's counts) get it as they're followed or copied
+  const later = (e) => { const a = e.target.closest?.('a[href^="/studio/"]'); if (a) withKey(a); };
+  for (const type of ["click", "auxclick", "contextmenu"]) document.addEventListener(type, later, true);
 }
 
 function mountLayout() {

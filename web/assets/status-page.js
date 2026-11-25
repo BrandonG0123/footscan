@@ -101,12 +101,18 @@ async function load() {
   $("refresh").disabled = false;
   $("updated").textContent = `Asked at ${new Date().toLocaleTimeString()}; asked again every ${AGAIN_S} s while this page is open.`;
   if (!ok) {
+    show($("notes"), "");  // the last answer's notes aren't current any more
     $("root").innerHTML = `<div class="callout stop"><p>Couldn't ask the studio: ${esc(st.error || "it refused")}.</p></div>`;
     return;
   }
   const n = notes(st);
-  $("notes").innerHTML = n.length ? `<div class="callout warn" style="margin:16px 0"><ul class="checklist" style="margin:0">${n.map((x) => `<li>${esc(x)}</li>`).join("")}</ul></div>` : "";
+  show($("notes"), n.length ? `<div class="callout warn" style="margin:16px 0"><ul class="checklist" style="margin:0">${n.map((x) => `<li>${esc(x)}</li>`).join("")}</ul></div>` : "");
   $("root").innerHTML = statusHtml(st);
+}
+
+// The notes are read out as they change (aria-live): rewritten only when they do, not on every ask
+function show(el, html) {
+  if (el.dataset.shown !== html) { el.innerHTML = html; el.dataset.shown = html; }
 }
 
 // Asked again on its own while the page is in view, so "Test the connection" pressed on the phone shows up here

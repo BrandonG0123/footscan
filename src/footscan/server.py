@@ -93,6 +93,7 @@ from .filestamp import file_stamp
 
 ROOT = Path(__file__).resolve().parents[2]
 WEB_DIR = ROOT / "web"
+PACKAGE_DIR = Path(__file__).resolve().parent  # the studio's own code, for "where in the code" on the Status page
 DATA_DIR = ROOT / "data"
 
 # "object" is a scanner test: any object, no mat, no foot. It can't be scaled
@@ -594,6 +595,11 @@ def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check
     started_at, started_clock = now_iso(), __import__("time").monotonic()  # for the Status page
     app_seen = AppSeen()  # the iPhone app's last requests, for the Status page
     recent_errors = __import__("collections").deque(maxlen=RECENT_ERRORS_KEPT)  # unexpected ones, for the Status page
+    errors_lock = threading.Lock()  # added to by any request's thread while the Status page reads it
+
+    def errors_newest_first() -> list[dict]:
+        with errors_lock:
+            return list(recent_errors)[::-1]
     submissions_dir = data_dir / "submissions"
     limiter = RateLimiter(submissions_per_hour)
 
@@ -935,10 +941,14 @@ def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check
 
                 where = SECRET_IN_URL.sub(r"\1=…", self.path)
                 sys.stderr.write(f"[{now_iso()}] unexpected error on {method} {where}:\n{traceback.format_exc()}")
-                last = traceback.extract_tb(e.__traceback__)[-1]
-                recent_errors.append(dict(at=now_iso(), request=f"{method} {where.partition('?')[0]}",
-                                          error=f"{type(e).__name__}: {str(e)[:300]}",
-                                          code=f"{Path(last.filename).name}:{last.lineno} ({last.name})"))
+                # where in the studio's own code (the innermost frame is often inside numpy or the standard library)
+                frames = traceback.extract_tb(e.__traceback__)
+                ours = [f for f in frames if Path(f.filename).resolve().is_relative_to(PACKAGE_DIR)]
+                last = (ours or frames)[-1]
+                with errors_lock:
+                    recent_errors.append(dict(at=now_iso(), request=f"{method} {where.partition('?')[0]}",
+                                              error=f"{type(e).__name__}: {str(e)[:300]}",
+                                              code=f"{Path(last.filename).name}:{last.lineno} ({last.name})"))
                 if self._answer_started:
                     self.close_connection = True  # part of an answer already went out: it can't be replaced
                     return
@@ -1323,7 +1333,7 @@ def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check
                 claude=dict(check_scans=second_look is not None, describe_shoes=describe_with_claude,
                             api_key_set=bool(os.environ.get("ANTHROPIC_API_KEY"))),
                 app=app_seen.view(),
-                recent_errors=list(reversed(recent_errors)),  # the newest first
+                recent_errors=errors_newest_first(),
                 search_engines="allowed" if allow_indexing else "kept out (noindex)",
                 sole_scan_preparation=foot_prep.prep_version("sole_up"),
             )

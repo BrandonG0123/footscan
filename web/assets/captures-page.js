@@ -542,9 +542,10 @@ function filtersToAddress() {
   for (const [name, id] of FILTERS) { if ($(id).value) q.set(name, $(id).value); else q.delete(name); }
   if (onlyAttention) q.set("attention", "1"); else q.delete("attention");
   const search = q.toString();
-  history.replaceState(history.state, "", `${location.pathname}${search ? `?${search}` : ""}${location.hash}`);
+  // (Safari refuses after about 100 of these in a few seconds, e.g. holding Backspace: the list still follows)
+  try { history.replaceState(history.state, "", `${location.pathname}${search ? `?${search}` : ""}${location.hash}`); } catch { /* the address lags */ }
 }
-const refilter = () => { filtersToAddress(); render(); };
+const refilter = () => { render(); filtersToAddress(); };
 $("f-cond").addEventListener("change", refilter);
 $("f-foot").addEventListener("change", refilter);
 $("f-text").addEventListener("input", refilter);
