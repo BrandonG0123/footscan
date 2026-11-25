@@ -3,6 +3,7 @@
 //      -destination 'platform=iOS Simulator,name=iPhone 17 Pro'
 import Foundation
 import Testing
+import UIKit
 @testable import FootscanCapture
 
 // MARK: - studio connect codes
