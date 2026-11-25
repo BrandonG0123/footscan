@@ -2653,6 +2653,7 @@ def test_no_script_written_into_a_page_runs_only_the_sites_own_files():
 
     csp = dict(p.strip().split(" ", 1) for p in SECURITY_HEADERS["Content-Security-Policy"].split(";") if p.strip())
     assert csp["script-src"] == "'self'"
+    assert csp["base-uri"] == csp["form-action"] == "'self'" and csp["object-src"] == "'none'"
     for page in [*WEB_DIR.glob("*.html"), *WEB_DIR.glob("studio/*.html")]:
         html = page.read_text(encoding="utf-8")
         inline = [m for m in re.finditer(r"<script\b([^>]*)>(.*?)</script>", html, re.S) if m.group(2).strip()]

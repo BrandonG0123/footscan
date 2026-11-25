@@ -150,10 +150,13 @@ SECURITY_HEADERS = {
     "Permissions-Policy": "camera=(self), accelerometer=(self), gyroscope=(self), magnetometer=(self)",
     # Scripts only from this server's own files: no script written into a page runs, so text that slipped into
     # a page unescaped (a customer's scan summary was one, PR #20) can't run as code. Styles may be inline (the
-    # pages use style attributes); a style can't run code.
+    # pages use style attributes); a style can't run code. And text slipped into a page can't redirect what the
+    # page loads or sends: no <base> pointing its scripts elsewhere, no form sending what's typed (a studio key)
+    # to another site, no plug-in objects.
     "Content-Security-Policy": (
         "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
-        "img-src 'self' blob: data:; media-src 'self' blob:; connect-src 'self'; frame-ancestors 'none'"
+        "img-src 'self' blob: data:; media-src 'self' blob:; connect-src 'self'; frame-ancestors 'none'; "
+        "base-uri 'self'; form-action 'self'; object-src 'none'"
     ),
 }
 
