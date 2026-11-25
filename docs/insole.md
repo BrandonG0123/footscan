@@ -261,7 +261,9 @@ Two more, for the sole scans:
 - **THE FOREFOOT WAS ROLLED ONTO ONE EDGE**: once the floor is set, one side
   of the ball of the foot sits more than 5 mm above the other. Standing,
   both rest on the floor, so the insole would fill under the raised side: a
-  wedge. The first real left sole-up scan had 8.6 mm (its right pair 1.2 mm).
+  wedge. The first real left sole-up scan had 8.6 mm (its right pair 1.2 mm)
+  until 25 Nov; that came from where the floor was put, not from the foot
+  (below: rested where the sole stands, it reads 1.0 mm, and 2349 0.0 mm).
   A sole scan this rolled is also refused when it arrives (see below).
 - A legs-flat scan with **both feet** in it keeps only the chosen foot: the
   two are cut apart down the gap between the shins, and the result says so.
@@ -272,8 +274,28 @@ Two more, for the sole scans:
 
 A sole-up scan is turned over (the phone knows which way was up), cut
 below the bed and rested on its heel and ball: the floor is the face of
-the scan's convex hull right under its centre, so a foot tipped by its own
-relaxed ankle lands flat. Relaxed in the air, the toes hang up off the
+the scan's convex hull that the most of the sole stands on (the area facing
+it within 4 mm), so a foot tipped by its own relaxed ankle lands flat. Only
+faces within 55 degrees of square to the leg count: no ankle holds a foot
+further round than that, and a face along the leg has a long strip of calf
+on it.
+
+Until 25 Nov the floor was the hull's face right under the whole scan's
+centre. With up to 300 mm of shin kept, that centre sits over the heel, and
+on a real scan's rounded, uneven underside the face under it changed with
+how the foot was held. Turned a few degrees (up to 5, any way round) before
+preparing, the left sole-up scan `LIDAR_nwb_relaxed_L_20261027-151404-89df`
+read 228.5 to 250.2 mm long with its ball "rolled" 7.9 to 16.9 mm; the right
+one, `LIDAR_nwb_relaxed_R_20261027-151404-2349`, 243.2 to 243.9 mm, rolled 0
+to 2.3 mm (12 and 16 turns, 2026-11-25). Rested where the sole stands, every
+turn reads the same: 89df 225.1 x 80.5 mm with the ball level to 1.0 mm (its
+heel and both sides of the ball on the floor), 2349 243.1 x 90.2 mm, level to
+0.0 mm (`scripts/pose_spread.py`, 8 turns each, with the foot's axis change
+below too). So 89df's 9 mm "rolled forefoot" came from the old floor, not the
+foot; it is still refused on arrival, by length, 18 mm shorter than 2349.
+The synthetic test feet have a flat heel and ball, so the old floor found
+them whatever the turn; `tests/test_sole_floor.py` has a shape it fails on
+(a heavy shin leaning back over round pads). Relaxed in the air, the toes hang up off the
 line of the sole (gravity pulls them toward the top of the foot); standing,
 they lie flat. Hung up, they look shorter from above and their tips can rise
 past the 30 mm the outline is read at, so the outline comes out short
@@ -292,7 +314,8 @@ that) are laid flat again from where the first joint left them on the
 floor, up to three joints in all, as a toe has (`TOES_JOINTS`). SYNTHETIC
 (scripts/benchmark_prep.py, curved_foot, sole up, right foot), toes bent up
 20 degrees and their tips 30 more: 7.9 mm short with one joint, 5.3 mm with
-up to three. Toes bent once about a line well above the skin are laid
+up to three (7.4 since 25 Nov, when the foot's axis moved to the middle of its
+footprint: docs/benchmark.md). Toes bent once about a line well above the skin are laid
 flat at two joints too, and read long (SYNTHETIC: 60 degrees about a line
 18 mm up, 11.9 mm long); two bends close together at the skin look the same
 from underneath and need both (docs/benchmark.md). If the toes' tip is still more than 8 mm

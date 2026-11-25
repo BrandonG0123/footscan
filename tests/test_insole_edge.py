@@ -113,10 +113,14 @@ def test_the_heel_cup_rim_is_reported_as_printed_full_where_the_outline_leaves_r
 
 
 def test_a_narrow_outline_round_the_heel_shows_on_the_sheet_as_a_lower_rim():
-    """SYNTHETIC shaped_foot: square-sided (its heel's sides don't curve up into a cup of their own), its heel as
-    wide as the generic outline's heel leaves no room for the wall beside it: the rim at the sides stands well
-    below the depth asked for, and the sheet says so rather than giving only the 12 mm asked for."""
-    ins = insole.from_scan(synth.shaped_foot("right", leg=False), "right", insole.InsoleParams(target_length_mm=275.0))
+    """SYNTHETIC shaped_foot: square-sided (its heel's sides don't curve up into a cup of their own), its heel widened
+    to 72 mm (the generic outline is 68-73 mm wide there), leaves no room for the wall beside it: the rim at the
+    sides stands well below the depth asked for, and the sheet says so rather than giving only the 12 mm asked for.
+    On 25 Nov 2026 the rim read inner 0.1, back 12.0, outer 0.0 mm. With shaped_foot's own 64 mm heel the outline
+    leaves room and the rim is the full 12 mm all round; this test used that heel until the foot axis was put down
+    the middle of the footprint (PR #53), and only passed because the old axis turned this foot heel first."""
+    ins = insole.from_scan(synth.shaped_foot("right", leg=False, heel_r=36.0), "right",
+                           insole.InsoleParams(target_length_mm=275.0))
     rim = ins.report["heel_cup_rim_mm"]
     depth = ins.params.heel_cup_depth_mm
     assert rim["back"] == pytest.approx(depth, abs=0.3)

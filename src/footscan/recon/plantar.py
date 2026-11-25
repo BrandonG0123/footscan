@@ -15,7 +15,7 @@ The provisional frame
   under the foot *is* the reference plane (frame.py's ``support_plane``).
 - **Forward** is the long axis of the footprint: take the part of the foot
   within ``FOOTPRINT_BAND_MM`` of the floor, flatten it onto the floor, and
-  find the direction across which it is narrowest (see ``long_axis``).
+  find the line its filled outline is spread along most (see ``long_axis``).
   That gives a line, not a direction. Two independent clues pick the toe end:
   the mat says "toes toward sheet 2" (+y), and the leg rises above the
   *heel*, so the scan's high points (the shin) sit over the back of the
@@ -56,6 +56,7 @@ from ..frame import FootFrame
 
 FOOTPRINT_BAND_MM = 12.0
 LEG_MIN_HEIGHT_MM = 70.0
+MAT_ACROSS_TOL = 0.02  # an axis whose y part is under this (about 1 degree off the mat's x) lies along x
 DOWNWARD_COS = 0.25
 PLANTAR_MAX_HEIGHT_MM = 40.0
 PROFILE_STEP_MM = 2.0
@@ -66,32 +67,51 @@ class PlantarError(ValueError):
 
 
 def long_axis(xy: np.ndarray) -> tuple[np.ndarray, float, float]:
-    """Direction of the footprint's length: the one across which it is narrowest.
+    """Direction of the footprint's length -> (unit direction, length along it, width across it).
 
-    Wrap the footprint in its convex hull (a rubber band around it), then
-    try each hull edge as a direction and measure the hull's width across
-    it. The narrowest width is always found along some hull edge (the
-    "rotating calipers" result), and the length axis is that edge. Unlike
-    the principal axis of all the points, the hull ignores the arch's gap,
-    which lies inside the outline and would otherwise tilt the axis toward
-    the outer border.
+    Wrap the footprint in its convex hull (a rubber band around it), fill it,
+    and take the direction the filled hull is spread out along most (its
+    principal axis of area: the line about which it has the least second
+    moment). A footprint shaped the same on both sides of a line gets that
+    line, and a left foot's axis is the mirror image of its right foot's.
+    Using the hull, not the points, ignores the arch's gap, which lies inside
+    the outline and would otherwise tilt the axis toward the outer border.
+
+    Until 25 Nov 2026 this was the hull edge across which the hull is
+    narrowest ("rotating calipers"). On a foot that edge is the straight line
+    from the heel's curve to the ball's along one side, not the foot's middle:
+    on the SYNTHETIC curved_foot, whose outline is the same on both sides of
+    its middle line, it came out 7.7 degrees off that line, the same way for
+    the right and the left foot (the insole thread's finding, checked here),
+    and the insole's outline was then turned and slid by up to its limits to
+    make up for it, differently for each foot.
+
+    The width returned is the hull's extent across that line, no longer the
+    narrowest width in any direction, so it can only come out the same or
+    wider: on the real scans (footprint_mm, 25 Nov) 2349 86.3 -> 86.6 mm and
+    89df 74.8 -> 74.9; the legs-flat 2190, both feet in it, 108.1 -> 110.7,
+    0.504 of its length, past foot_prep.FOOT_RATIO's 0.50 (refused anyway).
     """
     from scipy.spatial import ConvexHull
 
-    H = xy[ConvexHull(xy).vertices]
-    best = None
-    for a, b in zip(H, np.roll(H, -1, axis=0)):
-        e = b - a
-        n = np.linalg.norm(e)
-        if n < 1e-9:
-            continue
-        e /= n
-        perp = np.array([-e[1], e[0]])
-        width = float(np.ptp(H @ perp))
-        if best is None or width < best[1]:
-            best = (e, width, float(np.ptp(H @ e)))
-    e, width, length = best
-    return e, length, width
+    H = xy[ConvexHull(xy).vertices]  # anticlockwise
+    x, y = (H - H.mean(0)).T
+    x1, y1 = np.roll(x, -1), np.roll(y, -1)
+    cross = x * y1 - x1 * y  # twice each triangle's area, from the polygon's own middle to one edge
+    area = cross.sum() / 2
+    cx, cy = ((x + x1) * cross).sum() / (6 * area), ((y + y1) * cross).sum() / (6 * area)
+    # second moments of the filled polygon about the origin (the vertices' mean), then about its centroid
+    sxx = ((x * x + x * x1 + x1 * x1) * cross).sum() / 12 - area * cx * cx
+    syy = ((y * y + y * y1 + y1 * y1) * cross).sum() / 12 - area * cy * cy
+    sxy = ((x * y1 + 2 * x * y + 2 * x1 * y1 + x1 * y) * cross).sum() / 24 - area * cx * cy
+    _, vecs = np.linalg.eigh(np.array([[sxx, sxy], [sxy, syy]]))
+    e = vecs[:, -1]
+    e = e / np.linalg.norm(e)
+    # a line has two directions; the same one every time (its larger part positive). Only the line means anything:
+    # the direction flips where the line passes 45 degrees, so no caller should read the foot's toe end from it
+    e = e if e[np.argmax(np.abs(e))] > 0 else -e
+    perp = np.array([-e[1], e[0]])
+    return e, float(np.ptp(H @ e)), float(np.ptp(H @ perp))
 
 
 def provisional_frame(mesh, foot: str) -> tuple[FootFrame, dict]:
@@ -107,7 +127,12 @@ def provisional_frame(mesh, foot: str) -> tuple[FootFrame, dict]:
     elongation = length / max(width, 1e-9)
 
     notes = []
-    by_mat = 1.0 if axis[1] >= 0 else -1.0  # the mat's instruction: toes toward +y
+    # the mat's instruction: toes toward +y, however far the foot lies from the mat's y. Only a foot lying along x
+    # (within MAT_ACROSS_TOL) the instruction says nothing about: then toward +x, as the SYNTHETIC test feet lie in
+    # foot coordinates. Until 25 Nov that case took the sign of the axis's y part too, a rounding error's sign:
+    # with the axis down the middle of the footprint, synth.curved_foot without a leg came out heel first.
+    along_x = abs(axis[1]) < MAT_ACROSS_TOL
+    by_mat = 1.0 if (axis[0] if along_x else axis[1]) >= 0 else -1.0
     high = V[V[:, 2] > LEG_MIN_HEIGHT_MM]
     by_leg = None
     if len(high) > 50:
@@ -129,7 +154,7 @@ def provisional_frame(mesh, foot: str) -> tuple[FootFrame, dict]:
     frame = FootFrame(np.r_[heel_xy, 0.0], anterior, medial, up, foot, "support_plane")
     info = dict(
         provisional=True,
-        method="mat floor + footprint narrowest-width axis; replaced by landmarks in Phase 3",
+        method="mat floor + footprint principal axis; replaced by landmarks in Phase 3",
         footprint_elongation=round(elongation, 2),
         toe_end_from="leg" if by_leg is not None else "mat",
         notes=notes,
