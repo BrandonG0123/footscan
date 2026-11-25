@@ -2586,3 +2586,12 @@ def test_no_script_written_into_a_page_runs_only_the_sites_own_files():
         inline = [m for m in re.finditer(r"<script\b([^>]*)>(.*?)</script>", html, re.S) if m.group(2).strip()]
         assert not inline, f"{page.name}: a script inside the page won't run; move it to a file under web/assets"
         assert not re.search(r"\son[a-z]+\s*=", html), f"{page.name}: an onclick= (or the like) won't run"
+
+
+def test_a_wrong_studio_key_is_said_so_and_the_page_asked_for_keeps_its_settings(servers):
+    _, phone, _ = servers
+    st, page, _ = call(f"{phone}/studio/insole.html?capture=ABC_1&key=not-the-key")
+    assert st == 403 and b"doesn't match" in page
+    assert b'<input type="hidden" name="capture" value="ABC_1">' in page and b'value="not-the-key"' not in page
+    st, page, _ = call(f"{phone}/studio/?capture=%22%3E%3Cscript%3E")
+    assert b"doesn't match" not in page and b"<script>" not in page  # no key given; a setting is escaped

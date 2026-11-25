@@ -172,7 +172,7 @@ STUDIO_LOCKED_HTML = """<!doctype html><html lang="en"><head><meta charset="utf-
 <h1 style="margin-top:12vh">Studio locked</h1>
 <p class="muted">This is the private side of footscan. To open it on this device, paste the studio key.
 It is printed in the terminal when footscan starts, and stored in the file <span class="mono">.studio_key</span>.</p>
-<form class="card" method="get" style="display:grid;gap:14px">
+{wrong}<form class="card" method="get" style="display:grid;gap:14px">{keep}
   <div class="field"><label for="key">Studio key</label>
     <input id="key" name="key" type="text" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false"></div>
   <button class="btn" type="submit">Open the studio</button>
@@ -751,7 +751,17 @@ def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check
             }
 
         def studio_locked(self, path: str):
-            body = STUDIO_LOCKED_HTML.encode()
+            """The page asking for the studio key. A key that was given and didn't match is said so (a link
+            copied with part of the key cut off), and the page's other settings (?capture=...) ride along with
+            the key typed, so the page asked for opens."""
+            import html
+
+            query = urllib.parse.parse_qsl(urllib.parse.urlsplit(self.path).query, keep_blank_values=True)
+            wrong = ('<p class="callout warn" role="alert">That studio key doesn\'t match this studio\'s. Check it was '
+                     'copied whole, with nothing cut off the end.</p>' if any(k == "key" for k, _ in query) else "")
+            keep = "".join(f'<input type="hidden" name="{html.escape(k)}" value="{html.escape(v)}">'
+                           for k, v in query[:20] if k != "key")
+            body = STUDIO_LOCKED_HTML.replace("{wrong}", wrong).replace("{keep}", keep).encode()
             self.send_response(HTTPStatus.FORBIDDEN)
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.send_header("Content-Length", str(len(body)))
