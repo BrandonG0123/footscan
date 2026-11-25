@@ -535,3 +535,22 @@ struct Ring {
         #expect(model.lit == [0, 11])
     }
 }
+
+// MARK: - Reduce Motion
+
+@Suite("Reduce Motion")
+struct ReduceMotionTests {
+    @Test func cardsScrollingInOnlyFadeWithReduceMotion() {
+        for phase in [-1.0, -0.5, 0.5, 1.0] {
+            let style = RevealStyle.at(phase, reduceMotion: true)
+            #expect(style == RevealStyle(opacity: 0.35, scale: 1, rise: 0, blur: 0))
+        }
+    }
+
+    @Test func cardsScrollingInRiseAndGrowWithoutIt() {
+        let leaving = RevealStyle.at(1, reduceMotion: false)
+        #expect(leaving.scale < 1 && leaving.rise > 0 && leaving.blur > 0)
+        #expect(RevealStyle.at(0, reduceMotion: false) == RevealStyle(opacity: 1, scale: 1, rise: 0, blur: 0))
+        #expect(RevealStyle.at(0, reduceMotion: true) == RevealStyle(opacity: 1, scale: 1, rise: 0, blur: 0))
+    }
+}

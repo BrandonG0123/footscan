@@ -48,6 +48,7 @@ struct HomeView: View {
     @Environment(AppSettings.self) private var settings
     @Environment(StudioConnection.self) private var studio
     @Environment(ScanLibrary.self) private var library
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     @AppStorage("lastSubject") private var subjectRaw = Subject.rightSole.rawValue
     @State private var capturing: Scan?
@@ -186,10 +187,11 @@ struct HomeView: View {
                         SubjectCard(subject: s, selected: s == subject, firstTime: !settings.hasPrepared(s)) {
                             withAnimation(.spring(duration: 0.35, bounce: 0.35)) { subjectRaw = s.rawValue }
                         }
-                        .scrollTransition(.interactive, axis: .horizontal) { content, phase in
+                        .scrollTransition(.interactive, axis: .horizontal) { [reduce = reduceMotion] content, phase in
+                            // cards off to the side turn away and shrink; with Reduce Motion they only fade
                             content
-                                .scaleEffect(phase.isIdentity ? 1 : 0.9)
-                                .rotation3DEffect(.degrees(phase.value * -14), axis: (0, 1, 0), perspective: 0.6)
+                                .scaleEffect(phase.isIdentity || reduce ? 1 : 0.9)
+                                .rotation3DEffect(.degrees(reduce ? 0 : phase.value * -14), axis: (0, 1, 0), perspective: 0.6)
                                 .opacity(phase.isIdentity ? 1 : 0.6)
                         }
                         .id(s.rawValue)
