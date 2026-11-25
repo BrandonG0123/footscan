@@ -173,7 +173,7 @@ struct ScanDetailView: View {
 
     private func studioDetail(_ rec: ScanRecord?) -> String {
         if library.work[scan.folder] == .sending {
-            return rec?.subject == .calibration ? "Sending, and measuring its accuracy…" : "Sending…"
+            return SendingWords.detail(library.uploaded[scan.folder], calibration: rec?.subject == .calibration)
         }
         if rec?.studioCaptureID != nil {
             let when = rec?.sentAt.map { " \($0.formatted(.relative(presentation: .named)))" } ?? ""

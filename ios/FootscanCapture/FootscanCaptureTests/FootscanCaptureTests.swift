@@ -419,6 +419,39 @@ struct NetworkChanges {
     }
 }
 
+// MARK: - how far a send has got
+
+@Suite("Upload progress")
+struct UploadProgressShown {
+    @Test func eachWholePercentIsToldOnceAndOnlyForward() {
+        #expect(UploadProgress.step(sent: 0, total: 1000, last: -1) == 0)
+        #expect(UploadProgress.step(sent: 420, total: 1000, last: 0) == 42)
+        #expect(UploadProgress.step(sent: 425, total: 1000, last: 42) == nil)  // still 42%
+        #expect(UploadProgress.step(sent: 300, total: 1000, last: 42) == nil)  // never backwards
+    }
+
+    @Test func oneHundredMeansEveryByteHasGone() {
+        #expect(UploadProgress.step(sent: 999, total: 1000, last: 98) == 99)
+        #expect(UploadProgress.step(sent: 1000, total: 1000, last: 99) == 100)
+        #expect(UploadProgress.step(sent: 1200, total: 1000, last: 99) == 100)
+    }
+
+    @Test func anUnknownSizeTellsNothing() {
+        #expect(UploadProgress.step(sent: 500, total: 0, last: -1) == nil)
+        #expect(UploadProgress.step(sent: 500, total: NSURLSessionTransferSizeUnknown, last: -1) == nil)
+    }
+
+    @Test func theCardSaysHowFarAndThenThatTheStudioIsChecking() {
+        #expect(SendingWords.chip(nil) == "Sending")
+        #expect(SendingWords.chip(0.42) == "Sending 42%")
+        #expect(SendingWords.chip(1) == "Studio checking")
+        #expect(SendingWords.detail(nil, calibration: false) == "Sending…")
+        #expect(SendingWords.detail(0.07, calibration: false) == "Sending the model… 7%")
+        #expect(SendingWords.detail(1, calibration: false) == "All sent. The studio is checking it…")
+        #expect(SendingWords.detail(1, calibration: true) == "All sent. The studio is measuring its accuracy…")
+    }
+}
+
 // MARK: - the studio refusing an incomplete scan
 
 @Suite("Incomplete scans")

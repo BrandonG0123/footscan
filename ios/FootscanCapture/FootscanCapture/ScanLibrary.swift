@@ -10,6 +10,22 @@ import Foundation
 import SwiftUI
 import UIKit
 
+/// How a send is going, in the words the home card and the scan's page use.
+enum SendingWords {
+    /// `share`: of the model sent so far (nil before the upload itself starts: finding the studio, making its capture).
+    static func chip(_ share: Double?) -> String {
+        guard let share else { return "Sending" }
+        return share < 1 ? "Sending \(Int(share * 100))%" : "Studio checking"
+    }
+
+    static func detail(_ share: Double?, calibration: Bool) -> String {
+        guard let share else { return calibration ? "Sending, and measuring its accuracy…" : "Sending…" }
+        if share < 1 { return "Sending the model… \(Int(share * 100))%" }
+        // every byte is there; the studio answers once it has read the model (and scored it, for the calibration object)
+        return calibration ? "All sent. The studio is measuring its accuracy…" : "All sent. The studio is checking it…"
+    }
+}
+
 @MainActor
 @Observable
 final class ScanLibrary {
@@ -24,6 +40,9 @@ final class ScanLibrary {
     private(set) var unreachable: Set<URL> = []
     /// Of those, the ones where no address answered at all (offer Reconnect: scan the studio's code again).
     private(set) var reconnect: Set<URL> = []
+    /// While a scan is sending: the share of its model sent so far (absent until its upload starts). At 1 the studio
+    /// has all of it and is reading it (and scoring it, for the calibration object) before it answers.
+    private(set) var uploaded: [URL: Double] = [:]
     /// Bumped when a scan's files or record change, so views re-read them.
     private(set) var version = 0
 
@@ -193,17 +212,22 @@ final class ScanLibrary {
         reconnect.remove(scan.folder)
         work[scan.folder] = .sending
         let release = KeepAlive.work("Sending a scan")
-        defer { work[scan.folder] = nil; reload(); release() }
+        defer { work[scan.folder] = nil; uploaded[scan.folder] = nil; reload(); release() }
         let reuse = record.reusableCapture(at: client.link)
         let studioID = PendingCapture.identity(of: client.link), loadKg = record.loadKg
         do {
-            let sent = try await client.upload(scan, record: record, into: reuse) { id in
+            let folder = scan.folder
+            let sent = try await client.upload(scan, record: record, into: reuse, created: { id in
                 // kept as soon as the studio makes it: whatever happens next (a drop, a refusal, the app ended), the
                 // next try finishes this capture rather than leaving it empty and making another
                 guard var latest = scan.record else { return }
                 latest.pendingCapture = PendingCapture(id: id, studio: studioID, loadKg: loadKg)
                 scan.save(latest)
-            }
+            }, progress: { [weak self] share in
+                // only while this send is still the scan's work (a late report after it ended changes nothing)
+                guard let self, self.work[folder] == .sending else { return }
+                self.uploaded[folder] = max(self.uploaded[folder] ?? 0, share)
+            })
             record.pendingCapture = nil
             record.studioCaptureID = sent.captureID
             record.studioHost = sent.link.host
