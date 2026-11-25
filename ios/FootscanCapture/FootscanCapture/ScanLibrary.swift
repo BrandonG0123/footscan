@@ -32,8 +32,8 @@ final class ScanLibrary {
     /// How many times each scan's build has been started again that way, this run: a build that keeps failing
     /// stops being retried and shows its own error instead.
     private var resumes: [URL: Int] = [:]
-    static let maxResumes = 3
-    static let interruptedMessage = "The model stopped building when Footscan left the screen. It starts again by itself when you come back to the app."
+    nonisolated static let maxResumes = 3
+    nonisolated static let interruptedMessage = "The model stopped building when Footscan left the screen. It starts again by itself when you come back to the app."
 
     /// Start a cut-off build again? Only if the app left the screen while it ran, and not more than `maxResumes` times.
     nonisolated static func shouldResume(leftScreen: Bool, resumesSoFar: Int) -> Bool {
