@@ -91,10 +91,15 @@ export function statusHtml(st) {
     ])}</section>`;
 }
 
+let asking = false;
 async function load() {
+  if (asking) return;
+  asking = true;
   $("refresh").disabled = true;
   const [ok, st] = await ask("/api/studio/status");
+  asking = false;
   $("refresh").disabled = false;
+  $("updated").textContent = `Asked at ${new Date().toLocaleTimeString()}; asked again every ${AGAIN_S} s while this page is open.`;
   if (!ok) {
     $("root").innerHTML = `<div class="callout stop"><p>Couldn't ask the studio: ${esc(st.error || "it refused")}.</p></div>`;
     return;
@@ -104,7 +109,12 @@ async function load() {
   $("root").innerHTML = statusHtml(st);
 }
 
+// Asked again on its own while the page is in view, so "Test the connection" pressed on the phone shows up here
+// within a few seconds (not while the tab is hidden: nothing to see, and nothing asked for nothing)
+const AGAIN_S = 10;
 if (typeof document !== "undefined" && document.getElementById("root")) {
   $("refresh").addEventListener("click", load);
   load();
+  setInterval(() => { if (document.visibilityState === "visible") load(); }, AGAIN_S * 1000);
+  document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") load(); });
 }
