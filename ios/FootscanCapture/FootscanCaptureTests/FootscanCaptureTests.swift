@@ -487,11 +487,31 @@ struct ScanList {
 
 @Suite("The studio's camera page")
 struct StudioCameraPage {
+    let studio = URL(string: "https://192.168.11.233:8766/")!
+
+    func decide(_ scheme: String = "https", _ host: String = "192.168.11.233", _ port: Int = 8766,
+                _ type: WKMediaCaptureType = .camera) -> WKPermissionDecision {
+        StudioPage.mediaDecision(scheme: scheme, host: host, port: port, studio: studio, type: type)
+    }
+
     @Test func onlyTheStudiosPageGetsTheCameraAndNothingGetsTheMicrophone() {
-        #expect(StudioPage.mediaDecision(host: "192.168.11.233", studioHost: "192.168.11.233", type: .camera) == .grant)
-        #expect(StudioPage.mediaDecision(host: "203.0.113.5", studioHost: "192.168.11.233", type: .camera) == .deny)
-        #expect(StudioPage.mediaDecision(host: "192.168.11.233", studioHost: "192.168.11.233", type: .microphone) == .deny)
-        #expect(StudioPage.mediaDecision(host: "192.168.11.233", studioHost: "192.168.11.233", type: .cameraAndMicrophone) == .deny)
+        #expect(decide() == .grant)
+        #expect(decide("https", "203.0.113.5") == .deny)
+        #expect(decide("https", "192.168.11.233", 8766, .microphone) == .deny)
+        #expect(decide("https", "192.168.11.233", 8766, .cameraAndMicrophone) == .deny)
+    }
+
+    @Test func anotherProgramOnTheStudiosComputerIsAnotherSite() {
+        #expect(decide("https", "192.168.11.233", 8765) == .deny)
+        #expect(decide("http", "192.168.11.233", 8766) == .deny)
+        #expect(decide("HTTPS", "192.168.11.233", 8766) == .grant)
+    }
+
+    @Test func aStudioOnTheDefaultPortMatchesWebKitsZero() {
+        let plain = URL(string: "https://studio.example/")!
+        #expect(StudioPage.mediaDecision(scheme: "https", host: "studio.example", port: 0, studio: plain, type: .camera) == .grant)
+        #expect(StudioPage.mediaDecision(scheme: "https", host: "studio.example", port: 443, studio: plain, type: .camera) == .grant)
+        #expect(StudioPage.mediaDecision(scheme: "https", host: "studio.example", port: 8766, studio: plain, type: .camera) == .deny)
     }
 }
 
