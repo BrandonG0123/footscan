@@ -14,6 +14,11 @@ struct RootView: View {
     @Environment(ScanLibrary.self) private var library
     @Environment(\.scenePhase) private var scenePhase
     @State private var showStudio = false
+    @State private var network = NetworkWatch()
+
+    /// While the app is in front with a scan waiting because the studio didn't answer, it's tried again this often
+    /// (the studio computer may simply have been asleep, with nothing on the phone's side changing).
+    static let retryWaiting: Duration = .seconds(120)
 
     var body: some View {
         ZStack {
@@ -37,6 +42,16 @@ struct RootView: View {
         .onChange(of: studio.connections) { sendWaiting() }
         .onChange(of: scenePhase) { _, phase in if phase == .active { sendWaiting() } }
         .onChange(of: settings.autoSend) { _, on in if on { sendWaiting() } }
+        // and when the phone joins a network or Tailscale comes on: home again, say
+        .onChange(of: network.changes) { sendWaiting() }
+        .task(id: scenePhase) {
+            guard scenePhase == .active else { return }
+            while !Task.isCancelled {
+                try? await Task.sleep(for: Self.retryWaiting)
+                if Task.isCancelled { return }
+                if !library.unreachable.isEmpty { sendWaiting() }
+            }
+        }
     }
 
     private func sendWaiting() {

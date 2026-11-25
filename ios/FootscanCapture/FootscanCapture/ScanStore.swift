@@ -171,6 +171,9 @@ struct ScanRecord: Codable {
     /// What the phone's own check (ScanCheck) found once the model was built. A scan it says to scan again isn't
     /// sent by itself; it goes only if the person taps Send anyway.
     var phoneCheck: PhoneCheck?
+    /// The capture the studio made for this scan on a try whose upload then dropped: the next try sends the model
+    /// into it, so a shaky connection doesn't leave the studio one empty capture per try.
+    var pendingCapture: PendingCapture?
     var units = "metres, Y up (Apple Object Capture's own frame). The studio's Import 3D converts to millimetres."
     var note = "Footscan LiDAR test capture. Not a medical device."
 }
@@ -190,6 +193,29 @@ extension ScanRecord {
     var heldByPhoneCheck: Bool {
         guard let phoneCheck, phoneCheck.sentAnyway == nil else { return false }
         return !phoneCheck.scanAgain.isEmpty
+    }
+}
+
+/// A capture the studio made for a scan whose upload then dropped. Sending a model into a capture again replaces
+/// the model there, so the next try can finish this one instead of making another.
+struct PendingCapture: Codable, Equatable {
+    var id: String
+    /// Which studio made it (`identity(of:)`): another studio's capture ids mean nothing here.
+    var studio: String
+    /// The scale reading it was made with (foot scans): a different one now needs a new capture.
+    var loadKg: Double?
+
+    /// The same studio whichever address it answers at: its pinned certificate, else (a development build's
+    /// public studio) its address.
+    static func identity(of link: StudioLink) -> String { link.fingerprint ?? link.host }
+}
+
+extension ScanRecord {
+    /// The capture an earlier, dropped try made, if it was made at this studio with the same scale reading.
+    func reusableCapture(at link: StudioLink) -> String? {
+        guard let pendingCapture, pendingCapture.studio == PendingCapture.identity(of: link),
+              pendingCapture.loadKg == loadKg else { return nil }
+        return pendingCapture.id
     }
 }
 

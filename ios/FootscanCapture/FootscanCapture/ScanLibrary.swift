@@ -195,7 +195,8 @@ final class ScanLibrary {
         let release = KeepAlive.work("Sending a scan")
         defer { work[scan.folder] = nil; reload(); release() }
         do {
-            let sent = try await client.upload(scan, record: record)
+            let sent = try await client.upload(scan, record: record, into: record.reusableCapture(at: client.link))
+            record.pendingCapture = nil
             record.studioCaptureID = sent.captureID
             record.studioHost = sent.link.host
             studio.remember(sent.link)
@@ -204,11 +205,17 @@ final class ScanLibrary {
             scan.save(record)
             UINotificationFeedbackGenerator().notificationOccurred(.success)
         } catch StudioClient.Failure.incomplete(let missing, let advice) {
+            record.pendingCapture = nil // the studio removed the capture it made for this upload
             record.retake = missing
             record.retakeAdvice = advice.isEmpty ? nil : advice
             scan.save(record)
             UINotificationFeedbackGenerator().notificationOccurred(.error)
         } catch {
+            if case .droppedAfterCreating(_, let id)? = error as? StudioClient.Failure {
+                // the next try finishes this capture rather than making another
+                record.pendingCapture = PendingCapture(id: id, studio: PendingCapture.identity(of: client.link), loadKg: record.loadKg)
+                scan.save(record)
+            }
             problems[scan.folder] = error.localizedDescription
             if (error as? StudioClient.Failure)?.isUnreachable == true { unreachable.insert(scan.folder) }
             if (error as? StudioClient.Failure)?.offersReconnect == true { reconnect.insert(scan.folder) }

@@ -319,6 +319,98 @@ struct ConnectionTestFailures {
     }
 }
 
+// MARK: - a send that dropped, tried again
+
+@Suite("A send that dropped, tried again")
+struct DroppedSends {
+    let pin = String(repeating: "cd", count: 32)
+    var studio: StudioLink { StudioLink(url: URL(string: "https://192.168.11.233:8766")!, fingerprint: pin,
+                                        alternates: [URL(string: "https://100.113.53.83:8766")!]) }
+
+    private func record(loadKg: Double? = nil) -> ScanRecord {
+        var rec = ScanRecord(subject: .rightSole, created: Date(timeIntervalSince1970: 1_800_000_000), device: "test",
+                             systemVersion: "0", appVersion: "0")
+        rec.loadKg = loadKg
+        return rec
+    }
+
+    @Test func aDropAfterTheStudioMadeTheCaptureWaitsAndSaysTheSameAsAnyDrop() {
+        let failure = StudioClient.Failure.droppedAfterCreating(host: "192.168.11.233", captureID: "LIDAR_nwb_relaxed_R_1")
+        #expect(failure.isUnreachable && !failure.offersReconnect)
+        #expect(failure.errorDescription == StudioClient.Failure.dropped(host: "192.168.11.233").errorDescription)
+    }
+
+    @Test func theNextTryUsesTheCaptureTheStudioAlreadyMadeAtWhicheverAddressItAnswers() {
+        var rec = record()
+        rec.pendingCapture = PendingCapture(id: "LIDAR_nwb_relaxed_R_1", studio: PendingCapture.identity(of: studio), loadKg: nil)
+        #expect(rec.reusableCapture(at: studio) == "LIDAR_nwb_relaxed_R_1")
+        // the same studio over Tailscale is the same studio
+        #expect(rec.reusableCapture(at: studio.using(studio.alternates[0])) == "LIDAR_nwb_relaxed_R_1")
+    }
+
+    @Test func anotherStudiosCaptureIsNeverUsed() {
+        var rec = record()
+        rec.pendingCapture = PendingCapture(id: "LIDAR_nwb_relaxed_R_1", studio: PendingCapture.identity(of: studio), loadKg: nil)
+        let other = StudioLink(url: studio.url, fingerprint: String(repeating: "ef", count: 32))
+        #expect(rec.reusableCapture(at: other) == nil)
+    }
+
+    @Test func aDifferentScaleReadingNeedsANewCapture() {
+        var rec = record(loadKg: 31.5)
+        rec.pendingCapture = PendingCapture(id: "LIDAR_swb_R_1", studio: PendingCapture.identity(of: studio), loadKg: 30)
+        #expect(rec.reusableCapture(at: studio) == nil)
+        rec.loadKg = 30
+        #expect(rec.reusableCapture(at: studio) == "LIDAR_swb_R_1")
+    }
+
+    @Test func aCaptureTheStudioNoLongerHasIsToldApartAndReadsLikeAnyRefusal() {
+        guard case .notFound(let why) = StudioClient.Failure.from(status: 404, json: ["error": "not found"]) else {
+            Issue.record("a 404 wasn't read as not found"); return
+        }
+        #expect(why == "not found")
+        #expect(StudioClient.Failure.notFound("not found").errorDescription == "The studio said no: not found")
+        #expect(!StudioClient.Failure.notFound("not found").isUnreachable)
+    }
+
+    @Test func thePendingCaptureIsKeptWithTheScanAndOlderRecordsStillRead() throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString, directoryHint: .isDirectory)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let scan = Scan(folder: root)
+        var rec = record()
+        rec.pendingCapture = PendingCapture(id: "LIDAR_nwb_relaxed_R_1", studio: pin, loadKg: nil)
+        scan.save(rec)
+        #expect(scan.record?.pendingCapture == rec.pendingCapture)
+        rec.pendingCapture = nil
+        scan.save(rec)
+        #expect(scan.record != nil && scan.record?.pendingCapture == nil)
+    }
+}
+
+// MARK: - the phone's network changing
+
+@Suite("Trying waiting scans when the network changes")
+struct NetworkChanges {
+    typealias Sig = NetworkWatch.Signature
+    let cellular = Sig(satisfied: true, wifi: false, cellular: true, wired: false, other: false)
+    let wifi = Sig(satisfied: true, wifi: true, cellular: false, wired: false, other: false)
+    let none = Sig(satisfied: false, wifi: false, cellular: false, wired: false, other: false)
+
+    @Test func joiningWiFiOrTurningTailscaleOnIsWorthATry() {
+        #expect(NetworkWatch.worthTrying(from: cellular, to: wifi))  // home again
+        var tailscale = cellular
+        tailscale.other = true  // a VPN comes up as another kind of path
+        #expect(NetworkWatch.worthTrying(from: cellular, to: tailscale))
+        #expect(NetworkWatch.worthTrying(from: none, to: cellular))
+    }
+
+    @Test func losingTheNetworkTheFirstReadingAndNoChangeAreNot() {
+        #expect(!NetworkWatch.worthTrying(from: wifi, to: none))
+        #expect(!NetworkWatch.worthTrying(from: nil, to: wifi))  // just launched: nothing changed yet
+        #expect(!NetworkWatch.worthTrying(from: wifi, to: wifi))
+    }
+}
+
 // MARK: - the studio refusing an incomplete scan
 
 @Suite("Incomplete scans")

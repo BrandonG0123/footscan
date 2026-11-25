@@ -362,20 +362,24 @@ struct StudioClient {
         /// (empty from a studio that doesn't send it).
         /// `unreachable`: none of the studio's addresses answered as the studio, in the order they were tried.
         /// `dropped`: the studio answered, then the connection failed partway through sending.
+        /// `notFound`: a refusal with "not found" (HTTP 404), such as a capture the studio no longer has.
+        /// `droppedAfterCreating`: a drop once the studio had made the capture for this scan, which the next try
+        /// sends the model into instead of making another (`ScanRecord.pendingCapture`).
         case refused(String), unreachable([Missed], pinned: Bool), incomplete([String], advice: [RetakeAdvice]),
-             dropped(host: String)
+             dropped(host: String), notFound(String), droppedAfterCreating(host: String, captureID: String)
         var errorDescription: String? {
             switch self {
-            case .refused(let why): "The studio said no: \(why)"
+            case .refused(let why), .notFound(let why): "The studio said no: \(why)"
             case .incomplete(let why, _): "Scan again: the studio didn't keep this scan. \(why.joined(separator: " "))"
             case .unreachable(let misses, let pinned): Self.explain(misses, pinned: pinned)
-            case .dropped(let host): "The connection to the studio at \(host) dropped partway through sending. Try again; the scan is still on this phone."
+            case .dropped(let host), .droppedAfterCreating(let host, _):
+                "The connection to the studio at \(host) dropped partway through sending. Try again; the scan is still on this phone."
             }
         }
         /// Worth sending again once the studio is back (waiting scans go then).
         var isUnreachable: Bool {
             switch self {
-            case .unreachable, .dropped: true
+            case .unreachable, .dropped, .droppedAfterCreating: true
             default: false
             }
         }
@@ -449,7 +453,8 @@ struct StudioClient {
                     .flatMap { try? JSONDecoder().decode([RetakeAdvice].self, from: $0) }
                 return .incomplete(missing, advice: advice ?? [])
             }
-            return .refused(json["error"] as? String ?? "HTTP \(status)")
+            let why = json["error"] as? String ?? "HTTP \(status)"
+            return status == 404 ? .notFound(why) : .refused(why)
         }
     }
 
@@ -555,8 +560,10 @@ struct StudioClient {
     /// `link`: the studio, with the address the scan went to as the one in use.
     struct Sent { var captureID: String; var accuracy: StudioAccuracy?; var link: StudioLink }
 
-    /// Make a research capture for this scan and upload its model, at whichever address answers.
-    func upload(_ scan: Scan, record: ScanRecord) async throws -> Sent {
+    /// Make a research capture for this scan and upload its model, at whichever address answers. With `into` (the
+    /// capture an earlier, dropped try made at this studio), the model goes into that one instead; if the studio no
+    /// longer has it, a new one is made.
+    func upload(_ scan: Scan, record: ScanRecord, into existing: String? = nil) async throws -> Sent {
         // A quick hello first: a studio that isn't there fails in seconds, not after a long upload timeout.
         let here: StudioClient
         do {
@@ -566,7 +573,7 @@ struct StudioClient {
             throw Failure.dropped(host: link.host)
         }
         do {
-            return try await here.uploadHere(scan, record: record)
+            return try await here.uploadHere(scan, record: record, into: existing)
         } catch Failure.unreachable {
             throw Failure.dropped(host: here.link.host) // it answered the hello: not a question of which Wi-Fi
         } catch is CancellationError {
@@ -575,7 +582,26 @@ struct StudioClient {
         }
     }
 
-    private func uploadHere(_ scan: Scan, record: ScanRecord) async throws -> Sent {
+    private func uploadHere(_ scan: Scan, record: ScanRecord, into existing: String?) async throws -> Sent {
+        if let existing {
+            do {
+                return try await sendModel(scan, into: existing)
+            } catch Failure.notFound {
+                // removed in the studio meanwhile (or never kept): make a new capture, below
+            }
+        }
+        let id = try await createCapture(record)
+        do {
+            return try await sendModel(scan, into: id)
+        } catch Failure.unreachable {
+            throw Failure.droppedAfterCreating(host: link.host, captureID: id)
+        } catch is CancellationError {
+            throw Failure.droppedAfterCreating(host: link.host, captureID: id)
+        }
+    }
+
+    /// The studio's research capture for this scan: what was scanned, how, on what phone. -> its id.
+    private func createCapture(_ record: ScanRecord) async throws -> String {
         let (condition, foot) = record.subject.studioCondition
         var setup: [String: Any] = [
             "condition": condition, "session": "LIDAR", "method": "imported_mesh",
@@ -589,6 +615,12 @@ struct StudioClient {
         let created = try await send(request("api/captures", method: "POST",
                                              body: try JSONSerialization.data(withJSONObject: setup)))
         guard let id = created["id"] as? String else { throw Failure.refused("no capture id came back") }
+        return id
+    }
+
+    /// Upload the model into capture `id`. Sending it again replaces the model there, so a try that dropped can be
+    /// repeated into the same capture.
+    private func sendModel(_ scan: Scan, into id: String) async throws -> Sent {
         let obj = try Data(contentsOf: scan.obj)
         let answer = try await send(request("api/captures/\(id)/mesh", method: "PUT",
                                             query: [URLQueryItem(name: "ext", value: "obj"), URLQueryItem(name: "up", value: "y")],
