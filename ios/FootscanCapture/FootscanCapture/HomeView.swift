@@ -133,7 +133,8 @@ struct HomeView: View {
         Subject(rawValue: subjectRaw).flatMap { subjects.contains($0) ? $0 : nil } ?? subjects[0]
     }
 
-    /// Pulling down also tries the scans waiting to go. The send runs on its own, so the spinner doesn't wait for it.
+    /// Pulling down also tries the scans waiting to go (with Send automatically on, as for every other try). The
+    /// send runs on its own, so the spinner doesn't wait for it.
     private func tryWaitingScans() {
         Task { await library.sendWaiting(settings: settings, studio: studio) }
     }

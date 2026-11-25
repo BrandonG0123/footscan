@@ -424,11 +424,13 @@ struct StudioClient {
         /// (empty from a studio that doesn't send it).
         /// `unreachable`: none of the studio's addresses answered as the studio, in the order they were tried.
         /// `dropped`: the studio answered, then the connection failed partway through sending.
+        /// `troubled`: the studio answered with a fault of its own (HTTP 500 and up), not a no to this scan.
         case refused(String), unreachable([Missed], pinned: Bool), incomplete([String], advice: [RetakeAdvice]),
-             dropped(host: String)
+             dropped(host: String), troubled(String)
         var errorDescription: String? {
             switch self {
             case .refused(let why): "The studio said no: \(why)"
+            case .troubled(let why): "The studio had a problem of its own (\(why)). Try again; the scan is still on this phone."
             case .incomplete(let why, _): "Scan again: the studio didn't keep this scan. \(why.joined(separator: " "))"
             case .unreachable(let misses, let pinned): Self.explain(misses, pinned: pinned)
             case .dropped(let host): "The connection to the studio at \(host) dropped partway through sending. Try again; the scan is still on this phone."
@@ -511,7 +513,8 @@ struct StudioClient {
                     .flatMap { try? JSONDecoder().decode([RetakeAdvice].self, from: $0) }
                 return .incomplete(missing, advice: advice ?? [])
             }
-            return .refused(json["error"] as? String ?? "HTTP \(status)")
+            let why = json["error"] as? String ?? "HTTP \(status)"
+            return status >= 500 ? .troubled(why) : .refused(why)
         }
     }
 
