@@ -1414,3 +1414,28 @@ struct ReduceMotionTests {
         #expect(RevealStyle.at(0, reduceMotion: true) == RevealStyle(opacity: 1, scale: 1, rise: 0, blur: 0))
     }
 }
+
+// MARK: - VoiceOver on a scan's steps
+
+@Suite("VoiceOver says when a step ends")
+struct StepAnnouncements {
+    @Test func aStepThatFinishesIsAnnouncedWithItsDetail() {
+        #expect(StepAnnouncement.words(step: "Studio", from: .working, to: .done, detail: "Sent to 192.168.1.20", problem: nil)
+                == "Studio done. Sent to 192.168.1.20")
+    }
+
+    @Test func aStepThatStopsSaysWhy() {
+        #expect(StepAnnouncement.words(step: "Studio", from: .working, to: .todo, detail: "Ready to send", problem: "The studio isn't answering.")
+                == "Studio stopped. The studio isn't answering.")
+        #expect(StepAnnouncement.words(step: "3D model", from: .working, to: .failed, detail: "Not built yet", problem: "Ran out of space.")
+                == "3D model needs a look. Ran out of space.")
+        #expect(StepAnnouncement.words(step: "Studio", from: .working, to: .failed, detail: "Not kept: scan this foot again.", problem: nil)
+                == "Studio needs a look. Not kept: scan this foot again.")
+    }
+
+    @Test func nothingIsSaidForAStepThatWasNotUnderWay() {
+        #expect(StepAnnouncement.words(step: "Studio", from: .todo, to: .done, detail: "Sent", problem: nil) == nil)
+        #expect(StepAnnouncement.words(step: "Studio", from: .todo, to: .working, detail: "Sending…", problem: nil) == nil)
+        #expect(StepAnnouncement.words(step: "Studio", from: .working, to: .todo, detail: "Ready to send", problem: nil) == nil)
+    }
+}

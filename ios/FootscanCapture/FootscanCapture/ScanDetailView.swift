@@ -56,6 +56,16 @@ struct ScanDetailView: View {
             }
         }
         .modifier(NameScanAlert(scan: $naming))
+        // VoiceOver says when the model or the send finishes while this scan is open, so nobody has to keep
+        // feeling for the step to find out
+        .onChange(of: modelState) { old, new in
+            StepAnnouncement.post(StepAnnouncement.words(step: "3D model", from: old, to: new, detail: modelDetail(scan.record),
+                                                         problem: library.problems[scan.folder]))
+        }
+        .onChange(of: studioState(rec)) { old, new in
+            StepAnnouncement.post(StepAnnouncement.words(step: "Studio", from: old, to: new, detail: studioDetail(scan.record),
+                                                         problem: library.problems[scan.folder]))
+        }
         .navigationTitle(rec?.heading ?? "Scan")
         .navigationBarTitleDisplayMode(.inline)
         .sheet(isPresented: $showStudio) { StudioView() }
@@ -348,6 +358,26 @@ struct ScanDetailView: View {
 // MARK: - pieces
 
 enum StepState { case todo, working, done, failed }
+
+/// What VoiceOver says when a step that was under way ends: done, needs a look, or stopped with a problem.
+/// Nothing for a step that changes without having been under way (opening a scan, a tap on Delete).
+enum StepAnnouncement {
+    static func words(step: String, from old: StepState, to new: StepState, detail: String, problem: String?) -> String? {
+        guard old == .working, new != .working else { return nil }
+        switch new {
+        case .done: return "\(step) done. \(detail)"
+        case .failed: return "\(step) needs a look. \(problem ?? detail)"
+        case .todo, .working: return problem.map { "\(step) stopped. \($0)" }
+        }
+    }
+
+    /// Queued behind whatever VoiceOver is saying, rather than cutting it off.
+    static func post(_ words: String?) {
+        guard let words, UIAccessibility.isVoiceOverRunning else { return }
+        let queued = NSAttributedString(string: words, attributes: [.accessibilitySpeechQueueAnnouncement: true])
+        UIAccessibility.post(notification: .announcement, argument: queued)
+    }
+}
 
 /// One step of a scan's progress, with a line joining it to the next.
 struct StepRow<Actions: View>: View {
