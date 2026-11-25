@@ -487,15 +487,19 @@ struct ScanList {
 
 @Suite("The camera before a scan")
 struct CameraBeforeAScan {
-    @Test func onlyAnAllowedCameraOpensTheCaptureAndNeverAskedIsAskedNow() {
+    @Test func theCamerasPermissionIsReadAsAllowedOffBlockedOrNotAsked() {
         #expect(CameraAccess.from(.authorized) == .allowed)
         #expect(CameraAccess.from(.notDetermined) == .notAsked)
         #expect(CameraAccess.from(.denied) == .off)
-        #expect(CameraAccess.from(.restricted) == .off)
+        #expect(CameraAccess.from(.restricted) == .blocked)
     }
 
-    @Test func turnedOffSaysWhereToTurnItOn() {
-        #expect(CameraAccess.offMessage.contains("Settings > Footscan > Camera"))
+    @Test func onlyACameraThatCantBeUsedHasSomethingToSay() {
+        #expect(CameraAccess.allowed.message == nil && CameraAccess.notAsked.message == nil)
+        // turned off for Footscan: where to turn it on
+        #expect(CameraAccess.off.message?.contains("Settings > Footscan > Camera") == true)
+        // blocked for the whole phone: there's no switch for Footscan, so it doesn't send them looking for one
+        #expect(CameraAccess.blocked.message?.contains("Settings > Footscan") == false)
     }
 }
 

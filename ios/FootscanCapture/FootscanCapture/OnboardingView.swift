@@ -135,7 +135,7 @@ struct OnboardingView: View {
             tip("sun.max.fill", "Bright, even light", "No harsh shadows. Matte things scan best; shiny or plain white ones come out patchy.", 0)
             tip("arrow.trianglehead.2.clockwise.rotate.90", "Walk all the way round", "Slowly, keeping it in the middle of the screen. Then a lap higher up, looking down. 2 or 3 laps in all.", 1)
             // the scan an insole is made from is the sole, facing up (Subject.rightSole's get-ready list)
-            tip("person.2.fill", "Keep it still, and let a helper scan", "For the sole: lie face down, bend the knee so the sole faces the ceiling, and relax the foot. Someone else walks round with the phone.", 2)
+            tip("person.2.fill", "Keep it still, and let a helper scan", "What's scanned stays still while someone else walks round with the phone. For the sole: lie face down with the knee bent, sole to the ceiling. Each kind of scan has its own short get-ready list first.", 2)
         }
     }
 

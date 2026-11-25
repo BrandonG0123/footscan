@@ -66,7 +66,9 @@ struct HomeView: View {
     @State private var retake: [RetakeAdvice] = []
     /// The camera is off for this app (the intro's "Not now", or turned off in Settings): say so, with the way to
     /// turn it on, instead of opening a capture that can't see.
-    @State private var cameraOff = false
+    @State private var cameraOff: CameraAccess?
+    /// iOS is asking whether Footscan may use the camera: the Scan button waits for the answer.
+    @State private var askingCamera = false
 
     struct PrepRequest: Identifiable {
         let subject: Subject
@@ -222,7 +224,7 @@ struct HomeView: View {
                     .contentTransition(.numericText())
             }
             .buttonStyle(PrimaryButtonStyle())
-            .disabled(findingStudio != nil)
+            .disabled(findingStudio != nil || askingCamera)
             .animation(.smooth, value: subjectRaw)
             .animation(.smooth, value: method)
 
@@ -238,14 +240,16 @@ struct HomeView: View {
                 }
                 Spacer()
             }
-            if cameraOff {
+            if let cameraOff, let message = cameraOff.message {
                 VStack(alignment: .leading, spacing: 8) {
-                    Label(CameraAccess.offMessage, systemImage: "camera.badge.ellipsis")
+                    Label(message, systemImage: "camera.badge.ellipsis")
                         .font(.footnote).foregroundStyle(Color.fsStop)
-                    Button("Open Settings") {
-                        if let url = URL(string: UIApplication.openSettingsURLString) { UIApplication.shared.open(url) }
+                    if cameraOff == .off {
+                        Button("Open Settings") {
+                            if let url = URL(string: UIApplication.openSettingsURLString) { UIApplication.shared.open(url) }
+                        }
+                        .font(.subheadline.weight(.semibold))
                     }
-                    .font(.subheadline.weight(.semibold))
                 }
                 .transition(.opacity)
             }
@@ -253,7 +257,7 @@ struct HomeView: View {
         }
         // back from Settings with the camera turned on: the note goes
         .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in
-            if cameraOff && CameraAccess.state() == .allowed { withAnimation(.smooth) { cameraOff = false } }
+            if cameraOff != nil && CameraAccess.state() == .allowed { withAnimation(.smooth) { cameraOff = nil } }
         }
     }
 
@@ -403,16 +407,21 @@ struct HomeView: View {
     private func begin(_ s: Subject) {
         switch CameraAccess.state() {
         case .allowed:
-            cameraOff = false
-        case .off:
-            withAnimation(.smooth) { cameraOff = true }
+            cameraOff = nil
+        case let access where access.message != nil:
+            withAnimation(.smooth) { cameraOff = access; error = nil }
             UINotificationFeedbackGenerator().notificationOccurred(.warning)
             return
-        case .notAsked:
-            // never asked (the intro's "Not now"): iOS asks now, and the scan starts if it's allowed
+        default:
+            // never asked (the intro's "Not now"): iOS asks now, and the scan starts if it's allowed and nothing else
+            // was started or chosen meanwhile
+            guard !askingCamera else { return }
+            askingCamera = true
             Task {
                 _ = await AVCaptureDevice.requestAccess(for: .video)
-                if CameraAccess.state() == .notAsked { return }
+                askingCamera = false
+                guard CameraAccess.state() != .notAsked, subject == s, capturing == nil, photoCapture == nil,
+                      prep == nil else { return }
                 begin(s)
             }
             return
