@@ -2563,6 +2563,78 @@ def test_photos_are_never_gzipped(servers):
     assert status == 200 and raw == big and "Content-Encoding" not in h
 
 
+def test_a_head_request_gets_the_gets_headers_and_no_body_and_the_connection_carries_on(servers):
+    import http.client
+    import urllib.parse
+
+    op, phone, _ = servers
+    css = (WEB_DIR / "assets" / "style.css").read_bytes()
+    u = urllib.parse.urlsplit(phone)
+    conn = http.client.HTTPConnection(u.hostname, u.port, timeout=10)
+    try:
+        conn.request("HEAD", "/assets/style.css")
+        r = conn.getresponse()
+        assert r.status == 200 and int(r.headers["Content-Length"]) == len(css) and r.headers["ETag"]
+        assert r.read() == b""
+        conn.request("HEAD", "/assets/no-such-file.js")
+        r = conn.getresponse()
+        assert r.status == 404 and r.read() == b""
+        # the same connection: had a HEAD's body gone out, it would be read here as the start of this answer
+        conn.request("GET", "/assets/style.css")
+        r = conn.getresponse()
+        assert r.status == 200 and r.read() == css
+    finally:
+        conn.close()
+    # an API answer too, the same length its GET sends
+    u = urllib.parse.urlsplit(op)
+    conn = http.client.HTTPConnection(u.hostname, u.port, timeout=10)
+    try:
+        conn.request("GET", "/api/captures")
+        r = conn.getresponse()
+        got = r.read()
+        conn.request("HEAD", "/api/captures")
+        r = conn.getresponse()
+        assert r.status == 200 and int(r.headers["Content-Length"]) == len(got) and r.read() == b""
+        assert r.headers["Content-Type"] == "application/json"
+    finally:
+        conn.close()
+
+
+def test_a_304_does_not_read_the_file(servers, monkeypatch):
+    import builtins
+
+    _, phone, _ = servers
+    tag = call(f"{phone}/assets/style.css")[2]["ETag"]
+    reads = []
+    real_open = builtins.open
+
+    class Counting:
+        def __init__(self, f):
+            self._f = f
+
+        def read(self, *a):
+            reads.append(1)
+            return self._f.read(*a)
+
+        def __getattr__(self, k):
+            return getattr(self._f, k)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return self._f.__exit__(*a)
+
+    def counting_open(file, mode="r", *a, **k):
+        f = real_open(file, mode, *a, **k)
+        return Counting(f) if str(file).endswith("style.css") and "b" in mode else f
+
+    monkeypatch.setattr(builtins, "open", counting_open)
+    assert call(f"{phone}/assets/style.css", headers={"If-None-Match": tag})[0] == 304
+    assert reads == []
+    assert call(f"{phone}/assets/style.css")[0] == 200 and reads
+
+
 @pytest.mark.parametrize("header,takes", [("gzip", True), ("deflate, gzip;q=0.8", True), ("GZIP", True),
                                           ("gzip;q=0", False), ("gzip; q=0.0", False), ("br, deflate", False),
                                           ("", False), ("x-gzip;q=0, gzip", True), ("*", True),

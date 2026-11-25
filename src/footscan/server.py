@@ -583,13 +583,17 @@ def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check
             headers = {**self._extra_headers, **(headers or {})}
             with open(path, "rb") as f:  # stat and read the same file, even if it is replaced meanwhile
                 st = os.fstat(f.fileno())
-                data = f.read()
-            squeeze = compressible(ctype, len(data))
-            gz = squeeze and accepts_gzip(self.headers.get("Accept-Encoding", ""))
-            tag = f'"{st.st_size:x}-{st.st_mtime_ns:x}{"-gz" if gz else ""}"'
+                squeeze = compressible(ctype, st.st_size)
+                gz = squeeze and accepts_gzip(self.headers.get("Accept-Encoding", ""))
+                tag = f'"{st.st_size:x}-{st.st_mtime_ns:x}{"-gz" if gz else ""}"'
+                fresh = etag_matches(self.headers.get("If-None-Match", ""), tag)
+                # The file is read whole and closed before anything is sent, as before: a model held open for a
+                # slow download would stop Windows replacing it (the phone sending the scan again). A browser
+                # that has this version already (304) needs none of it read.
+                data = b"" if fresh else f.read()
             if squeeze:
                 headers["Vary"] = "Accept-Encoding"
-            if etag_matches(self.headers.get("If-None-Match", ""), tag):
+            if fresh:
                 self.send_response(HTTPStatus.NOT_MODIFIED)
                 self.send_header("ETag", tag)
                 self.send_header("Cache-Control", cache)
@@ -609,7 +613,7 @@ def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check
             for k, v in headers.items():
                 self.send_header(k, v)
             self.end_headers()
-            self.wfile.write(data)
+            self.wfile.write(data)  # nothing goes out for a HEAD (see do_HEAD)
 
         def read_body(self, limit: int) -> bytes:
             length = int(self.headers.get("Content-Length") or 0)
@@ -1665,6 +1669,26 @@ def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check
         def do_GET(self):
             self.route("GET")
 
+        def do_HEAD(self):
+            """A HEAD is a GET answered with its headers only (an uptime checker asks this way, and ``curl -I``):
+            the same status, type and length the GET would send, and no body. The answer is made as for the GET,
+            with the body's writes dropped (``_HeadersOnly``); the headers still go out (flush_headers)."""
+            self._real_wfile, self.wfile = self.wfile, _HeadersOnly(self.wfile)
+            try:
+                self.route("GET")
+            finally:
+                self.wfile, self._real_wfile = self._real_wfile, None
+
+        def flush_headers(self):
+            real = getattr(self, "_real_wfile", None)
+            if real is None:
+                return super().flush_headers()
+            body_sink, self.wfile = self.wfile, real  # a HEAD: the headers go to the connection itself
+            try:
+                super().flush_headers()
+            finally:
+                self.wfile = body_sink
+
         def do_POST(self):
             self.route("POST")
 
@@ -1691,6 +1715,19 @@ GZIP_MAX_BYTES = 64 * 1024 * 1024  # a bigger file (a 150 MB model download) goe
 GZIP_CACHE_BYTES = 96 * 1024 * 1024
 _gzip_cache: dict[tuple, bytes] = {}
 _gzip_cache_lock = threading.Lock()
+
+
+class _HeadersOnly:
+    """Where a HEAD answer's body goes: nowhere. Flushing still flushes the connection (the headers)."""
+
+    def __init__(self, real):
+        self._real = real
+
+    def write(self, data) -> int:
+        return len(data)
+
+    def flush(self):
+        self._real.flush()
 
 
 def compressible(ctype: str, size: int) -> bool:
