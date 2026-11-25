@@ -423,6 +423,12 @@ struct NetworkChanges {
         #expect(!NetworkWatch.worthTrying(from: nil, to: wifi))  // just launched: nothing changed yet
         #expect(!NetworkWatch.worthTrying(from: wifi, to: wifi))
     }
+
+    @Test func aStudioThatStaysSilentIsTriedLessOftenUpToEvery16Minutes() {
+        let minutes = (0...6).map { RootView.retryDelay(afterTries: $0) / .seconds(60) }
+        #expect(minutes == [2, 4, 8, 16, 16, 16, 16])
+        #expect(RootView.retryDelay(afterTries: -1) == .seconds(120))  // never shorter than the first wait
+    }
 }
 
 // MARK: - how far a send has got
