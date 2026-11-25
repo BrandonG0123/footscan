@@ -66,7 +66,7 @@ extension Subject {
         case .rightFoot, .leftFoot: [
             ("doc.on.doc.fill", "The paper mat is taped flat", "On a hard floor, with sheet 1 (the heel end) toward the chair."),
             ("figure.seated.side.right", "Sitting, foot bare and flat on the mat", "Trousers rolled past the ankle, lower leg straight down. The foot stays completely still."),
-            ("scalemass.fill", "A bathroom scale under the foot", "You'll type in its reading afterwards: the studio needs it for a seated scan."),
+            ("scalemass.fill", "A bathroom scale under the foot", "You'll type in its reading afterwards, in kg or lb: the studio needs it for a seated scan."),
             ("person.2.fill", "Someone else holds the phone", "It's much easier for them to walk round you."),
         ]
         case .other: [

@@ -535,3 +535,49 @@ struct Ring {
         #expect(model.lit == [0, 11])
     }
 }
+
+// MARK: - the scale reading
+
+@Suite("Scale reading in kg or lb")
+struct ScaleReadingTests {
+    @Test func poundsAreSentAsKilograms() {
+        // 150 lb is 68.04 kg: typed with the box on lb, the studio must not get 150 kg
+        #expect(ScaleReading.kilograms("150", unit: .lb) == 68.04)
+        #expect(ScaleReading.kilograms("150", unit: .kg) == 150)
+    }
+
+    @Test func aCommaIsADecimalMark() {
+        #expect(ScaleReading.kilograms("68,5", unit: .kg) == 68.5)
+        #expect(ScaleReading.kilograms(" 68.5 ", unit: .kg) == 68.5)
+    }
+
+    @Test func readingsTheStudioWouldRefuseAreNotTaken() {
+        #expect(ScaleReading.kilograms("", unit: .kg) == nil)
+        #expect(ScaleReading.kilograms("abc", unit: .kg) == nil)
+        #expect(ScaleReading.kilograms("0", unit: .kg) == nil)
+        #expect(ScaleReading.kilograms("-5", unit: .kg) == nil)
+        #expect(ScaleReading.kilograms("400", unit: .kg) == nil)
+        #expect(ScaleReading.kilograms("inf", unit: .kg) == nil)
+        // 880 lb is 399.2 kg, so it's taken in lb; 900 lb (408 kg) is not
+        #expect(ScaleReading.kilograms("880", unit: .lb) != nil)
+        #expect(ScaleReading.kilograms("900", unit: .lb) == nil)
+    }
+
+    @Test func aSavedReadingShowsBackAsTyped() {
+        let kg = ScaleReading.kilograms("150", unit: .lb)!
+        #expect(ScaleReading.text(kilograms: kg, unit: .lb) == "150")
+        #expect(ScaleReading.text(kilograms: 68.5, unit: .kg) == "68.5")
+        #expect(ScaleReading.text(kilograms: 70, unit: .kg) == "70")
+    }
+
+    @Test func theDetailsRowGivesKilogramsAndPoundsWhenOnPounds() {
+        #expect(ScaleReading.detail(kilograms: 68.04, unit: .kg) == "68.0 kg")
+        #expect(ScaleReading.detail(kilograms: 68.04, unit: .lb) == "68.0 kg (150 lb)")
+    }
+
+    @Test func theUnitStartsFromThePhonesRegion() {
+        #expect(ScaleUnit.usual(for: Locale(identifier: "en_US")) == .lb)
+        #expect(ScaleUnit.usual(for: Locale(identifier: "en_GB")) == .kg)
+        #expect(ScaleUnit.usual(for: Locale(identifier: "de_DE")) == .kg)
+    }
+}

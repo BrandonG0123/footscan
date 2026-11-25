@@ -58,7 +58,7 @@ struct ScanDetailView: View {
         } message: {
             Text(rec?.studioCaptureID == nil ? "Its photos and model will be gone." : "The copy in the studio stays.")
         }
-        .onAppear { if let l = rec?.loadKg { loadText = String(l) } }
+        .onAppear { if let l = rec?.loadKg { loadText = ScaleReading.text(kilograms: l, unit: settings.scaleUnit) } }
         // a scan built before the phone checked models (or by an older check) is checked when it's opened
         .task { await library.check(scan) }
     }
@@ -255,10 +255,20 @@ struct ScanDetailView: View {
                             TextField("Scale reading", text: $loadText)
                                 .keyboardType(.decimalPad)
                                 .focused($loadFocused)
-                            Text("kg").foregroundStyle(Color.fsMuted)
+                            // the number stays as typed: switching says which unit the scale showed it in
+                            @Bindable var settings = settings
+                            Picker("Unit", selection: $settings.scaleUnit) {
+                                ForEach(ScaleUnit.allCases) { Text($0.rawValue).tag($0) }
+                            }
+                            .pickerStyle(.segmented)
+                            .fixedSize()
+                            .accessibilityLabel("Scale unit")
                         }
                         .padding(.horizontal, 12).padding(.vertical, 10)
                         .background(Color.fsSurface2, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                        if settings.scaleUnit == .lb, let kg = parsedLoad {
+                            Text(ScaleReading.sentAs(kg)).font(.footnote).foregroundStyle(Color.fsMuted)
+                        }
                     }
                     if rec.studioCaptureID == nil {
                         Button("Send to studio") {
@@ -280,9 +290,7 @@ struct ScanDetailView: View {
         }
     }
 
-    private var parsedLoad: Double? {
-        Double(loadText.replacingOccurrences(of: ",", with: ".")).flatMap { $0 > 0 && $0 < 400 ? $0 : nil }
-    }
+    private var parsedLoad: Double? { ScaleReading.kilograms(loadText, unit: settings.scaleUnit) }
 
     // MARK: details and sharing
 
@@ -291,7 +299,7 @@ struct ScanDetailView: View {
             Text("Details").font(.headline)
             if let d = rec?.created { row("Scanned", d.formatted(date: .abbreviated, time: .shortened)) }
             row("Phone", "\(ScanStore.phoneName(rec?.device ?? "?")), iOS \(rec?.systemVersion ?? "?")")
-            if let l = rec?.loadKg { row("Scale reading", String(format: "%.1f kg", l)) }
+            if let l = rec?.loadKg { row("Scale reading", ScaleReading.detail(kilograms: l, unit: settings.scaleUnit)) }
             if let id = rec?.studioCaptureID { row("In the studio", id) }
             if let err = rec?.error { row("Last problem", err) }
         }
