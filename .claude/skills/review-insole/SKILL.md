@@ -30,7 +30,8 @@ never suggest posting or any correction (the first fit has none). Every number y
    "Outline" line: a saved shoe, a scan of the shoe's insole, the generic insole outline, or the foot's own), the
    shoe in the packet's spec (today: ASICS Gel Resolution X, US men's 9.5, 275 mm chart length), and every
    **FLAG** in the plain checks. The outline should be the shoe's (a saved shoe), or else the generic insole
-   outline at the spec's length: the foot only shapes the top surface and the arch support.
+   outline at the spec's length: the foot only shapes the top surface and the arch support. Note the packet's
+   "Arch support as printed" line too: the "Highest fill" is the whole insole's and can be the heel's back.
 
 3. Look at `top.png`, `side.png` and, if present, `pair.png` with the Read tool. Answer every question under
    "Look at the pictures" with what you actually see, one line each, yes or no plus the reason. If a picture is
@@ -56,6 +57,10 @@ never suggest posting or any correction (the first fit has none). Every number y
    - `3mf_size`: the 3MF isn't the size insole.json says. Don't print it; rebuild.
    - `foot`, `no_posting`, `fill_cap`, `summary_sheet`, `real_scan`: don't print; tell Brandon.
    - `bed`: it doesn't fit the printer bed as placed; tell Brandon.
+   - `heel_cup_rim`: on one side of the heel the cup's rim stands under half the depth asked for, because the
+     outline is about as narrow as the heel there and leaves no room for the wall outside it. Not a reason to stop
+     on its own: say which side and how high, and check side.png. The fix is an outline with room round the heel
+     (the shoe's own, saved), never a narrower heel cup or a scaled file. Tell Brandon if the heel looks unheld.
    Generator warnings (sole barely seen, clipped fill, heel off the floor, ...) are the scan's own doubts: repeat
    them, and if one says the scan is incomplete, the fix is a new scan, not a parameter.
 

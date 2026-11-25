@@ -18,7 +18,18 @@ reconstructions are; mm, cm or m are detected. It writes:
 | `right-insole.stl` | The same shape, for other tools. |
 | `right-insole-summary.html` | The clinician summary sheet (SAFETY.md requirement 1): device parameters (posting 0°), scan measurements, warnings, sign-off block, break-in and stop rule. Print it. |
 | `print-notes.txt` | Starting points for TPU. Untested on this design (that's Phase 5). |
+| `right-insole-template.pdf` | The insole at full size on paper (US Letter, or `--paper a4`): check the outline in the shoe before a long print. See *The paper template* below. |
+| `right-insole-arch-trial.3mf` | Only with `--trial`: the insole's midfoot on its own, to print first. See *The arch trial* below. |
 | `right-insole.json` | Everything above as data. |
+
+`--pair` also writes the other foot's insole as this one's mirror image
+(`left-insole.*` beside `right-insole.*`), for a matched pair when the other
+foot has no usable scan (none of the owner's left sole scans could be used
+so far). It is NOT that foot's own shape: two feet differ, and the owner's
+flat feet differ more than most (worse on the right). Its sheet's title
+and first warning say so, and the other foot's own scan replaces it as soon
+as there is a good one. The outline is the same shape mirrored, as a
+shoe's left and right insoles are.
 
 ## The outline is the shoe's: saved shoes
 
@@ -463,9 +474,129 @@ edge to 1.2 mm over the last 4 mm (a smooth S-curve, the distance from the
 edge measured at every grid point), so the edge tucks under a shoe's
 curving sides instead of riding up them. The heel keeps its full base.
 
+Beyond the heel, the top's corner at the edge is rounded as well: a
+quarter circle of 4 mm (`edge_roll_mm`, a judgment) takes the fill down
+by 4 mm at the outline, about a third of that 1 mm in, and nothing from
+4 mm in. Where the outline cuts through the arch fill (a shoe's or the
+generic outline is narrower than a flat foot's arch), the edge stood as a
+square wall as tall as the fill, with a sharp corner right under the
+arch's border, which is where the skin check (SAFETY.md) looks for
+pressure marks, and the corner a shoe's upper catches on the way in.
+SYNTHETIC (curved_foot, right, generic outline at 275 mm, 2026-11-25):
+the tallest edge forward of the heel, at the inner midfoot, went from
+13.7 to 11.4 mm, and the highest printed fill from 12.45 to 12.07 mm (its
+peak is near that edge). On the right-foot sole-up scan
+`LIDAR_nwb_relaxed_R_20261027-151404-2349` at 280 mm: 12.7 to 10.5 mm. Rounding only lowers the top, so it never comes
+closer than the relief to the sole; the heel zone keeps its cup wall as
+it was (the rounding fades in with the heel's weight). The sheet's *Edge*
+line gives the tallest edge forward of the heel and on which side.
+
+Under the ball of the foot, no lip. An unloaded foot (sole up, legs
+flat) is scanned with the ball's edges rounding up off the floor, and where
+the outline is narrower than the foot those edges became a lip along the
+insole's side: on the right-foot sole-up scan
+`LIDAR_nwb_relaxed_R_20261027-151404-2349`, generic outline at 280 mm
+(2026-11-25), the top stood 8.6-9.0 mm above the base at the inner edge
+from 62% to 70% of the foot's length and 7.1-8.6 mm from 70% to 78%.
+Standing, the ball spreads wider and would land on it, by the big toe's
+joint (SAFETY.md's skin check looks under the met heads). So from 62% of
+the foot's length the top's rise is drawn down toward 3 mm, all the way by
+72% (`forefoot_cap_mm`, `forefoot_from`, `forefoot_full_at`: a judgment,
+past the arch and before the ball), blended smoothly over that tenth of
+the length: on that scan, 8.6, 7.8, 6.5, 5.0, 3.6 and then 3.0 mm in 2%
+steps from 62%. Only ever lowered; behind 62% (the arch, the heel) nothing
+changes. The sheet's *Under the ball* line says so. The printed clog's
+footbed (footwear.py) doesn't take this yet.
+
+The sheet also gives the heel cup **as printed**: how high its rim
+stands above the base at the back and along each side (the lowest point
+of the wall along the heel's side). The wall only stands where the
+outline leaves room outside the heel, and a shoe's or the generic outline
+can be as narrow as the heel. On that same scan at 280 mm: 10.5 mm on the
+inner side, 12.0 at the back, and 0.7 mm on the outer side, where the
+generic outline's heel (73.5 mm across at 280) is no wider than the heel
+standing; the review packet flags a side under half the depth asked for
+(`heel_cup_rim`). A saved shoe's own outline, with room round the heel,
+is the fix; a wider generic heel was tried (80 mm) and judged too wide
+for the shoe.
+
+The sheet's *Highest fill* is the whole insole's, and on a flat foot it
+can be the heel's rounded back rather than the arch: on that same scan
+(generic outline, 2026-11-25) it is 12.0 mm at the heel's back edge, at
+275 and at 280 mm. So the sheet and the review packet also give the
+**arch support as printed** (`arch_fill`): the highest printed fill
+between the heel zone and the ball's cap (30% to 62% of the foot's
+length), where it is and on which side. On that scan: 10.51 mm at 275 mm
+and 10.66 mm at 280 mm, on the inner side at 40% of the foot's length, near
+the outline's inner edge (the foot's own highest fill, 20 mm at the cap,
+hangs past that edge and isn't printed). Where the highest fill is behind
+the arch and taller than the arch support, the sheet's *Highest fill* says
+"at the heel, behind the arch support".
+
 On the bed: the outline is turned in 0.5 degree steps to find the angle
 where it fits the 256 mm bed with the most room to spare, and the 3MF is
 placed at that angle. Full detail in `src/footscan/insole.py`.
+
+## The paper template
+
+A TPU insole takes hours to print, and its outline is only right if it goes
+into the shoe. `right-insole-template.pdf` is the insole at full size on
+paper (`src/footscan/template.py`), to check first:
+
+- lay the shoe's stock insole on it: the outlines should match, give or take
+  the stock insole's own heel cup and the edge it curls up into the shoe;
+- put it in the shoe: it should lie flat, heel at the back, without buckling;
+- stand on it in the sock the insole will be worn with: the scanned foot near
+  the floor is drawn dashed, so where the real toes land against it shows how
+  far a scan reads short (the first right-foot scan read about 12 mm short).
+
+Also drawn: thin lines where the top stands 3, 6, 9 ... mm above the base
+(the arch support and the heel cup, from the generator's own heights after
+the edge is rounded), a ring at the highest printed fill (and one at the
+arch support as printed, where that is elsewhere), and dotted lines
+5 and 10 mm in from the toe end, to see what a little trimming leaves before
+cutting anything. Toes point up the page and it's drawn looking down, so a
+right insole's arch is on the page's left.
+
+**Check the scale before trusting it**: print at *Actual size* (100%, not
+*fit to page*) and measure the 50 mm square and the 100 mm scale. A page
+that was scaled makes the template no check of anything. An insole longer
+than the page goes on two (or more) pages; the line marked *A* crosses the
+overlap on both: cut the upper page along it, lay it on line A of the page
+below so the outline meets, and tape.
+
+The PDF is written by footscan itself (no plotting library), next to every
+insole the generator writes, from the command line (`--paper letter|a4`) or
+the studio. The studio puts it in the insole's folder but doesn't link it on
+its page yet; the header names the page the 50 mm square is on.
+Checked on SYNTHETIC insoles (`tests/test_template.py`): the outline's width
+on the page is the insole's to 0.2 mm, the square and the scale are 50 and
+100 mm, and a left insole's arch lands on the page's right.
+
+## The arch trial
+
+`footscan insole --trial` also writes `right-insole-arch-trial.3mf` (and
+`.stl`, and a `.txt` of what to look at): the insole between two flat cuts
+50 mm apart (`ARCH_TRIAL_MM`, a judgment), centred on the arch support as
+printed (kept inside the insole; if that moves it off the arch's top, its
+notes say so). Nothing else is changed, so it is the insole there: the
+arch, the rounded edge, the base, placed on the bed at the insole's own
+angle so the walls and infill run the same way across the arch. Printed first, with
+the filament and settings the insole will get and at 100%, it shows the
+arch's height and firmness in TPU and whether the rounded edge prints
+cleanly. On the right-foot sole-up scan
+`LIDAR_nwb_relaxed_R_20261027-151404-2349`, generic outline at 280 mm
+(2026-11-25): 50.0 x 79.8 x 15.0 mm, 32.8 cm3, 31% of the insole's
+106.5 cm3, from 69 to 119 mm forward of the back of the heel. Print time
+wasn't measured (the slicer is on the Mac).
+
+It is a test piece with cut ends, not an insole: its sheet says never to
+stand or walk on it. The checks are a thumb on the arch for firmness, and,
+seated, the foot resting on it to see whether the high side meets the
+arch. If it is too hard or too soft, the infill changes, not the shape.
+Each run clears a trial left from an earlier one under the same name, and
+a trial that can't be cut never stops the insole's own files being
+written. The studio doesn't offer it yet.
 
 ## What's been checked
 
@@ -480,5 +611,13 @@ placed at that angle. Full detail in `src/footscan/insole.py`.
   opened in Bambu Studio, not yet printed or worn. Its accuracy against the
   real foot hasn't been measured (see benchmark.md, *Measuring it end to
   end*).
+- The edge rounding, the ball's cap, the heel cup and arch support as
+  printed, the mirrored pair, the paper template and the arch trial
+  (2026-11-25): SYNTHETIC feet in `tests/test_insole_edge.py`,
+  `tests/test_insole_pair.py`, `tests/test_template.py` and
+  `tests/test_insole_trial.py`; their numbers on the right-foot sole-up
+  scan `LIDAR_nwb_relaxed_R_20261027-151404-2349` are in the sections on
+  each. None of these files has been printed, opened
+  in Bambu Studio, or laid in a shoe yet.
 - Bambu Studio's command-line mode crashed on every file tried, including a
   plain cube, so the open-in-Bambu check is by hand: open the 3MF.
