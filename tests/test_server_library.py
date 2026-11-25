@@ -167,3 +167,22 @@ def test_an_imported_model_can_be_downloaded_as_kept_but_only_by_the_studio(serv
     assert call(f"{phone}/api/captures/{cid}/mesh.ply")[0] == 403  # a foot's shape: the studio's only
     photo = body(call(f"{op}/api/captures", "POST", {"condition": "object", "session": "S1"}))["id"]
     assert call(f"{op}/api/captures/{photo}/mesh.ply")[0] == 404  # photos only: its model is under recon/
+
+
+def test_a_downloaded_insole_is_named_by_its_foot_and_length_so_a_pair_cant_be_mixed_up(servers):
+    op, _, data = servers
+    cid = _imported(op, "left")
+    assert call(f"{op}/api/captures/{cid}/insole", "POST", {"foot_outline": True})[0] == 200
+    report = body(call(f"{op}/api/captures/{cid}/insole/insole.json"))
+    mm = round(report["length_mm"])
+    for ext in ("3mf", "stl"):
+        h = call(f"{op}/api/captures/{cid}/insole/insole.{ext}")[2]
+        assert h["Content-Disposition"] == f'attachment; filename="{cid}-insole-left-{mm}mm.{ext}"'
+    assert call(f"{op}/api/captures/{cid}/insole/print-notes.txt")[2]["Content-Disposition"] == \
+        f'attachment; filename="{cid}-print-notes.txt"'
+    # a report that can't be read: the plain name, as before
+    (data / "captures" / cid / "insole" / "insole.json").write_text("{not json")
+    from footscan.server import insole_download_name
+
+    folder = data / "captures" / cid
+    assert insole_download_name(folder, folder / "insole", "insole.3mf") == f"{cid}-insole.3mf"

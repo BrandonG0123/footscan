@@ -1081,7 +1081,8 @@ def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check
                 if not f.is_file():
                     raise FileNotFoundError
                 return self.send_file(f, INSOLE_FILES[name], headers={
-                    "Content-Disposition": f'attachment; filename="{d.name}-{name}"'} if not name.endswith(".html") else None)
+                    "Content-Disposition": f'attachment; filename="{insole_download_name(d, out, name)}"'}
+                    if not name.endswith(".html") else None)
             if method == "POST" and not rest:
                 # One build per capture at a time (two studio tabs): the second waits for the first.
                 raw = self.read_body(MAX_JSON_BYTES) if int(self.headers.get("Content-Length") or 0) else b""
@@ -1916,6 +1917,23 @@ INSOLE_FILES = {"insole.3mf": "model/3mf", "insole.stl": "model/stl",
                 "summary.html": "text/html; charset=utf-8", "print-notes.txt": "text/plain; charset=utf-8",
                 "insole.json": "application/json",
                 "insole-preview.bin": "application/octet-stream", "insole-preview-sole.bin": "application/octet-stream"}
+
+
+def insole_download_name(capture: Path, out: Path, name: str) -> str:
+    """The name a downloaded insole file is saved under: the capture's, and for the printable files (3MF, STL)
+    the foot and the insole's length too, as its report gives them ("<capture>-insole-right-261mm.3mf"), so a
+    left and right pair can't be mixed up in the Downloads folder. The length is the insole's own, along its long
+    axis (a slicer's box differs when the insole is turned on the bed to fit). Without a readable report it is
+    "<capture>-<file>", as before."""
+    stem, _, ext = name.rpartition(".")
+    if stem == "insole" and ext in ("3mf", "stl"):
+        try:
+            report = read_json(out / "insole.json")
+            foot = {"left": "left", "right": "right"}[report["foot"]]
+            return f"{capture.name}-insole-{foot}-{round(float(report['length_mm']))}mm.{ext}"
+        except (OSError, ValueError, KeyError, TypeError):
+            pass
+    return f"{capture.name}-{name}"
 
 
 def insole_source(folder: Path, meta: dict) -> Path | None:

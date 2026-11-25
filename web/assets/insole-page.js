@@ -71,7 +71,7 @@ async function init() {
     return;
   }
   $("title").textContent = `${report.foot === "left" ? "Left" : "Right"} first-fit insole`;
-  const warn = (report.warnings || []).map((w) => `<li>${esc(w)}</li>`).join("");
+  const warn = (report.warnings || []).map((w) => `<li>${esc(w.charAt(0).toUpperCase() + w.slice(1))}</li>`).join("");
   $("root").innerHTML = `
     <section class="card">
       <div class="stage"><canvas id="canvas" aria-label="3-D view of the insole; drag to turn, scroll or pinch to zoom"></canvas></div>
@@ -98,7 +98,9 @@ async function init() {
       ${warn ? `<ul class="checklist" style="margin:12px 0 0;color:var(--warn)">${warn}</ul>` : ""}
       <p class="btn-row" style="margin:14px 0 0">
         <a class="btn" href="${base}insole.3mf">3MF for Bambu Studio</a>
-        <a class="btn secondary" href="${base}summary.html" target="_blank" rel="noopener">Summary sheet</a></p>
+        <a class="btn secondary" href="${base}summary.html" target="_blank" rel="noopener">Summary sheet</a>
+        <a class="btn secondary" href="${base}print-notes.txt" target="_blank" rel="noopener">Print notes</a>
+        <a class="btn secondary" href="${base}insole.stl">STL</a></p>
       <p class="hint" style="margin:10px 0 0">Not a medical device. First fit, no posting. Walking-only break-in;
         no sport until a podiatrist or athletic trainer has signed the summary sheet.</p>
     </section>`;

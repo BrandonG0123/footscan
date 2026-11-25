@@ -319,7 +319,7 @@ function insoleHtml(id, r) {
   if (r.stale) return `<p class="hint" style="color:var(--warn);margin:8px 0 0">${esc(r.stale_message || "This insole no longer matches what it was made from.")}
     Press Remake insole to make it again.</p>`;
   const base = `/api/captures/${encodeURIComponent(id)}/insole/`;
-  const warn = (r.warnings || []).map((w) => `<li>${esc(w)}</li>`).join("");
+  const warn = (r.warnings || []).map((w) => `<li>${esc(w.charAt(0).toUpperCase() + w.slice(1))}</li>`).join("");
   return `<div class="card" style="margin-top:10px;padding:12px">
     <strong>First-fit insole</strong> <span class="badge">${esc(r.foot)} foot</span> <span class="badge">no posting</span>
     <p class="hint" style="margin:6px 0">${r.length_mm} × ${r.width_mm} mm, ${r.height_mm} mm tall · highest arch fill ${r.max_fill_mm} mm${r.foot_max_fill_mm > r.max_fill_mm + 0.5
