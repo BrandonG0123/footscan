@@ -125,3 +125,34 @@ def test_a_model_replaced_while_its_picture_is_drawn_is_drawn_again_never_kept_u
     assert len(drawn) == 2 and pic == thumbnails.thumb_path(tmp_path, model)
     assert pic.read_bytes() == PNG + b"second version, longer"
     assert [p.name for p in tmp_path.glob("thumb-*.png")] == [pic.name]
+
+
+def test_the_status_says_when_the_iphone_app_last_got_in_and_when_it_was_turned_away_for_a_wrong_key(servers):
+    from test_server import KEY
+
+    _, phone, _ = servers
+    app = "FootscanCapture/1 CFNetwork/3826.500.131 Darwin/24.5.0"
+    status_url = f"{phone}/api/studio/status?key={KEY}"  # this server's own memory (each server has its own)
+    assert body(call(status_url))["app"] == {"reached": None, "wrong_key": None}
+    assert call(f"{phone}/api/studio", headers={"X-Studio-Key": KEY, "User-Agent": app})[0] == 200
+    assert call(f"{phone}/api/studio", headers={"X-Studio-Key": "an-old-key", "User-Agent": app})[0] == 403
+    # a studio page in a browser sends the key the same way: not the app
+    browser = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_5 like Mac OS X) AppleWebKit/605.1.15 Version/18.5 Safari/604.1"
+    call(f"{phone}/api/captures", headers={"X-Studio-Key": KEY, "User-Agent": browser})
+    raw = call(status_url)[1]
+    assert b"an-old-key" not in raw and KEY.encode() not in raw
+    app_seen = body((200, raw))["app"]
+    assert app_seen["reached"]["asked"] == "connection test" and app_seen["reached"]["network"] == "this computer"
+    assert app_seen["wrong_key"]["asked"] == "connection test" and app_seen["wrong_key"]["address"] == "127.0.0.1"
+
+
+def test_the_way_a_request_came_is_named_by_its_address():
+    from footscan.server import app_asked, network_of
+
+    assert network_of("100.101.1.2") == "Tailscale"
+    assert network_of("192.168.11.40") == network_of("10.0.0.5") == network_of("fe80::1") == "home network"
+    assert network_of("127.0.0.1") == network_of("::ffff:127.0.0.1") == "this computer"
+    assert network_of("1.1.1.1") == "internet" and network_of("not an address") == "unknown"
+    assert app_asked("PUT", "/api/captures/LIDAR_x_1/mesh") == "sent a scan's model"
+    assert app_asked("POST", "/api/captures") == "started sending a scan"
+    assert app_asked("GET", "/api/captures/LIDAR_x_1") == "GET /api/captures"

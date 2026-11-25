@@ -137,7 +137,10 @@ insoles that need making again, with a button to remake them all (see
 [docs/insole.md](docs/insole.md)). *Status* in the studio's menu shows which
 commit the studio runs, since when, its free disk, what it holds, and which
 options are on (Claude's look, the description reader, whether an API key is
-set; never the key itself). `GET /api/studio/status` answers the same.
+set; never the key itself), and when the iPhone app last got through and from
+which network (home network or Tailscale), or was turned away for an old key
+(scan the connect code again). That is kept in memory from the studio's start.
+`GET /api/studio/status` answers the same.
 
 **Printed clog (first shape, untested):** `footscan footwear` makes a one-piece
 slip-on clog for one foot, sized by ruler or by the sole scan, with that

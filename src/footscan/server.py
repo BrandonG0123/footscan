@@ -367,6 +367,55 @@ class RateLimiter:
             return True
 
 
+def network_of(address: str) -> str:
+    """Which way a request came, by its address: "this computer", "Tailscale" (100.64.0.0/10), "home network"
+    (a private address: Wi-Fi or cable at home), else "internet"."""
+    try:
+        ip = ipaddress.ip_address(address.strip("[]"))
+    except ValueError:
+        return "unknown"
+    if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped:
+        ip = ip.ipv4_mapped
+    if ip.is_loopback:
+        return "this computer"
+    if ip.version == 4 and ip in ipaddress.ip_network("100.64.0.0/10"):
+        return "Tailscale"
+    if ip.is_private or ip.is_link_local:
+        return "home network"
+    return "internet"
+
+
+def app_asked(method: str, path: str) -> str:
+    """What the iPhone app's request was for, in words (no capture id)."""
+    parts = path.strip("/").split("/")
+    if method == "GET" and parts == ["api", "studio"]:
+        return "connection test"
+    if method == "POST" and parts == ["api", "captures"]:
+        return "started sending a scan"
+    if method == "PUT" and parts[:2] == ["api", "captures"] and parts[3:] == ["mesh"]:
+        return "sent a scan's model"
+    return f"{method} /{'/'.join(parts[:2])}"
+
+
+class AppSeen:
+    """The iPhone app's latest request that the studio let in, and its latest one turned away for a wrong key:
+    when, from which address and network, and what for. Kept in memory only, from the studio's start, so the
+    Status page can say whether the phone gets here at all (the question when "Test the connection" fails)."""
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._seen: dict[str, dict] = {}
+
+    def note(self, key_ok: bool, address: str, method: str, path: str):
+        entry = dict(at=now_iso(), address=address, network=network_of(address), asked=app_asked(method, path))
+        with self._lock:
+            self._seen["reached" if key_ok else "wrong_key"] = entry
+
+    def view(self) -> dict:
+        with self._lock:
+            return dict(reached=self._seen.get("reached"), wrong_key=self._seen.get("wrong_key"))
+
+
 def rate_key(client: str) -> str:
     """Whom the rate limit counts: an IPv4 address as it is, an IPv6 address by its /64 (one home or phone
     network is given a whole /64, and can take a new address from it for every request)."""
@@ -533,6 +582,7 @@ def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check
     captures_dir = data_dir / "captures"
     shoes_dir = shoes_dir_of(captures_dir)
     started_at, started_clock = now_iso(), __import__("time").monotonic()  # for the Status page
+    app_seen = AppSeen()  # the iPhone app's last requests, for the Status page
     submissions_dir = data_dir / "submissions"
     limiter = RateLimiter(submissions_per_hour)
 
@@ -727,6 +777,18 @@ def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check
             host = urlsplit("//" + (self.headers.get("Host") or "")).hostname or ""
             return host in ("localhost", "127.0.0.1", "::1")
 
+        def note_app_request(self, method: str, path: str):
+            """Remember the iPhone app's latest request, and its latest one turned away for a key that doesn't
+            match (an app paired before the key changed, which needs the connect code scanned again). The app
+            is told from a studio page by how it asks: it sends the key in X-Studio-Key through Apple's
+            networking (a User-Agent naming CFNetwork, with no "Mozilla"), where a page's script runs in a
+            browser."""
+            sent = self.headers.get("X-Studio-Key")
+            agent = self.headers.get("User-Agent", "")
+            if not sent or not studio_key or "CFNetwork" not in agent or "Mozilla" in agent:
+                return
+            app_seen.note(hmac.compare_digest(sent, studio_key), self.client_id(), method, path)
+
         def is_operator(self) -> bool:
             return (local_check(self) and self.host_is_loopback_name()) or self.has_studio_cookie() or self.has_studio_key()
 
@@ -798,6 +860,7 @@ def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check
 
         def route(self, method: str):
             path, _, query = self.path.partition("?")
+            self.note_app_request(method, path)
             try:
                 if method != "GET" and self.cross_site():
                     raise Forbidden("request from another web site refused")
@@ -1221,6 +1284,7 @@ def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check
                           submissions=len(list_submissions(submissions_dir))),
                 claude=dict(check_scans=second_look is not None, describe_shoes=describe_with_claude,
                             api_key_set=bool(os.environ.get("ANTHROPIC_API_KEY"))),
+                app=app_seen.view(),
                 search_engines="allowed" if allow_indexing else "kept out (noindex)",
                 sole_scan_preparation=foot_prep.prep_version("sole_up"),
             )

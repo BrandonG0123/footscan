@@ -24,12 +24,20 @@ export function notes(st) {
   if (st.data.insoles_out_of_date) out.push(`${st.data.insoles_out_of_date} insole${st.data.insoles_out_of_date === 1 ? "" : "s"} can't be downloaded until made again: the library lists them, with a button to make them all again.`);
   if (st.claude.check_scans && !st.claude.api_key_set) out.push("Claude's look at sole scans is on, but no ANTHROPIC_API_KEY is set for the studio, so unless another sign-in is found every scan is kept without a look.");
   if (st.claude.describe_shoes && !st.claude.api_key_set) out.push("Reading a shoe's description with Claude is on, but no ANTHROPIC_API_KEY is set for the studio.");
+  const app = st.app || {};
+  if (app.wrong_key && (!app.reached || app.wrong_key.at > app.reached.at)) out.push(`The iPhone app last asked with a studio key that doesn't match (${app.wrong_key.at.replace("T", " ")}, over ${app.wrong_key.network}): it was paired before this studio's key changed, or reinstalled. Scan the connect code again on Import a 3D scan.`);
   if (!st.checkout) out.push("This copy of footscan isn't a git checkout (or its .git folder can't be read), so the code's version can't be shown.");
   return out;
 }
 
 function facts(rows) {
   return `<dl class="facts">${rows.map(([k, v, mono]) => `<div><dt>${esc(k)}</dt><dd${mono ? ' class="mono"' : ""}>${v}</dd></div>`).join("")}</dl>`;
+}
+
+// The app's latest request let in, and its latest turned away for a wrong key: when, which way, what for
+export function appRows(app) {
+  const seen = (e) => (e ? `${esc(e.at.replace("T", " "))}<br><span class="muted">${esc(e.asked)}, over ${esc(e.network)} (${esc(e.address)})</span>` : "never");
+  return [["Last reached the studio", seen(app.reached)], ["Last turned away (wrong key)", seen(app.wrong_key)]];
 }
 
 export function statusHtml(st) {
@@ -53,6 +61,9 @@ export function statusHtml(st) {
       ["Public mode", a.public ? "yes: only the studio key opens it" : "no"],
       ["Search engines", esc(st.search_engines)],
     ])}</section>
+    <section class="card"><h2>iPhone app</h2>${facts(appRows(st.app || {}))}
+      <p class="hint" style="margin:12px 0 0">Since the studio started. "Test the connection" in the app shows here as a
+        connection test; nothing here means the phone's requests aren't reaching this computer at all.</p></section>
     <section class="card"><h2>Data</h2>${facts([
       ["Folder", esc(d.folder), true],
       ["Disk free", disk.error ? "couldn't be read" : `${esc(size(disk.free_bytes))} of ${esc(size(disk.total_bytes))}`],

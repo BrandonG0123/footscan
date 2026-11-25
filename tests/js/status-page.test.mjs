@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { duration, notes, size } from "../../web/assets/status-page.js";
+import { appRows, duration, notes, size } from "../../web/assets/status-page.js";
 
 const OK = {
   checkout: { commit: "36cc2ef", branch: "main" },
@@ -32,4 +32,24 @@ test("a nearly full disk, insoles to make again and Claude on without a key are 
   assert.match(n[0], /nearly full/);
   assert.match(n[1], /^2 insoles can't be downloaded/);
   assert.match(n[2], /no ANTHROPIC_API_KEY/);
+});
+
+test("an app turned away for a wrong key since it last got in is told to scan the connect code again", () => {
+  const reached = { at: "2026-11-25T09:00:00", address: "100.101.1.2", network: "Tailscale", asked: "connection test" };
+  const wrong = { at: "2026-11-25T09:30:00", address: "192.168.11.40", network: "home network", asked: "connection test" };
+  const st = structuredClone(OK);
+  st.app = { reached, wrong_key: wrong };
+  const n = notes(st);
+  assert.equal(n.length, 1);
+  assert.match(n[0], /doesn't match .*over home network.*Scan the connect code again/);
+  st.app = { reached: { ...reached, at: "2026-11-25T10:00:00" }, wrong_key: wrong }; // got in again since
+  assert.deepEqual(notes(st), []);
+  st.app = { reached: null, wrong_key: wrong };
+  assert.equal(notes(st).length, 1);
+});
+
+test("the app's rows say never until it has asked, and escape what they show", () => {
+  assert.deepEqual(appRows({}).map((r) => r[1]), ["never", "never"]);
+  const [row] = appRows({ reached: { at: "2026-11-25T09:00:00", address: "<b>", network: "Tailscale", asked: "connection test" } });
+  assert.match(row[1], /2026-11-25 09:00:00.*connection test, over Tailscale \(&#60;b&#62;\)/);
 });
