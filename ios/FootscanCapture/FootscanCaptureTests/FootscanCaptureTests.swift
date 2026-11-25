@@ -995,6 +995,45 @@ struct ModelFiles {
     }
 }
 
+// MARK: - the Photos + mat page failing
+
+@Suite("The Photos + mat page failing")
+struct PhotoPageFailing {
+    let cancel = NSError(domain: NSURLErrorDomain, code: NSURLErrorCancelled)
+    let interrupted = NSError(domain: "WebKitErrorDomain", code: 102)
+    let timedOut = NSError(domain: NSURLErrorDomain, code: NSURLErrorTimedOut)
+
+    func said(_ e: Error, shown: Bool, pin: Bool = false) -> String? {
+        PhotoPageWords.failure(e, pageShown: shown, pinRefused: pin, studio: "192.168.11.233 (home Wi-Fi)")
+    }
+
+    @Test func aCancelWithTheStudiosPageShowingSaysNothing() {
+        #expect(said(cancel, shown: true) == nil)
+        #expect(said(interrupted, shown: true) == nil)  // a link sent to Safari
+    }
+
+    @Test func aCancelBeforeThePageEverShowedIsSaidAsUnreachable() {
+        // nothing would be on screen: say something and offer Try again
+        #expect(said(cancel, shown: false)?.hasPrefix("Couldn't reach the studio") == true)
+        #expect(said(interrupted, shown: false)?.hasPrefix("Couldn't reach the studio") == true)
+    }
+
+    @Test func aRefusedCertificateIsSaidAsSuchNotSwallowedAsACancel() {
+        #expect(said(cancel, shown: false, pin: true)?.contains("different certificate") == true)
+        #expect(said(cancel, shown: true, pin: true)?.contains("different certificate") == true)
+    }
+
+    @Test func aDropIsUnreachableWhetherOrNotThePageHadShown() {
+        #expect(said(timedOut, shown: false)?.hasPrefix("Couldn't reach the studio") == true)
+        #expect(said(timedOut, shown: true)?.hasPrefix("Couldn't reach the studio") == true)
+    }
+
+    @Test func aStoppedPageSaysWhatIsKeptAndWhatIsGone() {
+        #expect(PhotoPageWords.pageStopped.contains("already saved to the studio are kept"))
+        #expect(PhotoPageWords.pageStopped.contains("not yet saved are gone"))
+    }
+}
+
 // MARK: - free space
 
 @Suite("Free space before a capture")
