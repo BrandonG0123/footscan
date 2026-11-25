@@ -20,6 +20,17 @@
     td a { font-weight: 650; color: var(--ink); text-decoration: none; }
     .share { display: grid; grid-template-columns: 1fr auto; gap: 12px; align-items: center; }
     @media (max-width: 560px) { .share { grid-template-columns: 1fr; } }
+    /* A phone: each submission a small card, every value under its column's name, instead of a table to scroll sideways */
+    @media (max-width: 640px) {
+      .table-wrap table { min-width: 0; background: transparent; border: 0; }
+      .table-wrap thead { display: none; }
+      .table-wrap tbody, .table-wrap tr, .table-wrap td { display: block; }
+      .table-wrap tr { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); margin-bottom: 12px; padding: 6px 0; }
+      .table-wrap td { display: grid; grid-template-columns: 7em 1fr; gap: 8px; border: 0; padding: 6px 14px; }
+      .table-wrap td[data-label]::before { content: attr(data-label); color: var(--muted); font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.06em; align-self: center; }
+      .table-wrap td > * { justify-self: start; }
+      .table-wrap td:not([data-label]) { display: block; }
+    }
   </style>
 </head>
 <body data-area="studio">
@@ -46,10 +57,10 @@
     <a class="btn secondary" href="/?demo=1" target="_blank">Preview scan page (demo)</a>
   </div>
 
-  <div class="callout warn" style="margin-bottom:18px">
-    <p><strong>CAD output isn't built yet.</strong> Scans arrive here, but turning them into a printable TPU insole
-      needs reconstruction, landmarks and the generator (Phases 2–4), and the Phase 0 repeatability gate has to pass
-      first. Until then, no submission can produce an insole.</p>
+  <div class="callout brand" style="margin-bottom:18px">
+    <p><strong>Photo scans from the scan page arrive here.</strong> Insoles are made in the
+      <a href="/studio/captures.html">capture library</a>, from 3D scans the iPhone app sends (or Import 3D); a
+      submission's photos can be built into a 3D model on its page, but not into an insole yet.</p>
   </div>
 
   <div class="table-wrap">
@@ -60,62 +71,6 @@
   </div>
 </main>
 <script type="module" src="/assets/layout.js"></script>
-<script type="module">
-  import { STATUS, esc, fmtDate } from "/assets/studio.js";
-  const $ = (id) => document.getElementById(id);
-  let all = [], filter = "received";
-
-  fetch("/api/studio").then((r) => r.json()).then((info) => {
-    $("share").innerHTML = info.phones_can_connect
-      ? `Send people to <strong class="mono">${esc(info.scan_url)}</strong> (same Wi-Fi). They'll see a certificate warning once.`
-      : `Phones can't reach this server yet. Stop it and restart with <span class="mono">footscan serve --host 0.0.0.0 --https</span>.`;
-  });
-
-  async function load() {
-    const r = await fetch("/api/submissions");
-    if (!r.ok) { $("rows").innerHTML = `<tr><td colspan="7">Can't load submissions (${r.status}).</td></tr>`; return; }
-    all = await r.json();
-    for (const b of $("tabs").querySelectorAll("button")) {
-      const n = b.dataset.status ? all.filter((s) => s.status === b.dataset.status).length : all.length;
-      b.textContent = `${b.textContent.replace(/ \(\d+\)$/, "")} (${n})`;
-    }
-    render();
-  }
-
-  function render() {
-    const rows = all.filter((s) => !filter || s.status === filter);
-    if (!rows.length) {
-      $("rows").innerHTML = `<tr><td colspan="7" class="muted" style="text-align:center;padding:36px">Nothing here yet.</td></tr>`;
-      return;
-    }
-    $("rows").innerHTML = rows.map((s) => {
-      const scans = Object.values(s.scans);
-      const done = scans.filter((x) => x.status === "complete").length;
-      const photos = scans.reduce((n, x) => n + (x.frame_files?.length ?? 0), 0);
-      const before = (s.flags || []).filter((f) => f.level === "before_wear").length;
-      const use = s.survey?.sport || { everyday: "Everyday", on_feet: "On feet all day", sport: "Sport" }[s.survey?.use] || "—";
-      const st = STATUS[s.status] || { label: s.status, cls: "" };
-      const href = `/studio/submission.html?id=${encodeURIComponent(s.id)}`;
-      return `<tr data-href="${href}"><td><a href="${href}">${esc(s.name)}</a></td>
-        <td>${fmtDate(s.submitted || s.created)}</td><td class="mono">${done}/${scans.length}</td>
-        <td class="mono">${photos}</td><td>${esc(use)}</td>
-        <td>${before ? `<span class="badge stop">${before} before wear</span>` : "—"}</td>
-        <td><span class="badge ${st.cls}">${st.label}</span></td></tr>`;
-    }).join("");
-  }
-
-  $("rows").addEventListener("click", (e) => {
-    const tr = e.target.closest("tr[data-href]");
-    if (tr && !e.target.closest("a")) location.href = tr.dataset.href;
-  });
-  $("tabs").addEventListener("click", (e) => {
-    const b = e.target.closest("button");
-    if (!b) return;
-    filter = b.dataset.status;
-    $("tabs").querySelectorAll("button").forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
-    render();
-  });
-  load();
-</script>
+<script type="module" src="/assets/submissions-page.js"></script>
 </body>
 </html>

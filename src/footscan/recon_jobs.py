@@ -155,6 +155,7 @@ class ReconRunner:
         self.python = python
         self.proc: subprocess.Popen | None = None
         self.folder: Path | None = None
+        self.accuracy_only = False  # what the running job is: a whole build, or the accuracy figures only
         self.lock = threading.Lock()
 
     def busy(self) -> bool:
@@ -187,7 +188,7 @@ class ReconRunner:
             # the ANSI code page, which can't write characters like the √ in a report and crashes)
             env = {**os.environ, "PYTHONUTF8": "1"}
             self.proc = subprocess.Popen(cmd, stdout=log, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, env=env)
-            self.folder = folder
+            self.folder, self.accuracy_only = folder, accuracy_only
             log.close()
 
 

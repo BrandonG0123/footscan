@@ -1928,7 +1928,7 @@ def test_a_refused_upload_still_gets_its_answer_when_the_body_is_large(servers):
         sender.join(10)
         sock.close()
     assert got.startswith(b"HTTP/1.1 400"), got[:200]
-    assert b"body too large" in got
+    assert b"body too large: " in got and b"MB, and this takes at most " in got  # how big, and the limit
     assert errors == []  # the whole body was taken in before the connection closed, so nothing was reset
 
 
@@ -2506,3 +2506,189 @@ def test_rate_limiter_is_safe_to_use_from_many_threads_while_it_forgets(monkeypa
     for t in threads:
         t.join()
     assert errors == []
+
+
+# ---- files: revalidation (ETag) and gzip ----------------------------------------------------------------------
+
+def test_a_file_the_browser_already_has_is_answered_not_modified_with_no_body(servers):
+    _, phone, _ = servers
+    status, raw, h = call(f"{phone}/assets/style.css")
+    assert status == 200 and raw == (WEB_DIR / "assets" / "style.css").read_bytes() and h["ETag"]
+    status, raw, h2 = call(f"{phone}/assets/style.css", headers={"If-None-Match": h["ETag"]})
+    assert status == 304 and raw == b"" and h2["ETag"] == h["ETag"]
+    # weak or listed among others, it still matches; another version's tag doesn't
+    assert call(f"{phone}/assets/style.css", headers={"If-None-Match": f'"x", W/{h["ETag"]}'})[0] == 304
+    assert call(f"{phone}/assets/style.css", headers={"If-None-Match": '"1-2"'})[0] == 200
+
+
+def test_a_file_that_changed_gets_a_new_etag(tmp_path):
+    web = tmp_path / "web"
+    (web / "assets").mkdir(parents=True)
+    f = web / "assets" / "a.js"
+    f.write_text("let a = 1;\n" * 10)
+    httpd = StudioServer(("127.0.0.1", 0), make_handler(web, tmp_path, local_check=lambda h: False, studio_key=KEY))
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    url = f"http://127.0.0.1:{httpd.server_address[1]}/assets/a.js"
+    try:
+        tag = call(url)[2]["ETag"]
+        f.write_text("let a = 2;\n" * 11)
+        status, raw, h = call(url, headers={"If-None-Match": tag})
+        assert status == 200 and raw == f.read_bytes() and h["ETag"] != tag
+    finally:
+        httpd.shutdown()
+
+
+def test_text_and_previews_are_gzipped_only_for_a_browser_that_takes_it(servers):
+    import gzip
+
+    _, phone, _ = servers
+    js = (WEB_DIR / "assets" / "app.js").read_bytes()
+    status, raw, h = call(f"{phone}/assets/app.js", headers={"Accept-Encoding": "gzip, deflate, br"})
+    assert status == 200 and h["Content-Encoding"] == "gzip" and gzip.decompress(raw) == js
+    assert int(h["Content-Length"]) == len(raw) < len(js) and "Accept-Encoding" in h["Vary"]
+    # its own tag: a cache never mixes the compressed and plain copies
+    _, plain, hp = call(f"{phone}/assets/app.js")
+    assert plain == js and "Content-Encoding" not in hp and hp["ETag"] != h["ETag"]
+    assert "Content-Encoding" not in call(f"{phone}/assets/app.js", headers={"Accept-Encoding": "gzip;q=0"})[2]
+    # a 304 for the compressed copy, by its own tag
+    assert call(f"{phone}/assets/app.js", headers={"Accept-Encoding": "gzip", "If-None-Match": h["ETag"]})[0] == 304
+
+
+def test_photos_are_never_gzipped(servers):
+    op, _, data = servers
+    cid = body(call(f"{op}/api/captures", "POST", {"condition": "object", "session": "S1"}))["id"]
+    big = JPEG + b"\x00" * 4096
+    assert call(f"{op}/api/captures/{cid}/frames/1", "PUT", big, {"Content-Type": "image/jpeg"})[0] == 200
+    status, raw, h = call(f"{op}/api/captures/{cid}/frames/1.jpg", headers={"Accept-Encoding": "gzip"})
+    assert status == 200 and raw == big and "Content-Encoding" not in h
+
+
+def test_a_head_request_gets_the_gets_headers_and_no_body_and_the_connection_carries_on(servers):
+    import http.client
+    import urllib.parse
+
+    op, phone, _ = servers
+    css = (WEB_DIR / "assets" / "style.css").read_bytes()
+    u = urllib.parse.urlsplit(phone)
+    conn = http.client.HTTPConnection(u.hostname, u.port, timeout=10)
+    try:
+        conn.request("HEAD", "/assets/style.css")
+        r = conn.getresponse()
+        assert r.status == 200 and int(r.headers["Content-Length"]) == len(css) and r.headers["ETag"]
+        assert r.read() == b""
+        conn.request("HEAD", "/assets/no-such-file.js")
+        r = conn.getresponse()
+        assert r.status == 404 and r.read() == b""
+        # the same connection: had a HEAD's body gone out, it would be read here as the start of this answer
+        conn.request("GET", "/assets/style.css")
+        r = conn.getresponse()
+        assert r.status == 200 and r.read() == css
+    finally:
+        conn.close()
+    # an API answer too, the same length its GET sends
+    u = urllib.parse.urlsplit(op)
+    conn = http.client.HTTPConnection(u.hostname, u.port, timeout=10)
+    try:
+        conn.request("GET", "/api/captures")
+        r = conn.getresponse()
+        got = r.read()
+        conn.request("HEAD", "/api/captures")
+        r = conn.getresponse()
+        assert r.status == 200 and int(r.headers["Content-Length"]) == len(got) and r.read() == b""
+        assert r.headers["Content-Type"] == "application/json"
+    finally:
+        conn.close()
+
+
+def test_a_304_does_not_read_the_file(servers, monkeypatch):
+    import builtins
+
+    _, phone, _ = servers
+    tag = call(f"{phone}/assets/style.css")[2]["ETag"]
+    reads = []
+    real_open = builtins.open
+
+    class Counting:
+        def __init__(self, f):
+            self._f = f
+
+        def read(self, *a):
+            reads.append(1)
+            return self._f.read(*a)
+
+        def __getattr__(self, k):
+            return getattr(self._f, k)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return self._f.__exit__(*a)
+
+    def counting_open(file, mode="r", *a, **k):
+        f = real_open(file, mode, *a, **k)
+        return Counting(f) if str(file).endswith("style.css") and "b" in mode else f
+
+    monkeypatch.setattr(builtins, "open", counting_open)
+    assert call(f"{phone}/assets/style.css", headers={"If-None-Match": tag})[0] == 304
+    assert reads == []
+    assert call(f"{phone}/assets/style.css")[0] == 200 and reads
+
+
+@pytest.mark.parametrize("header,takes", [("gzip", True), ("deflate, gzip;q=0.8", True), ("GZIP", True),
+                                          ("gzip;q=0", False), ("gzip; q=0.0", False), ("br, deflate", False),
+                                          ("", False), ("x-gzip;q=0, gzip", True), ("*", True),
+                                          ("gzip;q=0, *", False), ("br, *;q=0.1", True), ("gzip;q=x", False)])
+def test_accept_encoding_is_read_with_its_q_values(header, takes):
+    from footscan.server import accepts_gzip
+
+    assert accepts_gzip(header) is takes
+
+
+def test_no_script_written_into_a_page_runs_only_the_sites_own_files():
+    """The CSP forbids inline script, so no page may carry one: each page's script is a file under /assets."""
+    import re
+
+    from footscan.server import SECURITY_HEADERS
+
+    csp = dict(p.strip().split(" ", 1) for p in SECURITY_HEADERS["Content-Security-Policy"].split(";") if p.strip())
+    assert csp["script-src"] == "'self'"
+    assert csp["base-uri"] == csp["form-action"] == "'self'" and csp["object-src"] == "'none'"
+    for page in [*WEB_DIR.glob("*.html"), *WEB_DIR.glob("studio/*.html")]:
+        html = page.read_text(encoding="utf-8")
+        inline = [m for m in re.finditer(r"<script\b([^>]*)>(.*?)</script>", html, re.S) if m.group(2).strip()]
+        assert not inline, f"{page.name}: a script inside the page won't run; move it to a file under web/assets"
+        assert not re.search(r"\son[a-z]+\s*=", html), f"{page.name}: an onclick= (or the like) won't run"
+
+
+def test_a_wrong_studio_key_is_said_so_and_the_page_asked_for_keeps_its_settings(servers):
+    _, phone, _ = servers
+    st, page, _ = call(f"{phone}/studio/insole.html?capture=ABC_1&key=not-the-key")
+    assert st == 403 and b"doesn't match" in page
+    assert b'<input type="hidden" name="capture" value="ABC_1">' in page and b'value="not-the-key"' not in page
+    st, page, _ = call(f"{phone}/studio/?key=&capture=x")  # the box left empty: asked for, not "doesn't match"
+    assert st == 403 and b"doesn't match" not in page
+    st, page, _ = call(f"{phone}/studio/?capture=%22%3E%3Cscript%3E")
+    assert b"doesn't match" not in page and b"<script>" not in page  # no key given; a setting is escaped
+
+
+def test_an_unexpected_error_is_answered_500_in_words_and_logged_not_a_dropped_connection(servers, monkeypatch, capsys):
+    from footscan import server
+
+    op, _, _ = servers
+
+    def broken(*a, **k):
+        raise RuntimeError("something inside broke")
+
+    monkeypatch.setattr(server, "list_captures", broken)
+    status, raw, _ = call(f"{op}/api/captures?key={KEY}")
+    assert status == 500 and "didn't expect (RuntimeError)" in json.loads(raw)["error"]
+    assert b"something inside broke" not in raw  # the details are the log's, not the answer's
+    err = capsys.readouterr().err
+    assert "something inside broke" in err and "GET /api/captures?key=…" in err and KEY not in err
+    # and the Status page lists it, newest first, without the key
+    monkeypatch.undo()
+    listed = json.loads(call(f"{op}/api/studio/status")[1])["recent_errors"]
+    assert len(listed) == 1 and listed[0]["request"] == "GET /api/captures"
+    # where in the studio's own code it went wrong, not the innermost frame (here this test file; often numpy)
+    assert listed[0]["error"] == "RuntimeError: something inside broke" and listed[0]["code"].startswith("server.py:")

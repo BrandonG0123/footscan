@@ -141,7 +141,7 @@ section { margin-block: var(--section); }
 /* ---- forms ------------------------------------------------------------- */
 label { font-weight: 600; font-size: 0.92rem; }
 .field { display: grid; gap: 6px; }
-input[type="text"], input[type="number"], input[type="date"], select, textarea {
+input[type="text"], input[type="search"], input[type="number"], input[type="date"], select, textarea {
   font: inherit; color: var(--ink); background: var(--surface);
   border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 10px 12px; min-height: 44px; width: 100%;
 }

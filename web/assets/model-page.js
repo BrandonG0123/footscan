@@ -1,8 +1,9 @@
 // Studio: build a capture's 3D model (Phase 2) and read the results.
 // Everything numeric on this page comes from the reconstruction's report;
 // nothing is estimated or filled in here.
+import { ask, esc } from "./studio.js";
+
 const $ = (id) => document.getElementById(id);
-const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 const q = new URLSearchParams(location.search);
 const capture = q.get("capture");
 const submission = q.get("submission");
@@ -33,10 +34,11 @@ let timer = null;
 async function init() {
   if (capture) {
     $("back").innerHTML = `Research capture <a class="mono" href="/studio/captures.html#${esc(capture)}">${esc(capture)}</a>`;
-    const list = await fetch("/api/captures").then((r) => r.json()).catch(() => []);
-    meta = list.find((c) => c.capture_id === capture) || {};
+    const [ok, one] = await ask(base);  // this capture alone, not the whole library
+    meta = ok ? one : {};
     $("title").textContent = meta.condition === "calibration" ? "Calibration object" :
       meta.foot ? `${meta.foot} foot · ${meta.condition}` : `${meta.condition || "Capture"}`;
+    if (meta.method === "imported_mesh") return importedCard(meta);  // nothing to build: it came as a model
   } else {
     $("back").innerHTML = `Submission <a class="mono" href="/studio/submission.html?id=${esc(submission)}">${esc(submission)}</a> · scan ${esc(scanKey)}`;
     meta = { condition: scanKey?.split("-")[1] };
@@ -47,11 +49,15 @@ async function init() {
 
 async function refresh() {
   clearTimeout(timer);
-  let s;
-  try {
-    s = await fetch(api).then((r) => r.json());
-  } catch {
-    $("root").innerHTML = `<div class="callout stop"><p>Can't reach the footscan server.</p></div>`;
+  const [, s, status] = await ask(api);
+  if (s.error && s.state === undefined) {
+    // Unreachable, or the studio's own trouble (5xx): shown, and asked again in a while (weak Wi-Fi drops a
+    // request now and then while a model builds). A refusal (no such capture, not the studio's operator) won't
+    // change by asking again: shown once.
+    const again = status === 0 || status >= 500;
+    $("root").innerHTML = `<div class="callout stop"><p>Couldn't ask the studio about this model: ${esc(s.error)}.
+      ${again ? "Asking again in a few seconds…" : ""}</p></div>`;
+    if (again) timer = setTimeout(refresh, 5000);
     return;
   }
   render(s);
@@ -61,9 +67,8 @@ async function refresh() {
 async function build() {
   const btn = $("btn-build");
   if (btn) btn.disabled = true;
-  const r = await fetch(api, { method: "POST" });
-  const body = await r.json().catch(() => ({}));
-  if (!r.ok) {
+  const [ok, body] = await ask(api, { method: "POST" });
+  if (!ok) {
     $("build-error").textContent = body.error || "Couldn't start.";
     if (btn) btn.disabled = false;
     return;
@@ -211,6 +216,66 @@ function filesCard(s) {
     <p class="hint" style="margin:10px 0 0">Millimetres. PLY opens in MeshLab, Blender, or most slicers.</p></section>`;
 }
 
+// A scan that arrived as a 3-D model (the iPhone app, or Import a 3D scan) has no photos to build from: what the
+// studio read from it, and where to go next, instead of a Build button the studio would refuse.
+function importedCard(c) {
+  const m = c.mesh;
+  const id = encodeURIComponent(capture);
+  if (!m) {
+    $("root").innerHTML = `<section class="card"><h2 style="margin:0;font-size:1.2rem">No model yet</h2>
+      <p class="muted" style="margin:8px 0 0">This capture was started for a 3-D model that hasn't arrived. Send it again from the
+      iPhone app, or use <a href="/studio/import.html">Import a 3D scan</a>.</p></section>`;
+    return;
+  }
+  const units = m.units_detected === "m" ? "metres" : m.units_detected === "cm" ? "centimetres" : "millimetres";
+  $("root").innerHTML = `<section class="card"><h2 style="margin:0;font-size:1.2rem">Arrived as a 3-D model</h2>
+    <p class="muted" style="margin:8px 0 0">It came from the iPhone app or an imported file, so there are no photos to
+      build from: the model as sent is what the studio uses. ${c.foot ? "Landmarks and Make insole work from it." : ""}</p>
+    <dl class="big">
+      <div><dt>Size</dt><dd>${m.extents_mm.map((v) => esc(v)).join(" × ")} mm<small>longest side first</small></dd></div>
+      <div><dt>Surface</dt><dd>${Number(m.faces).toLocaleString()} faces<small>${m.watertight ? "closed" : "open"}, ${Number(m.vertices).toLocaleString()} points</small></dd></div>
+      <div><dt>Units in the file</dt><dd>${esc(units)}<small>scaled by ${esc(m.scale_to_mm)} to mm</small></dd></div>
+    </dl>
+    <p class="btn-row" style="margin:14px 0 0">
+      <a class="btn secondary" href="/api/captures/${id}/mesh.ply" download>Download the model (PLY, mm)</a>
+      ${c.foot ? `<a class="btn secondary" href="/studio/landmarks.html?capture=${id}">Landmarks</a>` : ""}
+      <a class="btn secondary" href="/studio/captures.html#${esc(capture)}">Its card in the library</a>
+    </p></section>${c.condition === "calibration" ? `<div id="imported-accuracy"></div>` : ""}`;
+  if (c.condition === "calibration") importedAccuracy(c);
+}
+
+// An imported calibration object: what the studio measured against the object's true shape, and the caliper
+// readings that make the comparison with the real print (re-scored at once: an imported model needs no build)
+async function importedAccuracy(c) {
+  const [, s] = await ask(api);  // the saved caliper readings come with the build's status
+  const a = c.accuracy;
+  const signedMm = (v) => (v == null ? "not measured" : `${signed(v)} mm`);
+  const figures = !a ? `<p class="muted" style="margin:8px 0 0">Not measured yet.</p>`
+    : a.error ? `<div class="callout warn" style="margin:10px 0 0"><p>${esc(a.error)}</p></div>`
+    : `<p class="hint" style="margin:6px 0 0">Lengths compared with the ${a.reference === "calipers" ? "caliper readings of the print" : "object's design (add caliper readings for a fairer comparison)"}.</p>
+      <dl class="big">
+        <div><dt>Surface, typical error</dt><dd>${esc(a.median_mm)} mm</dd></div>
+        <div><dt>Surface, worst 5%</dt><dd>${esc(a.p95_mm)} mm</dd></div>
+        <div><dt>Length</dt><dd>${esc(signedMm(a.length_mm))}</dd></div>
+        <div><dt>Width</dt><dd>${esc(signedMm(a.width_mm))}</dd></div>
+        <div><dt>Dome top height</dt><dd>${esc(signedMm(a.dome_apex_mm))}</dd></div>
+      </dl>
+      ${(a.warnings || []).length ? `<ul class="checklist" style="margin:10px 0 0;color:var(--warn)">${a.warnings.map((w) => `<li>${esc(w)}</li>`).join("")}</ul>` : ""}
+      <p class="hint" style="margin:8px 0 0"><a href="${base}/accuracy">Full accuracy report</a></p>`;
+  $("imported-accuracy").innerHTML = `<section class="card"><h2 style="margin:0;font-size:1.2rem">Against the object's true shape</h2>${figures}</section>`
+    + calipersCard(s && !s.error ? s : {});
+  $("caliper-form")?.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const body = Object.fromEntries(new FormData(e.target));
+    $("caliper-msg").textContent = "Re-scoring…";
+    const [ok, out] = await ask(`${base}/calipers`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    if (!ok) { $("caliper-msg").textContent = out.error || "Couldn't save."; return; }
+    c.accuracy = out.accuracy;
+    await importedAccuracy(c);
+    $("caliper-msg").textContent = "Saved. The figures above now use your readings.";
+  });
+}
+
 function render(s) {
   $("root").innerHTML = buildCard(s) + (s.state === "done" ? warningsCard(s) + accuracyCard(s) + calipersCard(s) +
     landmarksCard(s) + footCard(s) + qualityCard(s) + filesCard(s) : calipersCard(s));
@@ -218,9 +283,8 @@ function render(s) {
   $("caliper-form")?.addEventListener("submit", async (e) => {
     e.preventDefault();
     const body = Object.fromEntries(new FormData(e.target));
-    const r = await fetch(`${base}/calipers`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-    const out = await r.json().catch(() => ({}));
-    if (!r.ok) { $("caliper-msg").textContent = out.error || "Couldn't save."; return; }
+    const [ok, out] = await ask(`${base}/calipers`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    if (!ok) { $("caliper-msg").textContent = out.error || "Couldn't save."; return; }
     $("caliper-msg").textContent = out.updating ? "Saved. Updating the comparison…" : "Saved. Build the model to compare against them.";
     if (out.updating) setTimeout(refresh, 800);
   });

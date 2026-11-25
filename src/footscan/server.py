@@ -34,12 +34,16 @@ GET  /api/submissions/<id>                              detail
 GET  /api/submissions/<id>/scans/<foot>/frames/<n>.jpg
 POST /api/submissions/<id>/status                       {status, note}
 GET/POST/PUT /api/captures...                           research captures (Phase 0)
+GET  /api/captures/<id>                                 one capture, as the list shows it (insole marked stale or not)
 POST /api/captures/<id>/recon                           build the 3D model (Phase 2), in the background
 GET  /api/captures/<id>/recon                           its progress and results
 GET  /api/captures/<id>/recon/<file>                    mesh.ply, report.json, ... (download)
 PUT  /api/captures/<id>/calipers                        caliper readings of the calibration object
 POST/GET /api/submissions/<id>/scans/<key>/recon[/<file>]   the same for a customer's scan
 GET  /api/captures/<id>/viewer.bin                      the 3-D model for the landmark viewer
+GET  /api/captures/<id>/mesh.ply                        an imported model as kept (PLY, mm), to download
+PUT  /api/captures/<id>/notes                           {notes}: change a capture's notes
+GET  /api/captures/<id>/thumb.png                       a picture of the 3-D model from above, for the library
 GET  /api/captures/<id>/picks                           landmark spec + saved picks (Phase 3)
 PUT  /api/captures/<id>/picks/<n>                       save pick n {landmarks: {name: [x, y, z]}} -> measurements
 DELETE /api/captures/<id>/picks/<n>
@@ -52,6 +56,7 @@ POST /api/shoes/default                                 {id} (null: none): insol
 The server itself needs only the standard library; saving a pick loads
 numpy and trimesh to compute the measurements.
 GET  /api/studio                                        scan address to share
+GET  /api/studio/status                                 the Status page: code version, uptime, disk, counts, options
 
 Phones only allow camera and motion-sensor access on secure origins, so
 ``--https`` generates a self-signed certificate.
@@ -88,6 +93,7 @@ from .filestamp import file_stamp
 
 ROOT = Path(__file__).resolve().parents[2]
 WEB_DIR = ROOT / "web"
+PACKAGE_DIR = Path(__file__).resolve().parent  # the studio's own code, for "where in the code" on the Status page
 DATA_DIR = ROOT / "data"
 
 # "object" is a scanner test: any object, no mat, no foot. It can't be scaled
@@ -116,6 +122,8 @@ MAX_FRAME_BYTES = 8 * 1024 * 1024
 MAX_JSON_BYTES = 2 * 1024 * 1024
 MAX_FRAMES = 200
 MAX_MESH_BYTES = 150 * 1024 * 1024
+MAX_NOTES_CHARS = 2000  # a capture's notes
+RECENT_ERRORS_KEPT = 20  # unexpected errors the Status page lists (in memory, since the studio started)
 MESH_TYPES = {"obj", "ply", "stl", "glb", "gltf", "off"}
 # New submissions per client per hour. Stops a script flooding the disk; a
 # real person makes one or two.
@@ -144,9 +152,15 @@ SECURITY_HEADERS = {
     "Referrer-Policy": "no-referrer",  # studio keys and rescan tokens travel in URLs
     "X-Frame-Options": "DENY",
     "Permissions-Policy": "camera=(self), accelerometer=(self), gyroscope=(self), magnetometer=(self)",
+    # Scripts only from this server's own files: no script written into a page runs, so text that slipped into
+    # a page unescaped (a customer's scan summary was one, PR #20) can't run as code. Styles may be inline (the
+    # pages use style attributes); a style can't run code. And text slipped into a page can't redirect what the
+    # page loads or sends: no <base> pointing its scripts elsewhere, no form sending what's typed (a studio key)
+    # to another site, no plug-in objects.
     "Content-Security-Policy": (
-        "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; "
-        "img-src 'self' blob: data:; media-src 'self' blob:; connect-src 'self'; frame-ancestors 'none'"
+        "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
+        "img-src 'self' blob: data:; media-src 'self' blob:; connect-src 'self'; frame-ancestors 'none'; "
+        "base-uri 'self'; form-action 'self'; object-src 'none'"
     ),
 }
 
@@ -166,7 +180,7 @@ STUDIO_LOCKED_HTML = """<!doctype html><html lang="en"><head><meta charset="utf-
 <h1 style="margin-top:12vh">Studio locked</h1>
 <p class="muted">This is the private side of footscan. To open it on this device, paste the studio key.
 It is printed in the terminal when footscan starts, and stored in the file <span class="mono">.studio_key</span>.</p>
-<form class="card" method="get" style="display:grid;gap:14px">
+{wrong}<form class="card" method="get" style="display:grid;gap:14px">{keep}
   <div class="field"><label for="key">Studio key</label>
     <input id="key" name="key" type="text" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false"></div>
   <button class="btn" type="submit">Open the studio</button>
@@ -245,7 +259,7 @@ def validate_setup(body: dict) -> dict:
     out = dict(
         foot=foot, condition=cond, session=session, method=method, load_kg=load,
         measurable=not is_object,
-        notes=str(body.get("notes", ""))[:2000], device=str(body.get("device", ""))[:300],
+        notes=str(body.get("notes", ""))[:MAX_NOTES_CHARS], device=str(body.get("device", ""))[:300],
     )
     if not is_object:
         out["scan_kind"] = kind
@@ -359,6 +373,58 @@ class RateLimiter:
             recent.append(now)
             self.hits[client] = recent
             return True
+
+
+def network_of(address: str) -> str:
+    """Which way a request came, by its address: "this computer", "Tailscale" (100.64.0.0/10), "home network"
+    (a private address: Wi-Fi or cable at home), else "internet"."""
+    try:
+        ip = ipaddress.ip_address(address.strip("[]"))
+    except ValueError:
+        return "unknown"
+    if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped:
+        ip = ip.ipv4_mapped
+    if ip.is_loopback:
+        return "this computer"
+    if ip in ipaddress.ip_network("100.64.0.0/10" if ip.version == 4 else "fd7a:115c:a1e0::/48"):
+        return "Tailscale"  # the addresses Tailscale gives its devices, IPv4 and IPv6
+    if ip.is_private or ip.is_link_local:
+        return "home network"
+    return "internet"
+
+
+def app_asked(method: str, path: str) -> str:
+    """What the iPhone app's request was for, in words (no capture id)."""
+    parts = path.strip("/").split("/")
+    if method == "GET" and parts == ["api", "studio"]:
+        return "connection test"
+    if method == "POST" and parts == ["api", "captures"]:
+        return "started sending a scan"
+    if method == "PUT" and parts[:2] == ["api", "captures"] and parts[3:] == ["mesh"]:
+        return "sent a scan's model"
+    return f"{method} /{'/'.join(parts[:2])}"
+
+
+class AppSeen:
+    """The iPhone app's latest request that the studio let in, and its latest one turned away for a wrong key:
+    when, from which address and network, and what for. Kept in memory only, from the studio's start, so the
+    Status page can say whether the phone gets here at all (the question when "Test the connection" fails)."""
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._seen: dict[str, dict] = {}
+        self._latest: str | None = None
+
+    def note(self, key_ok: bool, address: str, method: str, path: str):
+        entry = dict(at=now_iso(), address=address, network=network_of(address), asked=app_asked(method, path))
+        with self._lock:
+            self._seen["reached" if key_ok else "wrong_key"] = entry
+            self._latest = "reached" if key_ok else "wrong_key"  # by arrival, not by the clock (same second, DST)
+
+    def view(self) -> dict:
+        with self._lock:
+            return dict(reached=self._seen.get("reached"), wrong_key=self._seen.get("wrong_key"),
+                        latest=self._latest)
 
 
 def rate_key(client: str) -> str:
@@ -526,6 +592,35 @@ def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check
             return tailnet["ip"]
     captures_dir = data_dir / "captures"
     shoes_dir = shoes_dir_of(captures_dir)
+    started_at, started_clock = now_iso(), __import__("time").monotonic()  # for the Status page
+    app_seen = AppSeen()  # the iPhone app's last requests, for the Status page
+    recent_errors = __import__("collections").deque(maxlen=RECENT_ERRORS_KEPT)  # unexpected ones, for the Status page
+    errors_lock = threading.Lock()  # added to by any request's thread while the Status page reads it
+
+    def model_being_built() -> str | None:
+        """The folder whose 3-D model is being built right now, from the data folder, or None. Also one this
+        studio didn't start: a build goes on when the studio is restarted, and its status file says so."""
+        with runner.lock:  # start() sets the process and the folder together under it
+            folder = runner.folder if runner.busy() else None
+            only = runner.accuracy_only
+        if folder is None:
+            only = False
+            for st in [*captures_dir.glob("*/recon/status.json"), *submissions_dir.glob("*/*/recon/status.json")]:
+                cur = recon_jobs.read_json_or_none(st) or {}
+                if cur.get("state") == "running" and recon_jobs.pid_alive(cur.get("pid"), cur.get("at")):
+                    folder = st.parent.parent
+                    break
+        if folder is None:
+            return None
+        try:
+            name = folder.relative_to(data_dir).as_posix()
+        except ValueError:
+            name = folder.name
+        return f"{name} (its accuracy figures only)" if only else name
+
+    def errors_newest_first() -> list[dict]:
+        with errors_lock:
+            return list(recent_errors)[::-1]
     submissions_dir = data_dir / "submissions"
     limiter = RateLimiter(submissions_per_hour)
 
@@ -536,6 +631,10 @@ def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check
         # One Handler serves every request on its connection, so per-request state is reset in parse_request.
         protocol_version = "HTTP/1.1"
         timeout = KEEPALIVE_TIMEOUT_S
+
+        def send_response(self, code, message=None):
+            self._answer_started = True
+            super().send_response(code, message)
 
         def log_message(self, fmt, *args):  # skip static asset noise
             if args and "/api/" in str(args[0]):
@@ -570,23 +669,51 @@ def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check
             self.wfile.write(data)
 
         def send_file(self, path: Path, ctype: str, cache: str = "no-cache", headers: dict | None = None):
+            """A file, with an ETag so a browser that already has it gets "304 Not Modified" and no body, and
+            gzip-compressed when it is a kind that shrinks (scripts, pages, 3-D previews) and the browser takes it.
+            "no-cache" means the browser asks each time; with the ETag, asking costs a few hundred bytes."""
             headers = {**self._extra_headers, **(headers or {})}
-            data = path.read_bytes()
+            with open(path, "rb") as f:  # stat and read the same file, even if it is replaced meanwhile
+                st = os.fstat(f.fileno())
+                squeeze = compressible(ctype, st.st_size)
+                gz = squeeze and accepts_gzip(self.headers.get("Accept-Encoding", ""))
+                tag = f'"{st.st_size:x}-{st.st_mtime_ns:x}{"-gz" if gz else ""}"'
+                fresh = etag_matches(self.headers.get("If-None-Match", ""), tag)
+                # The file is read whole and closed before anything is sent, as before: a model held open for a
+                # slow download would stop Windows replacing it (the phone sending the scan again). A browser
+                # that has this version already (304) needs none of it read.
+                data = b"" if fresh else f.read()
+            if squeeze:
+                headers["Vary"] = "Accept-Encoding"
+            if fresh:
+                self.send_response(HTTPStatus.NOT_MODIFIED)
+                self.send_header("ETag", tag)
+                self.send_header("Cache-Control", cache)
+                for k, v in headers.items():
+                    if k != "Content-Disposition":
+                        self.send_header(k, v)
+                self.end_headers()  # no body, by definition: the connection stays open for the next request
+                return
+            if gz:
+                data = gzipped(path, st, data)
+                headers["Content-Encoding"] = "gzip"
             self.send_response(HTTPStatus.OK)
             self.send_header("Content-Type", ctype)
             self.send_header("Content-Length", str(len(data)))
             self.send_header("Cache-Control", cache)
-            for k, v in (headers or {}).items():
+            self.send_header("ETag", tag)
+            for k, v in headers.items():
                 self.send_header(k, v)
             self.end_headers()
-            self.wfile.write(data)
+            self.wfile.write(data)  # nothing goes out for a HEAD (see do_HEAD)
 
         def read_body(self, limit: int) -> bytes:
             length = int(self.headers.get("Content-Length") or 0)
             if length <= 0:
                 raise BadRequest("empty body")
             if length > limit:
-                raise BadRequest("body too large")
+                mb = lambda n: f"{n / 1048576:.1f} MB" if n < 10 * 1048576 else f"{n / 1048576:.0f} MB"  # noqa: E731
+                raise BadRequest(f"body too large: {mb(length)}, and this takes at most {mb(limit)}")
             body = self.rfile.read(length)
             self._body_read = len(body) == length
             if not self._body_read:
@@ -620,6 +747,7 @@ def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check
             self._body_read = False
             self._extra_headers = {}
             self._json = None
+            self._answer_started = False
             self.__dict__.pop("headers", None)  # the request before's: a request line refused before its headers
             if not super().parse_request():
                 return False
@@ -693,6 +821,19 @@ def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check
             host = urlsplit("//" + (self.headers.get("Host") or "")).hostname or ""
             return host in ("localhost", "127.0.0.1", "::1")
 
+        def note_app_request(self, method: str, path: str):
+            """Remember the iPhone app's latest request, and its latest one turned away for a key that doesn't
+            match (an app paired before the key changed, which needs the connect code scanned again). The app
+            is told from a studio page by how it asks: it sends the key in X-Studio-Key through Apple's
+            networking (a User-Agent naming CFNetwork, with no "Mozilla"), where a page's script runs in a
+            browser."""
+            sent = self.headers.get("X-Studio-Key")
+            agent = self.headers.get("User-Agent", "")
+            if not sent or not studio_key or "CFNetwork" not in agent or "Mozilla" in agent:
+                return
+            ok = hmac.compare_digest(sent.encode("utf-8", "surrogateescape"), studio_key.encode("utf-8"))
+            app_seen.note(ok, self.client_id(), method, path)
+
         def is_operator(self) -> bool:
             return (local_check(self) and self.host_is_loopback_name()) or self.has_studio_cookie() or self.has_studio_key()
 
@@ -721,7 +862,17 @@ def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check
             }
 
         def studio_locked(self, path: str):
-            body = STUDIO_LOCKED_HTML.encode()
+            """The page asking for the studio key. A key that was given and didn't match is said so (a link
+            copied with part of the key cut off), and the page's other settings (?capture=...) ride along with
+            the key typed, so the page asked for opens."""
+            import html
+
+            query = urllib.parse.parse_qsl(urllib.parse.urlsplit(self.path).query, keep_blank_values=True)
+            wrong = ('<p class="callout warn" role="alert">That studio key doesn\'t match this studio\'s. Check it was '
+                     'copied whole, with nothing cut off the end.</p>' if any(k == "key" and v for k, v in query) else "")
+            keep = "".join(f'<input type="hidden" name="{html.escape(k)}" value="{html.escape(v)}">'
+                           for k, v in query[:20] if k != "key")
+            body = STUDIO_LOCKED_HTML.replace("{wrong}", wrong).replace("{keep}", keep).encode()
             self.send_response(HTTPStatus.FORBIDDEN)
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.send_header("Content-Length", str(len(body)))
@@ -755,6 +906,7 @@ def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check
         def route(self, method: str):
             path, _, query = self.path.partition("?")
             try:
+                self.note_app_request(method, path)
                 if method != "GET" and self.cross_site():
                     raise Forbidden("request from another web site refused")
                 if path.startswith("/api/"):
@@ -800,6 +952,29 @@ def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check
                 # Input of the wrong shape (a list where a number was expected, ...):
                 # answer, rather than dropping the connection.
                 self.send_json({"error": f"invalid input: {e}"}, HTTPStatus.BAD_REQUEST)
+            except (ConnectionError, TimeoutError, ssl.SSLError):
+                raise  # the connection broke or stalled (weak Wi-Fi): it ends, as before; nobody to answer
+            except Exception as e:  # noqa: BLE001 - anything else: said, and logged, not a dropped connection
+                # Without this the connection just closed, which a page reads as "the studio can't be reached"
+                # (and the 3-D model page then kept asking). The details go to the studio's log, not the answer.
+                import sys
+                import traceback
+
+                where = SECRET_IN_URL.sub(r"\1=…", self.path)
+                sys.stderr.write(f"[{now_iso()}] unexpected error on {method} {where}:\n{traceback.format_exc()}")
+                # where in the studio's own code (the innermost frame is often inside numpy or the standard library)
+                frames = traceback.extract_tb(e.__traceback__)
+                ours = [f for f in frames if Path(f.filename).resolve().is_relative_to(PACKAGE_DIR)]
+                last = (ours or frames)[-1]
+                with errors_lock:
+                    recent_errors.append(dict(at=now_iso(), request=f"{method} {where.partition('?')[0]}",
+                                              error=f"{type(e).__name__}: {str(e)[:300]}",
+                                              code=f"{Path(last.filename).name}:{last.lineno} ({last.name})"))
+                if self._answer_started:
+                    self.close_connection = True  # part of an answer already went out: it can't be replaced
+                    return
+                self.send_json({"error": f"the studio hit a problem it didn't expect ({type(e).__name__}); its log "
+                                         "has the details"}, HTTPStatus.INTERNAL_SERVER_ERROR)
 
         def is_studio_path(self, path: str) -> bool:
             """Anything that ends up inside web/studio, however it was spelt.
@@ -860,6 +1035,9 @@ def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check
             if parts == ["studio", "pairing"] and method == "GET":
                 self.require_local()
                 return self.send_json(self.pairing())
+            if parts == ["studio", "status"] and method == "GET":
+                self.require_local()
+                return self.send_json(self.status())
             raise FileNotFoundError
 
         def api_shoes(self, method: str, rest: list[str]):
@@ -969,7 +1147,8 @@ def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check
                 if not f.is_file():
                     raise FileNotFoundError
                 return self.send_file(f, INSOLE_FILES[name], headers={
-                    "Content-Disposition": f'attachment; filename="{d.name}-{name}"'} if not name.endswith(".html") else None)
+                    "Content-Disposition": f'attachment; filename="{insole_download_name(d, out, name)}"'}
+                    if not name.endswith(".html") else None)
             if method == "POST" and not rest:
                 # One build per capture at a time (two studio tabs): the second waits for the first.
                 raw = self.read_body(MAX_JSON_BYTES) if int(self.headers.get("Content-Length") or 0) else b""
@@ -1140,6 +1319,50 @@ def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check
                 except ValueError as e:  # nothing written, or too long
                     raise BadRequest(str(e)) from None
             raise FileNotFoundError
+
+        def status(self) -> dict:
+            """How this studio is doing, for its Status page: which code it runs, since when, its disk, what it
+            holds, and which of its options are on. Never a key or a password: only whether one is set."""
+            import platform
+            import sys
+            import time
+
+            from .recon import foot_prep
+
+            host, port = self.server.server_address[:2]
+            try:
+                disk = shutil.disk_usage(data_dir if data_dir.exists() else data_dir.parent)
+                disk = dict(free_bytes=disk.free, total_bytes=disk.total, low=disk.free < MIN_FREE_BYTES * 2)
+            except OSError as e:
+                disk = dict(error=str(e))
+            captures = list_captures(captures_dir)
+            made = [c["insole"] for c in captures if c.get("insole")]
+            insoles = [i for i in made if "error" not in i]
+            return dict(
+                checkout=checkout_version(ROOT), python=sys.version.split()[0],
+                system=f"{platform.system()} {platform.release()}".strip(),
+                started=started_at, up_s=round(time.monotonic() - started_clock),
+                address=dict(host=host, port=port, https=secure_cookie, public=public,
+                             phones_can_connect=self.studio_info()["phones_can_connect"],
+                             tailscale=self.other_addresses(None) if host in ("0.0.0.0", "::") else []),
+                data=dict(folder=str(data_dir), disk=disk,
+                          captures=len(captures), sole_scans=sum(1 for c in captures if _checked(c)),
+                          # the latest to arrive (the list is newest first): did the scan just sent land?
+                          newest_capture=dict(id=captures[0].get("capture_id"), created=captures[0].get("created"))
+                          if captures else None,
+                          insoles=len(insoles), insoles_out_of_date=sum(1 for i in insoles if i.get("stale")),
+                          insoles_failed=sum(1 for i in made if "error" in i),
+                          shoes_saved=len(shoes_mod.listed(shoes_dir)),
+                          submissions=len(list_submissions(submissions_dir))),
+                claude=dict(check_scans=second_look is not None, describe_shoes=describe_with_claude,
+                            api_key_set=bool(os.environ.get("ANTHROPIC_API_KEY"))),
+                # the one 3-D model built at a time (a second waits for it): which, so a slow page is explained
+                working=dict(model_being_built=model_being_built()),
+                app=app_seen.view(),
+                recent_errors=errors_newest_first(),
+                search_engines="allowed" if allow_indexing else "kept out (noindex)",
+                sole_scan_preparation=foot_prep.prep_version("sole_up"),
+            )
 
         def studio_info(self) -> dict:
             host, port = self.server.server_address[:2]
@@ -1439,6 +1662,8 @@ def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check
             d = captures_dir / p[0]
             if not (d / "capture.json").exists():
                 raise FileNotFoundError
+            if p[1:] == [] and method == "GET":  # one capture, as the library lists it
+                return self.send_json(listed_capture(d, read_json(d / "capture.json")))
             if len(p) == 3 and p[1] == "frames":
                 if method == "PUT":
                     n = int(p[2])
@@ -1465,9 +1690,12 @@ def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check
                 updating = False
                 meta = read_json(d / "capture.json")
                 if meta.get("condition") == "calibration" and meta.get("method") == "imported_mesh" and meta.get("mesh"):
-                    # An imported model: re-scoring takes seconds, so do it now.
-                    meta["accuracy"] = score_imported(d, meta["mesh"].get("up", "y"))
-                    write_json(d / "capture.json", meta)
+                    # An imported model: re-scoring takes seconds, so do it now. Under the capture's lock: the
+                    # model can't be replaced meanwhile, and nothing else written to capture.json is lost.
+                    with capture_lock(d.name):
+                        meta = read_json(d / "capture.json")
+                        meta["accuracy"] = score_imported(d, (meta.get("mesh") or {}).get("up", "y"))
+                        write_json(d / "capture.json", meta)
                     return self.send_json({"ok": True, "calipers": calipers, "updating": False,
                                            "accuracy": meta["accuracy"]})
                 built = recon_jobs.summary(d, runner).get("state") == "done"
@@ -1541,6 +1769,50 @@ def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check
                     write_json(d / "capture.json", meta)
                     return self.send_json({"ok": True, "mesh": stats, "accuracy": meta.get("accuracy"),
                                            "second_look": (check or {}).get("second_look")})
+            if p[1:] == ["notes"] and method == "PUT":
+                # a capture's notes changed afterwards (the iPhone app's say only how it scanned): words only,
+                # nothing about the scan or its insole changes. Under the capture's lock, so a model or insole being
+                # written at the same time can't put the old notes back.
+                notes = self.json_body().get("notes")
+                if not isinstance(notes, str):
+                    raise BadRequest("notes must be text")
+                if len(notes) > MAX_NOTES_CHARS:
+                    raise BadRequest(f"notes can be at most {MAX_NOTES_CHARS} characters")
+                with capture_lock(d.name):
+                    meta = read_json(d / "capture.json")
+                    meta["notes"] = notes.strip()
+                    write_json(d / "capture.json", meta)
+                return self.send_json({"ok": True, "notes": meta["notes"]})
+            if p[1:] == ["mesh.ply"] and method == "GET":
+                # an imported model (the iPhone app's, or a file imported) as the studio keeps it: scaled to mm,
+                # otherwise as it arrived (its own axes: Y up for the iPhone app's), to open in MeshLab or keep
+                meta = read_json(d / "capture.json")
+                if meta.get("method") != "imported_mesh" or not (d / "mesh.ply").is_file():
+                    raise FileNotFoundError
+                # its own type, so it goes as it is: gzipping a model of up to 150 MB would hold up the download
+                # and push the pages' files out of the compressed-file memory
+                return self.send_file(d / "mesh.ply", "application/x-ply", headers={
+                    "Content-Disposition": f'attachment; filename="{p[0]}.ply"'})
+            if p[1:] == ["thumb.png"] and method == "GET":
+                # a picture of the model from above, for the library (thumbnails.py): drawn once per model version
+                from . import thumbnails
+
+                meta = read_json(d / "capture.json")
+                model = insole_source(d, meta)
+                if model is None:
+                    raise FileNotFoundError
+                # an imported model is as the app sent it (meta's up axis); footscan's own is on the mat, Z up
+                up = (meta.get("mesh") or {}).get("up", "y") if model == d / "mesh.ply" else "z"
+                try:
+                    pic = thumbnails.thumbnail(d, model, up)
+                except (FileNotFoundError, PermissionError):
+                    raise
+                except thumbnails.CantDraw as e:  # tried within the last hour, or just now: the page shows its box
+                    return self.send_json({"error": f"couldn't draw this model ({e})"}, HTTPStatus.UNPROCESSABLE_ENTITY)
+                except Exception as e:  # noqa: BLE001 - a model that can't be drawn: the page shows its box
+                    return self.send_json({"error": f"couldn't draw this model ({type(e).__name__})"},
+                                          HTTPStatus.UNPROCESSABLE_ENTITY)
+                return self.send_file(pic, "image/png")
             if p[1:] == ["accuracy"] and method == "GET":
                 f = d / "accuracy.json"
                 if not f.is_file():
@@ -1555,15 +1827,37 @@ def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check
                 frames = body.get("frames", [])
                 if not isinstance(frames, list) or len(frames) > MAX_FRAMES:
                     raise BadRequest("frames must be a list")
-                meta = read_json(d / "capture.json")
-                files = sorted(x.name for x in d.glob("frame_*.jpg"))
-                meta.update(status="complete", frames=frames, frame_files=files, summary=clean_summary(body.get("summary")))
-                write_json(d / "capture.json", meta)
+                with capture_lock(d.name):  # read, change, write: nothing written meanwhile is lost
+                    meta = read_json(d / "capture.json")
+                    files = sorted(x.name for x in d.glob("frame_*.jpg"))
+                    meta.update(status="complete", frames=frames, frame_files=files,
+                                summary=clean_summary(body.get("summary")))
+                    write_json(d / "capture.json", meta)
                 return self.send_json({"ok": True, "frames_on_disk": len(files)})
             raise FileNotFoundError
 
         def do_GET(self):
             self.route("GET")
+
+        def do_HEAD(self):
+            """A HEAD is a GET answered with its headers only (an uptime checker asks this way, and ``curl -I``):
+            the same status, type and length the GET would send, and no body. The answer is made as for the GET,
+            with the body's writes dropped (``_HeadersOnly``); the headers still go out (flush_headers)."""
+            self._real_wfile, self.wfile = self.wfile, _HeadersOnly(self.wfile)
+            try:
+                self.route("GET")
+            finally:
+                self.wfile, self._real_wfile = self._real_wfile, None
+
+        def flush_headers(self):
+            real = getattr(self, "_real_wfile", None)
+            if real is None:
+                return super().flush_headers()
+            body_sink, self.wfile = self.wfile, real  # a HEAD: the headers go to the connection itself
+            try:
+                super().flush_headers()
+            finally:
+                self.wfile = body_sink
 
         def do_POST(self):
             self.route("POST")
@@ -1576,6 +1870,109 @@ def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check
 
     Handler.tailnet_cached = staticmethod(tailnet_cached)  # serve() prints it at start, and fills the cache
     return Handler
+
+
+# ---- files: revalidation and compression -----------------------------------------
+
+# Kinds of file worth compressing: text, and the 3-D previews (arrays of floats: a SYNTHETIC curved foot's
+# viewer.bin went from 4.65 to 2.34 MB, its insole-preview.bin from 0.86 to 0.31 MB, gzip level 6, 2026-11-25).
+# Not JPEG, PNG or 3MF (already compressed), and not a file too small to gain from it.
+COMPRESSIBLE_TYPES = ("text/", "application/json", "application/javascript", "image/svg+xml", "model/stl",
+                      "application/octet-stream")
+GZIP_MIN_BYTES = 1024
+GZIP_MAX_BYTES = 64 * 1024 * 1024  # a bigger file (a 150 MB model download) goes as it is: not worth the wait
+# Compressed files kept in memory, so a 3-D preview opened again isn't compressed again: up to this much in all.
+GZIP_CACHE_BYTES = 96 * 1024 * 1024
+_gzip_cache: dict[tuple, bytes] = {}
+_gzip_cache_lock = threading.Lock()
+
+
+class _HeadersOnly:
+    """Where a HEAD answer's body goes: nowhere. Flushing still flushes the connection (the headers)."""
+
+    def __init__(self, real):
+        self._real = real
+
+    def write(self, data) -> int:
+        return len(data)
+
+    def flush(self):
+        self._real.flush()
+
+
+def compressible(ctype: str, size: int) -> bool:
+    return GZIP_MIN_BYTES <= size <= GZIP_MAX_BYTES and ctype.startswith(COMPRESSIBLE_TYPES)
+
+
+def accepts_gzip(accept_encoding: str) -> bool:
+    """Does the browser take gzip? (Accept-Encoding: "gzip, deflate, br" does; "gzip;q=0" refuses it; "*" takes
+    anything not refused by name.) Each coding's q is read from every entry, the named one before "*"."""
+    q = {}
+    for part in accept_encoding.split(","):
+        name, *params = [x.strip() for x in part.split(";")]
+        weight = 1.0
+        for prm in params:
+            k, _, v = prm.partition("=")
+            if k.strip().lower() == "q":
+                try:
+                    weight = float(v)
+                except ValueError:
+                    weight = 0.0
+        if name:
+            q[name.lower()] = max(q.get(name.lower(), 0.0), weight) if name.lower() in q else weight
+    for name in ("gzip", "x-gzip"):
+        if name in q:
+            return q[name] > 0
+    return q.get("*", 0.0) > 0
+
+
+def etag_matches(if_none_match: str, tag: str) -> bool:
+    """If-None-Match names this version of the file (or "*"). Weak tags (W/"...") count: the comparison is weak."""
+    want = tag.removeprefix("W/")
+    return any(t.strip() == "*" or t.strip().removeprefix("W/") == want for t in if_none_match.split(",") if t.strip())
+
+
+def gzipped(path: Path, st: os.stat_result, data: bytes) -> bytes:
+    """``data`` (the file at ``path`` as ``st`` describes it) gzip-compressed, from memory if done before."""
+    import gzip
+
+    key = (str(path), st.st_size, st.st_mtime_ns)
+    with _gzip_cache_lock:
+        if (hit := _gzip_cache.get(key)) is not None:
+            return hit
+    out = gzip.compress(data, compresslevel=6, mtime=0)
+    with _gzip_cache_lock:
+        for old in [k for k in _gzip_cache if k[0] == key[0]]:  # an older version of the same file
+            del _gzip_cache[old]
+        while _gzip_cache and sum(map(len, _gzip_cache.values())) + len(out) > GZIP_CACHE_BYTES:
+            del _gzip_cache[next(iter(_gzip_cache))]  # the oldest first
+        if len(out) <= GZIP_CACHE_BYTES:
+            _gzip_cache[key] = out
+    return out
+
+
+def checkout_version(root: Path) -> dict | None:
+    """Which commit of footscan this checkout is on, read from its .git folder (no git program needed, so it
+    works for the Windows service too): {"commit": short hash, "branch": name or None}, or None when this isn't
+    a git checkout or it can't be read."""
+    git = Path(root) / ".git"
+    try:
+        head = (git / "HEAD").read_text(encoding="utf-8").strip()
+        branch, commit = None, head
+        if head.startswith("ref: "):
+            ref = head[5:].strip()
+            branch = ref.removeprefix("refs/heads/")
+            if (git / ref).is_file():
+                commit = (git / ref).read_text(encoding="utf-8").strip()
+            else:  # packed by git gc: "<sha> <ref>" lines in packed-refs
+                packed = (git / "packed-refs").read_text(encoding="utf-8") if (git / "packed-refs").is_file() else ""
+                commit = next((line.split()[0] for line in packed.splitlines()
+                               if line.endswith(" " + ref) and not line.startswith("#")), "")
+    except (OSError, UnicodeDecodeError):
+        return None
+    if not re.fullmatch(r"[0-9a-f]{40}([0-9a-f]{24})?", commit):
+        return None
+    return dict(commit=commit[:7], branch=branch)
 
 
 def query_param(path: str, name: str) -> str | None:
@@ -1615,6 +2012,23 @@ INSOLE_FILES = {"insole.3mf": "model/3mf", "insole.stl": "model/stl",
                 "summary.html": "text/html; charset=utf-8", "print-notes.txt": "text/plain; charset=utf-8",
                 "insole.json": "application/json",
                 "insole-preview.bin": "application/octet-stream", "insole-preview-sole.bin": "application/octet-stream"}
+
+
+def insole_download_name(capture: Path, out: Path, name: str) -> str:
+    """The name a downloaded insole file is saved under: the capture's, and for the printable files (3MF, STL)
+    the foot and the insole's length too, as its report gives them ("<capture>-insole-right-261mm.3mf"), so a
+    left and right pair can't be mixed up in the Downloads folder. The length is the insole's own, along its long
+    axis (a slicer's box differs when the insole is turned on the bed to fit). Without a readable report it is
+    "<capture>-<file>", as before."""
+    stem, _, ext = name.rpartition(".")
+    if stem == "insole" and ext in ("3mf", "stl"):
+        try:
+            report = read_json(out / "insole.json")
+            foot = {"left": "left", "right": "right"}[report["foot"]]
+            return f"{capture.name}-insole-{foot}-{round(float(report['length_mm']))}mm.{ext}"
+        except (OSError, ValueError, KeyError, TypeError, OverflowError):
+            pass
+    return f"{capture.name}-{name}"
 
 
 def insole_source(folder: Path, meta: dict) -> Path | None:
@@ -2197,6 +2611,19 @@ def list_submissions(submissions_dir: Path) -> list[dict]:
     return sorted(out, key=lambda m: m.get("created", ""), reverse=True)
 
 
+def listed_capture(folder: Path, meta: dict) -> dict:
+    """A capture as the library shows it: without its per-frame data, its insole and shoe marked stale (and why)
+    when they no longer match what they were made from."""
+    meta = dict(meta)
+    meta.pop("frames", None)
+    why = insole_stale_reason(folder, meta) if meta.get("insole") else None
+    if why:
+        meta["insole"] = {**meta["insole"], "stale": True, "stale_reason": why, "stale_message": STALE_MESSAGES[why]}
+    if meta.get("clog") and clog_is_stale(folder, meta):
+        meta["clog"] = {**meta["clog"], "stale": True}
+    return meta
+
+
 def list_captures(captures_dir: Path) -> list[dict]:
     out = []
     for f in captures_dir.glob("*/capture.json") if captures_dir.exists() else []:
@@ -2204,13 +2631,7 @@ def list_captures(captures_dir: Path) -> list[dict]:
             meta = read_json(f)
         except (ValueError, OSError):  # garbled or not UTF-8, or removed since the glob saw it (a refused upload)
             continue
-        meta.pop("frames", None)
-        why = insole_stale_reason(f.parent, meta) if meta.get("insole") else None
-        if why:
-            meta["insole"] = {**meta["insole"], "stale": True, "stale_reason": why, "stale_message": STALE_MESSAGES[why]}
-        if meta.get("clog") and clog_is_stale(f.parent, meta):
-            meta["clog"] = {**meta["clog"], "stale": True}
-        out.append(meta)
+        out.append(listed_capture(f.parent, meta))
     return sorted(out, key=lambda m: m.get("created", ""), reverse=True)
 
 

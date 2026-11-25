@@ -135,6 +135,13 @@ iPhone app has to connect again: in the studio open **Import a 3D scan**, press
 **Show the connect code**, and scan it from the app. Then send one scan and check it
 arrives.
 
+If the app's **Test the connection** fails, the studio's **Status** page says
+whether the phone's request got here at all: when the app last got through and
+over which network (home network or Tailscale), or that it was turned away for a
+key that doesn't match (paired with another studio, or before its key changed:
+scan the connect code again). Nothing listed there means the request never
+reached this computer, so look at the network or Tailscale, not the studio.
+
 ### 7. Let project threads work on this computer (Remote Control)
 
 So Claude in the project can run things there (builds, the accuracy run,

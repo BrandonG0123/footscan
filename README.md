@@ -129,6 +129,25 @@ foot scan into a 3MF for the slicer plus a clinician summary sheet (see
 posting or stiffness zones, which wait for the Phase 0 repeatability gate
 and the Phase 5 material tests.
 
+**The studio's library and Status page.** Each imported 3D model's card shows
+a picture of the model from above (drawn by the studio the first time, kept
+beside the model), so a bad scan (the other foot in the frame, a torn sole)
+shows at a glance; nothing is measured from it. Its **3D model** page says what
+the studio read from the file (size, faces, units) and downloads the model as
+the studio keeps it (PLY in millimetres). A search box finds captures by name,
+session or notes, and each card's notes can be added or changed (the iPhone
+app's notes say only how it scanned, not which sock or how the foot stood). The top of the library lists
+insoles that need making again, with a button to remake them all (see
+[docs/insole.md](docs/insole.md)). *Status* in the studio's menu shows which
+commit the studio runs, since when, its free disk, what it holds, the newest capture to arrive (so a scan just sent can be seen to have landed), the 3D model it is building (one at a time), and which
+options are on (Claude's look, the description reader, whether an API key is
+set; never the key itself), and when the iPhone app last got through and from
+which network (home network or Tailscale), or was turned away for an old key
+(scan the connect code again), and the last 20 requests that hit a problem the
+studio didn't expect (what was asked, the error, where in the code, with a button to copy the list into a message; the studio's
+log has the rest). That is kept in memory from the studio's start.
+`GET /api/studio/status` answers the same.
+
 **Printed clog (first shape, untested):** `footscan footwear` makes a one-piece
 slip-on clog for one foot, sized by ruler or by the sole scan, with that
 foot's first-fit footbed built into its floor, and its walls let out where

@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Status — footscan studio</title>
+  <link rel="stylesheet" href="/assets/style.css">
+  <style>
+    main.wrap { max-width: 860px; }
+    .facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px 18px; margin: 0; }
+    .facts dt { font-size: 0.75rem; color: var(--muted); }
+    .facts dd { margin: 2px 0 0; font-weight: 650; overflow-wrap: anywhere; }
+    .facts dd.mono { font-family: var(--mono); font-weight: 500; }
+    .card + .card { margin-top: var(--gap); }
+    .card h2 { font-size: 1.15rem; margin: 0 0 12px; }
+    .errors-list { margin: 0; padding-left: 18px; display: grid; gap: 10px; overflow-wrap: anywhere; }
+  </style>
+</head>
+<body data-area="studio">
+<main class="wrap">
+  <p class="eyebrow">Studio</p>
+  <h1 style="font-size:clamp(1.8rem,4vw,2.6rem)">Status</h1>
+  <p class="muted">How this studio is doing: which code it runs, its disk, what it holds and which options are on.
+    Nothing here changes anything.</p>
+  <div id="notes" aria-live="polite"></div>
+  <div id="root"><p class="muted">Asking the studio…</p></div>
+  <p class="btn-row" style="margin-top:var(--gap)"><button class="btn secondary" type="button" id="refresh">Ask again</button></p>
+  <p class="hint" id="updated" style="margin:6px 0 0"></p>
+</main>
+<script type="module" src="/assets/layout.js"></script>
+<script type="module" src="/assets/status-page.js"></script>
+</body>
+</html>

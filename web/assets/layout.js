@@ -14,16 +14,19 @@ export function footSvg({ mirror = false, cls = "" } = {}) {
 const NAV = {
   customer: [["/", "Scan"], ["/mat.html", "Scan mat"], ["/care.html", "Wearing it"]],
   studio: [
+    // the library first: every scan lands there (the iPhone app's too), and on a phone only the first few show
+    ["/studio/captures.html", "Research library"],
     ["/studio/", "Submissions"],
     ["/studio/capture.html", "Research capture"],
-    ["/studio/captures.html", "Research library"],
     ["/studio/import.html", "Import 3D"],
     ["/mat.html", "Scan mat"],
     ["/studio/project.html", "Project"],
+    ["/studio/status.html", "Status"],
   ],
 };
 
 import { addPageGlow, initReveal } from "./reveal.js";
+import { withStudioKey } from "./studio.js";
 
 const KEY_STORE = "footscan.studioKey";
 
@@ -52,11 +55,11 @@ function useStudioKey(key) {
     }
     return fetchWithKey(input, init);
   };
-  addEventListener("DOMContentLoaded", () => {
-    for (const a of document.querySelectorAll('a[href^="/studio/"]')) {
-      if (!a.href.includes("key=")) a.href += (a.href.includes("?") ? "&" : "?") + `key=${encodeURIComponent(key)}`;
-    }
-  });
+  const withKey = (a) => { a.href = withStudioKey(a.href, key); };  // before any #, the rest left as it was
+  addEventListener("DOMContentLoaded", () => { for (const a of document.querySelectorAll('a[href^="/studio/"]')) withKey(a); });
+  // links a page writes later (library cards, the Status page's counts) get it as they're followed or copied
+  const later = (e) => { const a = e.target.closest?.('a[href^="/studio/"]'); if (a) withKey(a); };
+  for (const type of ["click", "auxclick", "contextmenu"]) document.addEventListener(type, later, true);
 }
 
 function mountLayout() {
@@ -96,6 +99,12 @@ function mountLayout() {
 
   document.body.prepend(header);
   document.body.prepend(strip);
+  // On a phone the menu scrolls sideways: bring this page's own entry into view (centred), not the first few
+  const nav = header.querySelector(".nav"), current = nav.querySelector('[aria-current="page"]');
+  if (current && nav.scrollWidth > nav.clientWidth) {
+    const n = nav.getBoundingClientRect(), c = current.getBoundingClientRect();
+    nav.scrollLeft += c.left - n.left - (n.width - c.width) / 2;
+  }
   document.body.append(footer);
   addPageGlow();
   if (area === "customer") {
