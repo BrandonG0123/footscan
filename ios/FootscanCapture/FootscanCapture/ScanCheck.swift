@@ -232,8 +232,9 @@ extension ScanCheck {
         static let footRatio = 0.28...0.50
         // The ball rolled. The studio refuses past 5 mm (foot_prep.BALL_ROLL_WARN_MM), from its own tripod floor. The
         // phone's floor leaves whole SYNTHETIC feet reading 0.2-5.4 mm (a forefoot rolled 5 degrees 1.6 mm, 15 degrees
-        // 12.1 mm), so the phone waits for 7: past what a whole foot reads here, short of the real left scan the
-        // studio found rolled 8.6 mm (LIDAR_nwb_relaxed_L_20261027-151404-89df, studio's measure).
+        // 12.1 mm), so the phone waits for 7: past what a whole foot reads here. No real scan is known to be rolled
+        // now: the left scan the studio once read as rolled 8.6 mm (LIDAR_nwb_relaxed_L_20261027-151404-89df) reads
+        // level to 1.0 mm on every pose with the studio's fixed floor (draft PR #53), so that reading was the floor's.
         static let ballRollMM = 7.0
 
         struct Measure: Hashable {
