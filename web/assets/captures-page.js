@@ -207,8 +207,8 @@ document.addEventListener("change", (e) => {
   }
 });
 
-// A capture's notes, changed on its card (a scan from the iPhone app arrives with none). What is being typed is
-// kept here, like the shoe form, so the list being drawn again doesn't lose it.
+// A capture's notes, changed on its card (the iPhone app's say only how it scanned, not which sock or how the foot
+// stood). What is being typed is kept here, like the shoe form, so the list being drawn again doesn't lose it.
 const noteEdits = {}; // capture id -> {text, saving, msg}
 
 function notesHtml(c) {

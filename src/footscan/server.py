@@ -1734,7 +1734,7 @@ def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check
                     return self.send_json({"ok": True, "mesh": stats, "accuracy": meta.get("accuracy"),
                                            "second_look": (check or {}).get("second_look")})
             if p[1:] == ["notes"] and method == "PUT":
-                # a capture's notes changed afterwards (a scan from the iPhone app arrives without any): words only,
+                # a capture's notes changed afterwards (the iPhone app's say only how it scanned): words only,
                 # nothing about the scan or its insole changes. Under the capture's lock, so a model or insole being
                 # written at the same time can't put the old notes back.
                 notes = self.json_body().get("notes")
