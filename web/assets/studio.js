@@ -72,11 +72,17 @@ export function sendWithProgress(url, { method = "PUT", body, headers = {} } = {
     xhr.upload.addEventListener("progress", (e) => { if (e.lengthComputable) onProgress?.(e.loaded / e.total); });
     xhr.upload.addEventListener("load", () => onSent?.());
     xhr.addEventListener("load", async () => {
+      // sent on somewhere else (Cloudflare Access's sign-in, when it has run out): what fetch calls redirected
+      if (xhr.responseURL && new URL(xhr.responseURL).href !== new URL(url, location.href).href) {
+        resolve([false, { error: "the studio answered with a web page instead of data: if it asks you to sign in (Cloudflare Access), reload this page and sign in again" }, xhr.status]);
+        return;
+      }
       const type = xhr.getResponseHeader("Content-Type") || "";
       const r = new Response(xhr.responseText, { status: xhr.status, statusText: xhr.statusText, headers: { "Content-Type": type } });
       resolve([xhr.status >= 200 && xhr.status < 300 && type.includes("application/json"), await answer(r), xhr.status]);
     });
-    const unreachable = () => resolve([false, { error: "the connection to the studio was lost while sending (weak Wi-Fi?): try again" }, 0]);
+    // the connection lost, or (no way to tell them apart here) sent to a sign-in page on another site
+    const unreachable = () => resolve([false, { error: "the connection to the studio was lost while sending (weak Wi-Fi?), or its sign-in ran out: reload this page and try again" }, 0]);
     xhr.addEventListener("error", unreachable);
     xhr.addEventListener("abort", unreachable);
     xhr.send(body);

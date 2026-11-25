@@ -25,7 +25,7 @@ export function notes(st) {
   if (st.claude.check_scans && !st.claude.api_key_set) out.push("Claude's look at sole scans is on, but no ANTHROPIC_API_KEY is set for the studio, so unless another sign-in is found every scan is kept without a look.");
   if (st.claude.describe_shoes && !st.claude.api_key_set) out.push("Reading a shoe's description with Claude is on, but no ANTHROPIC_API_KEY is set for the studio.");
   const app = st.app || {};
-  if (app.wrong_key && (!app.reached || app.wrong_key.at > app.reached.at)) out.push(`The iPhone app last asked with a studio key that doesn't match (${app.wrong_key.at.replace("T", " ")}, over ${app.wrong_key.network}): it was paired before this studio's key changed, or reinstalled. Scan the connect code again on Import a 3D scan.`);
+  if (app.wrong_key && app.latest === "wrong_key") out.push(`The iPhone app last asked with a studio key that doesn't match (${app.wrong_key.at.replace("T", " ")}, over ${app.wrong_key.network}): it was paired before this studio's key changed, or reinstalled. Scan the connect code again on Import a 3D scan.`);
   if (!st.checkout) out.push("This copy of footscan isn't a git checkout (or its .git folder can't be read), so the code's version can't be shown.");
   return out;
 }

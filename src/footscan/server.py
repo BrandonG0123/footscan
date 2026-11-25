@@ -384,8 +384,8 @@ def network_of(address: str) -> str:
         ip = ip.ipv4_mapped
     if ip.is_loopback:
         return "this computer"
-    if ip.version == 4 and ip in ipaddress.ip_network("100.64.0.0/10"):
-        return "Tailscale"
+    if ip in ipaddress.ip_network("100.64.0.0/10" if ip.version == 4 else "fd7a:115c:a1e0::/48"):
+        return "Tailscale"  # the addresses Tailscale gives its devices, IPv4 and IPv6
     if ip.is_private or ip.is_link_local:
         return "home network"
     return "internet"
@@ -411,15 +411,18 @@ class AppSeen:
     def __init__(self):
         self._lock = threading.Lock()
         self._seen: dict[str, dict] = {}
+        self._latest: str | None = None
 
     def note(self, key_ok: bool, address: str, method: str, path: str):
         entry = dict(at=now_iso(), address=address, network=network_of(address), asked=app_asked(method, path))
         with self._lock:
             self._seen["reached" if key_ok else "wrong_key"] = entry
+            self._latest = "reached" if key_ok else "wrong_key"  # by arrival, not by the clock (same second, DST)
 
     def view(self) -> dict:
         with self._lock:
-            return dict(reached=self._seen.get("reached"), wrong_key=self._seen.get("wrong_key"))
+            return dict(reached=self._seen.get("reached"), wrong_key=self._seen.get("wrong_key"),
+                        latest=self._latest)
 
 
 def rate_key(client: str) -> str:
@@ -799,7 +802,8 @@ def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check
             agent = self.headers.get("User-Agent", "")
             if not sent or not studio_key or "CFNetwork" not in agent or "Mozilla" in agent:
                 return
-            app_seen.note(hmac.compare_digest(sent, studio_key), self.client_id(), method, path)
+            ok = hmac.compare_digest(sent.encode("utf-8", "surrogateescape"), studio_key.encode("utf-8"))
+            app_seen.note(ok, self.client_id(), method, path)
 
         def is_operator(self) -> bool:
             return (local_check(self) and self.host_is_loopback_name()) or self.has_studio_cookie() or self.has_studio_key()
@@ -836,7 +840,7 @@ def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check
 
             query = urllib.parse.parse_qsl(urllib.parse.urlsplit(self.path).query, keep_blank_values=True)
             wrong = ('<p class="callout warn" role="alert">That studio key doesn\'t match this studio\'s. Check it was '
-                     'copied whole, with nothing cut off the end.</p>' if any(k == "key" for k, _ in query) else "")
+                     'copied whole, with nothing cut off the end.</p>' if any(k == "key" and v for k, v in query) else "")
             keep = "".join(f'<input type="hidden" name="{html.escape(k)}" value="{html.escape(v)}">'
                            for k, v in query[:20] if k != "key")
             body = STUDIO_LOCKED_HTML.replace("{wrong}", wrong).replace("{keep}", keep).encode()
@@ -872,8 +876,8 @@ def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check
 
         def route(self, method: str):
             path, _, query = self.path.partition("?")
-            self.note_app_request(method, path)
             try:
+                self.note_app_request(method, path)
                 if method != "GET" and self.cross_site():
                     raise Forbidden("request from another web site refused")
                 if path.startswith("/api/"):
@@ -919,8 +923,8 @@ def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check
                 # Input of the wrong shape (a list where a number was expected, ...):
                 # answer, rather than dropping the connection.
                 self.send_json({"error": f"invalid input: {e}"}, HTTPStatus.BAD_REQUEST)
-            except ConnectionError:
-                raise  # the browser went away: nobody to answer
+            except (ConnectionError, TimeoutError, ssl.SSLError):
+                raise  # the connection broke or stalled (weak Wi-Fi): it ends, as before; nobody to answer
             except Exception as e:  # noqa: BLE001 - anything else: said, and logged, not a dropped connection
                 # Without this the connection just closed, which a page reads as "the studio can't be reached"
                 # (and the 3-D model page then kept asking). The details go to the studio's log, not the answer.
@@ -1643,9 +1647,12 @@ def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check
                 updating = False
                 meta = read_json(d / "capture.json")
                 if meta.get("condition") == "calibration" and meta.get("method") == "imported_mesh" and meta.get("mesh"):
-                    # An imported model: re-scoring takes seconds, so do it now.
-                    meta["accuracy"] = score_imported(d, meta["mesh"].get("up", "y"))
-                    write_json(d / "capture.json", meta)
+                    # An imported model: re-scoring takes seconds, so do it now. Under the capture's lock: the
+                    # model can't be replaced meanwhile, and nothing else written to capture.json is lost.
+                    with capture_lock(d.name):
+                        meta = read_json(d / "capture.json")
+                        meta["accuracy"] = score_imported(d, (meta.get("mesh") or {}).get("up", "y"))
+                        write_json(d / "capture.json", meta)
                     return self.send_json({"ok": True, "calipers": calipers, "updating": False,
                                            "accuracy": meta["accuracy"]})
                 built = recon_jobs.summary(d, runner).get("state") == "done"
@@ -1739,7 +1746,9 @@ def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check
                 meta = read_json(d / "capture.json")
                 if meta.get("method") != "imported_mesh" or not (d / "mesh.ply").is_file():
                     raise FileNotFoundError
-                return self.send_file(d / "mesh.ply", "application/octet-stream", headers={
+                # its own type, so it goes as it is: gzipping a model of up to 150 MB would hold up the download
+                # and push the pages' files out of the compressed-file memory
+                return self.send_file(d / "mesh.ply", "application/x-ply", headers={
                     "Content-Disposition": f'attachment; filename="{p[0]}.ply"'})
             if p[1:] == ["thumb.png"] and method == "GET":
                 # a picture of the model from above, for the library (thumbnails.py): drawn once per model version
@@ -1773,10 +1782,12 @@ def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check
                 frames = body.get("frames", [])
                 if not isinstance(frames, list) or len(frames) > MAX_FRAMES:
                     raise BadRequest("frames must be a list")
-                meta = read_json(d / "capture.json")
-                files = sorted(x.name for x in d.glob("frame_*.jpg"))
-                meta.update(status="complete", frames=frames, frame_files=files, summary=clean_summary(body.get("summary")))
-                write_json(d / "capture.json", meta)
+                with capture_lock(d.name):  # read, change, write: nothing written meanwhile is lost
+                    meta = read_json(d / "capture.json")
+                    files = sorted(x.name for x in d.glob("frame_*.jpg"))
+                    meta.update(status="complete", frames=frames, frame_files=files,
+                                summary=clean_summary(body.get("summary")))
+                    write_json(d / "capture.json", meta)
                 return self.send_json({"ok": True, "frames_on_disk": len(files)})
             raise FileNotFoundError
 
@@ -1970,7 +1981,7 @@ def insole_download_name(capture: Path, out: Path, name: str) -> str:
             report = read_json(out / "insole.json")
             foot = {"left": "left", "right": "right"}[report["foot"]]
             return f"{capture.name}-insole-{foot}-{round(float(report['length_mm']))}mm.{ext}"
-        except (OSError, ValueError, KeyError, TypeError):
+        except (OSError, ValueError, KeyError, TypeError, OverflowError):
             pass
     return f"{capture.name}-{name}"
 

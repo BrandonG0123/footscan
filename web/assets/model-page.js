@@ -240,7 +240,40 @@ function importedCard(c) {
       <a class="btn secondary" href="/api/captures/${id}/mesh.ply" download>Download the model (PLY, mm)</a>
       ${c.foot ? `<a class="btn secondary" href="/studio/landmarks.html?capture=${id}">Landmarks</a>` : ""}
       <a class="btn secondary" href="/studio/captures.html#${esc(capture)}">Its card in the library</a>
-    </p></section>`;
+    </p></section>${c.condition === "calibration" ? `<div id="imported-accuracy"></div>` : ""}`;
+  if (c.condition === "calibration") importedAccuracy(c);
+}
+
+// An imported calibration object: what the studio measured against the object's true shape, and the caliper
+// readings that make the comparison with the real print (re-scored at once: an imported model needs no build)
+async function importedAccuracy(c) {
+  const [, s] = await ask(api);  // the saved caliper readings come with the build's status
+  const a = c.accuracy;
+  const signedMm = (v) => (v == null ? "not measured" : `${signed(v)} mm`);
+  const figures = !a ? `<p class="muted" style="margin:8px 0 0">Not measured yet.</p>`
+    : a.error ? `<div class="callout warn" style="margin:10px 0 0"><p>${esc(a.error)}</p></div>`
+    : `<p class="hint" style="margin:6px 0 0">Lengths compared with the ${a.reference === "calipers" ? "caliper readings of the print" : "object's design (add caliper readings for a fairer comparison)"}.</p>
+      <dl class="big">
+        <div><dt>Surface, typical error</dt><dd>${esc(a.median_mm)} mm</dd></div>
+        <div><dt>Surface, worst 5%</dt><dd>${esc(a.p95_mm)} mm</dd></div>
+        <div><dt>Length</dt><dd>${esc(signedMm(a.length_mm))}</dd></div>
+        <div><dt>Width</dt><dd>${esc(signedMm(a.width_mm))}</dd></div>
+        <div><dt>Dome top height</dt><dd>${esc(signedMm(a.dome_apex_mm))}</dd></div>
+      </dl>
+      ${(a.warnings || []).length ? `<ul class="checklist" style="margin:10px 0 0;color:var(--warn)">${a.warnings.map((w) => `<li>${esc(w)}</li>`).join("")}</ul>` : ""}
+      <p class="hint" style="margin:8px 0 0"><a href="${base}/accuracy">Full accuracy report</a></p>`;
+  $("imported-accuracy").innerHTML = `<section class="card"><h2 style="margin:0;font-size:1.2rem">Against the object's true shape</h2>${figures}</section>`
+    + calipersCard(s && !s.error ? s : {});
+  $("caliper-form")?.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const body = Object.fromEntries(new FormData(e.target));
+    $("caliper-msg").textContent = "Re-scoring…";
+    const [ok, out] = await ask(`${base}/calipers`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    if (!ok) { $("caliper-msg").textContent = out.error || "Couldn't save."; return; }
+    c.accuracy = out.accuracy;
+    await importedAccuracy(c);
+    $("caliper-msg").textContent = "Saved. The figures above now use your readings.";
+  });
 }
 
 function render(s) {

@@ -38,13 +38,14 @@ test("an app turned away for a wrong key since it last got in is told to scan th
   const reached = { at: "2026-11-25T09:00:00", address: "100.101.1.2", network: "Tailscale", asked: "connection test" };
   const wrong = { at: "2026-11-25T09:30:00", address: "192.168.11.40", network: "home network", asked: "connection test" };
   const st = structuredClone(OK);
-  st.app = { reached, wrong_key: wrong };
+  st.app = { reached, wrong_key: wrong, latest: "wrong_key" };
   const n = notes(st);
   assert.equal(n.length, 1);
   assert.match(n[0], /doesn't match .*over home network.*Scan the connect code again/);
-  st.app = { reached: { ...reached, at: "2026-11-25T10:00:00" }, wrong_key: wrong }; // got in again since
+  // got in again since (in the same second, too: the order is the studio's, not the clock's)
+  st.app = { reached: { ...reached, at: wrong.at }, wrong_key: wrong, latest: "reached" };
   assert.deepEqual(notes(st), []);
-  st.app = { reached: null, wrong_key: wrong };
+  st.app = { reached: null, wrong_key: wrong, latest: "wrong_key" };
   assert.equal(notes(st).length, 1);
 });
 

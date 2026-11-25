@@ -133,7 +133,7 @@ def test_the_status_says_when_the_iphone_app_last_got_in_and_when_it_was_turned_
     _, phone, _ = servers
     app = "FootscanCapture/1 CFNetwork/3826.500.131 Darwin/24.5.0"
     status_url = f"{phone}/api/studio/status?key={KEY}"  # this server's own memory (each server has its own)
-    assert body(call(status_url))["app"] == {"reached": None, "wrong_key": None}
+    assert body(call(status_url))["app"] == {"reached": None, "wrong_key": None, "latest": None}
     assert call(f"{phone}/api/studio", headers={"X-Studio-Key": KEY, "User-Agent": app})[0] == 200
     assert call(f"{phone}/api/studio", headers={"X-Studio-Key": "an-old-key", "User-Agent": app})[0] == 403
     # a studio page in a browser sends the key the same way: not the app
@@ -144,12 +144,18 @@ def test_the_status_says_when_the_iphone_app_last_got_in_and_when_it_was_turned_
     app_seen = body((200, raw))["app"]
     assert app_seen["reached"]["asked"] == "connection test" and app_seen["reached"]["network"] == "this computer"
     assert app_seen["wrong_key"]["asked"] == "connection test" and app_seen["wrong_key"]["address"] == "127.0.0.1"
+    assert app_seen["latest"] == "wrong_key"
+    # a key that isn't even ASCII is turned away with an answer, like any wrong key
+    status = call(f"{phone}/api/studio", headers={"X-Studio-Key": "clé".encode().decode("latin-1"), "User-Agent": app})[0]
+    assert status in (400, 403)
+    assert call(f"{phone}/api/studio", headers={"X-Studio-Key": KEY, "User-Agent": app})[0] == 200
+    assert body(call(status_url))["app"]["latest"] == "reached"
 
 
 def test_the_way_a_request_came_is_named_by_its_address():
     from footscan.server import app_asked, network_of
 
-    assert network_of("100.101.1.2") == "Tailscale"
+    assert network_of("100.101.1.2") == network_of("fd7a:115c:a1e0::1234") == "Tailscale"
     assert network_of("192.168.11.40") == network_of("10.0.0.5") == network_of("fe80::1") == "home network"
     assert network_of("127.0.0.1") == network_of("::ffff:127.0.0.1") == "this computer"
     assert network_of("1.1.1.1") == "internet" and network_of("not an address") == "unknown"
@@ -164,6 +170,7 @@ def test_an_imported_model_can_be_downloaded_as_kept_but_only_by_the_studio(serv
     status, raw, h = call(f"{op}/api/captures/{cid}/mesh.ply")
     assert status == 200 and raw == (data / "captures" / cid / "mesh.ply").read_bytes() and raw.startswith(b"ply")
     assert h["Content-Disposition"] == f'attachment; filename="{cid}.ply"'
+    assert "Content-Encoding" not in call(f"{op}/api/captures/{cid}/mesh.ply", headers={"Accept-Encoding": "gzip"})[2]
     assert call(f"{phone}/api/captures/{cid}/mesh.ply")[0] == 403  # a foot's shape: the studio's only
     photo = body(call(f"{op}/api/captures", "POST", {"condition": "object", "session": "S1"}))["id"]
     assert call(f"{op}/api/captures/{photo}/mesh.ply")[0] == 404  # photos only: its model is under recon/
@@ -185,6 +192,8 @@ def test_a_downloaded_insole_is_named_by_its_foot_and_length_so_a_pair_cant_be_m
     from footscan.server import insole_download_name
 
     folder = data / "captures" / cid
+    assert insole_download_name(folder, folder / "insole", "insole.3mf") == f"{cid}-insole.3mf"
+    (data / "captures" / cid / "insole" / "insole.json").write_text('{"foot": "left", "length_mm": Infinity}')
     assert insole_download_name(folder, folder / "insole", "insole.3mf") == f"{cid}-insole.3mf"
 
 
