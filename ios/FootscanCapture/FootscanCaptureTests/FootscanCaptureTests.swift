@@ -578,3 +578,32 @@ struct Ring {
         #expect(model.lit == [0, 11])
     }
 }
+
+// MARK: - sharing a model
+
+@Suite("Shared models are named after the scan")
+struct SharedFileNames {
+    let utc = TimeZone(identifier: "UTC")!
+    let taken = Date(timeIntervalSince1970: 1_795_000_000) // 2026-11-18 11:06:40 UTC
+
+    @Test func aScanIsNamedForWhatItIsAndWhenItWasTaken() {
+        let rec = ScanRecord(subject: .rightSole, created: taken, device: "test", systemVersion: "0", appVersion: "0")
+        #expect(SharedFile.fileName(for: rec, ext: "obj", timeZone: utc) == "\(rec.subject.label) 2026-11-18 1106.obj")
+    }
+
+    @Test func aNamedScanUsesItsName() {
+        var rec = ScanRecord(subject: .leftSole, created: taken, device: "test", systemVersion: "0", appVersion: "0")
+        rec.name = "Sam, left"
+        #expect(SharedFile.fileName(for: rec, ext: "usdz", timeZone: utc) == "Sam, left 2026-11-18 1106.usdz")
+    }
+
+    @Test func charactersAFileNameCantHoldBecomeSpaces() {
+        var rec = ScanRecord(subject: .leftSole, created: taken, device: "test", systemVersion: "0", appVersion: "0")
+        rec.name = "Sam/Alex: left?"
+        #expect(SharedFile.fileName(for: rec, ext: "obj", timeZone: utc) == "Sam Alex left 2026-11-18 1106.obj")
+    }
+
+    @Test func aScanWithNoRecordKeepsTheFilesOwnName() {
+        #expect(SharedFile.fileName(for: nil, ext: "obj") == "model.obj")
+    }
+}
