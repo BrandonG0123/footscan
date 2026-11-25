@@ -434,16 +434,17 @@ struct HomeView: View {
     }
 
     private var studioPill: some View {
-        Button { showStudio = true } label: {
+        let state = StudioPill.State(host: studio.link?.host, notAnswering: !library.unreachable.isEmpty)
+        return Button { showStudio = true } label: {
             Image(systemName: studio.link == nil ? "desktopcomputer" : "desktopcomputer.and.arrow.down")
                 .symbolRenderingMode(.hierarchical)
                 .overlay(alignment: .topTrailing) {
-                    Circle().fill(studio.link == nil ? Color.fsMuted : Color.fsOK)
+                    Circle().fill(state.dot)
                         .frame(width: 8, height: 8)
                         .offset(x: 4, y: -3)
                 }
         }
-        .accessibilityLabel(studio.link == nil ? "Studio: not connected" : "Studio: connected to \(studio.link!.host)")
+        .accessibilityLabel(state.words)
     }
 
     // MARK: actions
@@ -839,5 +840,35 @@ struct NameScanAlert: ViewModifier {
                 Text("The scan started building or sending meanwhile. Name it once that has finished.")
             }
             .onChange(of: scan) { _, now in typed = now?.record?.name ?? "" }
+    }
+}
+
+/// The studio button's dot: grey with no studio, green when connected, amber when connected but the studio didn't
+/// answer the last send (the scans wait, and go again by themselves). Connected only means paired: without this,
+/// the dot stayed green while nothing could get through.
+enum StudioPill {
+    enum State: Equatable {
+        case notConnected, connected(String), notAnswering(String)
+
+        init(host: String?, notAnswering: Bool) {
+            guard let host else { self = .notConnected; return }
+            self = notAnswering ? .notAnswering(host) : .connected(host)
+        }
+
+        var dot: Color {
+            switch self {
+            case .notConnected: .fsMuted
+            case .connected: .fsOK
+            case .notAnswering: .fsWarn
+            }
+        }
+
+        var words: String {
+            switch self {
+            case .notConnected: "Studio: not connected"
+            case .connected(let host): "Studio: connected to \(host)"
+            case .notAnswering(let host): "Studio: connected to \(host), but it didn't answer the last send. Scans wait and go again by themselves."
+            }
+        }
     }
 }
