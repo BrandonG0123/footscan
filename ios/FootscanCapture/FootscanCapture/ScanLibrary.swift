@@ -10,6 +10,22 @@ import Foundation
 import SwiftUI
 import UIKit
 
+/// How a send is going, in the words the home card and the scan's page use.
+enum SendingWords {
+    /// `percent`: of the model sent so far (nil before the upload itself starts: finding the studio, making its capture).
+    static func chip(_ percent: Int?) -> String {
+        guard let percent else { return "Sending" }
+        return percent < 100 ? "Sending \(percent)%" : "Studio checking"
+    }
+
+    static func detail(_ percent: Int?, calibration: Bool) -> String {
+        guard let percent else { return calibration ? "Sending, and measuring its accuracy…" : "Sending…" }
+        if percent < 100 { return "Sending the model… \(percent)%" }
+        // every byte is there; the studio answers once it has read the model (and scored it, for the calibration object)
+        return calibration ? "All sent. The studio is measuring its accuracy…" : "All sent. The studio is checking it…"
+    }
+}
+
 @MainActor
 @Observable
 final class ScanLibrary {
@@ -24,6 +40,12 @@ final class ScanLibrary {
     private(set) var unreachable: Set<URL> = []
     /// Of those, the ones where no address answered at all (offer Reconnect: scan the studio's code again).
     private(set) var reconnect: Set<URL> = []
+    /// While a scan is sending: the whole percent of its model sent so far (absent until its upload starts). At 100
+    /// the studio has all of it and is reading it (and scoring it, for the calibration object) before it answers.
+    private(set) var uploaded: [URL: Int] = [:]
+    /// Which send of each scan is the current one, so a report from a send that has ended can't land on the next.
+    private var sendRun: [URL: Int] = [:]
+    private var sendRuns = 0
     /// Bumped when a scan's files or record change, so views re-read them.
     private(set) var version = 0
     /// Model builds cut off because the app left the screen (iOS doesn't lend the graphics chip to an app in the
@@ -263,18 +285,27 @@ final class ScanLibrary {
         unreachable.remove(scan.folder)
         reconnect.remove(scan.folder)
         work[scan.folder] = .sending
+        sendRuns += 1
+        let run = sendRuns
+        sendRun[scan.folder] = run
         let release = KeepAlive.work("Sending a scan")
-        defer { work[scan.folder] = nil; reload(); release() }
+        defer { work[scan.folder] = nil; uploaded[scan.folder] = nil; sendRun[scan.folder] = nil; reload(); release() }
         let reuse = record.reusableCapture(at: client.link)
         let studioID = PendingCapture.identity(of: client.link), loadKg = record.loadKg
         do {
-            let sent = try await client.upload(scan, record: record, into: reuse) { id in
+            let folder = scan.folder
+            let sent = try await client.upload(scan, record: record, into: reuse, created: { id in
                 // kept as soon as the studio makes it: whatever happens next (a drop, a refusal, the app ended), the
                 // next try finishes this capture rather than leaving it empty and making another
                 guard var latest = scan.record else { return }
                 latest.pendingCapture = PendingCapture(id: id, studio: studioID, loadKg: loadKg)
                 scan.save(latest)
-            }
+            }, progress: { [weak self] percent in
+                // only this send's own reports (one still queued when it ended changes nothing, even if the scan is
+                // sending again by then)
+                guard let self, self.sendRun[folder] == run else { return }
+                self.uploaded[folder] = percent
+            })
             record.pendingCapture = nil
             record.studioCaptureID = sent.captureID
             record.studioHost = sent.link.host

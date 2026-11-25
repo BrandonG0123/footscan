@@ -525,7 +525,7 @@ struct ScanStatus: View {
             case .building(let f): Chip(text: "Building model \(Int(f * 100))%", symbol: "gearshape.2.fill")
             case .converting: Chip(text: "Finishing model", symbol: "gearshape.2.fill")
             case .checking: Chip(text: "Checking model", symbol: "checklist")
-            case .sending: Chip(text: "Sending", symbol: "paperplane.fill")
+            case .sending: Chip(text: SendingWords.chip(library.uploaded[scan.folder]), symbol: "paperplane.fill")
             case nil:
                 if library.problems[scan.folder] != nil {
                     Chip(text: "Needs a look", symbol: "exclamationmark.triangle.fill", tint: .fsWarn, soft: .fsWarnSoft)
