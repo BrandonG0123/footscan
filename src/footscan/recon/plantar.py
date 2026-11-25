@@ -15,7 +15,7 @@ The provisional frame
   under the foot *is* the reference plane (frame.py's ``support_plane``).
 - **Forward** is the long axis of the footprint: take the part of the foot
   within ``FOOTPRINT_BAND_MM`` of the floor, flatten it onto the floor, and
-  find the direction across which it is narrowest (see ``long_axis``).
+  find the line its filled outline is spread along most (see ``long_axis``).
   That gives a line, not a direction. Two independent clues pick the toe end:
   the mat says "toes toward sheet 2" (+y), and the leg rises above the
   *heel*, so the scan's high points (the shin) sit over the back of the
@@ -66,32 +66,42 @@ class PlantarError(ValueError):
 
 
 def long_axis(xy: np.ndarray) -> tuple[np.ndarray, float, float]:
-    """Direction of the footprint's length: the one across which it is narrowest.
+    """Direction of the footprint's length -> (unit direction, length along it, width across it).
 
-    Wrap the footprint in its convex hull (a rubber band around it), then
-    try each hull edge as a direction and measure the hull's width across
-    it. The narrowest width is always found along some hull edge (the
-    "rotating calipers" result), and the length axis is that edge. Unlike
-    the principal axis of all the points, the hull ignores the arch's gap,
-    which lies inside the outline and would otherwise tilt the axis toward
-    the outer border.
+    Wrap the footprint in its convex hull (a rubber band around it), fill it,
+    and take the direction the filled hull is spread out along most (its
+    principal axis of area: the line about which it has the least second
+    moment). A footprint shaped the same on both sides of a line gets that
+    line, and a left foot's axis is the mirror image of its right foot's.
+    Using the hull, not the points, ignores the arch's gap, which lies inside
+    the outline and would otherwise tilt the axis toward the outer border.
+
+    Until 25 Nov 2026 this was the hull edge across which the hull is
+    narrowest ("rotating calipers"). On a foot that edge is the straight line
+    from the heel's curve to the ball's along one side, not the foot's middle:
+    on the SYNTHETIC curved_foot, whose outline is the same on both sides of
+    its middle line, it came out 7.7 degrees off that line, the same way for
+    the right and the left foot (the insole thread's finding, checked here),
+    and the insole's outline was then turned and slid by up to its limits to
+    make up for it, differently for each foot.
     """
     from scipy.spatial import ConvexHull
 
-    H = xy[ConvexHull(xy).vertices]
-    best = None
-    for a, b in zip(H, np.roll(H, -1, axis=0)):
-        e = b - a
-        n = np.linalg.norm(e)
-        if n < 1e-9:
-            continue
-        e /= n
-        perp = np.array([-e[1], e[0]])
-        width = float(np.ptp(H @ perp))
-        if best is None or width < best[1]:
-            best = (e, width, float(np.ptp(H @ e)))
-    e, width, length = best
-    return e, length, width
+    H = xy[ConvexHull(xy).vertices]  # anticlockwise
+    x, y = (H - H.mean(0)).T
+    x1, y1 = np.roll(x, -1), np.roll(y, -1)
+    cross = x * y1 - x1 * y  # twice each triangle's area, from the polygon's own middle to one edge
+    area = cross.sum() / 2
+    cx, cy = ((x + x1) * cross).sum() / (6 * area), ((y + y1) * cross).sum() / (6 * area)
+    # second moments of the filled polygon about the origin (the vertices' mean), then about its centroid
+    sxx = ((x * x + x * x1 + x1 * x1) * cross).sum() / 12 - area * cx * cx
+    syy = ((y * y + y * y1 + y1 * y1) * cross).sum() / 12 - area * cy * cy
+    sxy = ((x * y1 + 2 * x * y + 2 * x1 * y1 + x1 * y) * cross).sum() / 24 - area * cx * cy
+    _, vecs = np.linalg.eigh(np.array([[sxx, sxy], [sxy, syy]]))
+    e = vecs[:, -1]
+    e = e / np.linalg.norm(e)
+    perp = np.array([-e[1], e[0]])
+    return e, float(np.ptp(H @ e)), float(np.ptp(H @ perp))
 
 
 def provisional_frame(mesh, foot: str) -> tuple[FootFrame, dict]:
@@ -129,7 +139,7 @@ def provisional_frame(mesh, foot: str) -> tuple[FootFrame, dict]:
     frame = FootFrame(np.r_[heel_xy, 0.0], anterior, medial, up, foot, "support_plane")
     info = dict(
         provisional=True,
-        method="mat floor + footprint narrowest-width axis; replaced by landmarks in Phase 3",
+        method="mat floor + footprint principal axis; replaced by landmarks in Phase 3",
         footprint_elongation=round(elongation, 2),
         toe_end_from="leg" if by_leg is not None else "mat",
         notes=notes,

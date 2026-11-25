@@ -12,8 +12,8 @@ z = 0, toes toward +y. Four steps, each recorded:
    foot's lowest scanned points are taken as the floor, trusting gravity
    for level. A coarse phone model is then split to 2 mm triangles (adds
    points, not shape) so the steps below work by area, not vertex luck.
-2. **Which way the foot points**: the footprint's length (its narrowest
-   width, as plantar.long_axis) gives the line. The end the leg stands over
+2. **Which way the foot points**: the footprint's length (the line its
+   filled outline is spread along most, as plantar.long_axis) gives the line. The end the leg stands over
    is the heel. With no leg in the scan, the taller end is the heel (the
    ankle and the back of the foot stand higher than the toes).
 3. **Turn** so the toes point along +y, footprint centred on the mat.
@@ -554,7 +554,8 @@ def prep_version(kind: str | None = None) -> str:
     # string for sole scans of both kinds)
     # 2026-10-30 (later): toes that curl as well as bend laid flat at up to three joints (TOES_JOINTS)
     # 2026-11-25: rested on the hull face the sole stands on most, not the one under the scan's centre
-    # (rest_on_hull(by="contact"))
+    # (rest_on_hull(by="contact")); and the footprint's length axis is its principal axis, not its narrowest-width
+    # edge (plantar.long_axis): both in the one string, made together
     v = ("2026-11-25: rested where the sole stands, toes laid flat at up to three joints" if LAY_TOES_FLAT
          else "2026-11-25: rested where the sole stands, toes as scanned")
     if kind == "sole_hanging":

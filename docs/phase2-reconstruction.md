@@ -44,7 +44,7 @@ map.
 | Depth | `recon/dense.py` | plane-sweep stereo: homography warps, normalised cross-correlation, best-of-k sources, sub-plane parabola, edge-band removal, cross-view geometric consistency, voxel merging |
 | Surface | `recon/mesh.py` | statistical outlier removal, connected pieces, PCA normals, screened Poisson, floor cut, distance trim, hole filling, Taubin smoothing, quadric decimation |
 | Accuracy | `recon/accuracy.py` | point-to-plane ICP (rigid only, never scaling), signed surface distance, completeness, caliper-style dimensions from plane and sphere fits |
-| Foot frame | `recon/plantar.py` | floor = mat plane; long axis = narrowest-width direction of the footprint's convex hull; heel/toe from the leg; underside selection; medial arch profile |
+| Foot frame | `recon/plantar.py` | floor = mat plane; long axis = the line the footprint's filled convex hull is spread along most (its principal axis of area; until 2026-11-25 the narrowest-width direction, which ran along one side); heel/toe from the leg; underside selection; medial arch profile |
 
 **Why not COLMAP's own dense step?** COLMAP's PatchMatch stereo only runs on
 an NVIDIA or AMD GPU; on a Mac it refuses to start. `dense.py` does the same
