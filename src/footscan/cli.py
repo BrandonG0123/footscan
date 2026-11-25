@@ -252,15 +252,18 @@ def cmd_insole(args) -> int:
     except (InsoleError, ValueError) as err:
         print(f"{args.mesh}: {err}", file=sys.stderr)
         return 1
-    from .insole import mirrored, write_arch_trial
+    from .insole import clear_arch_trial, mirrored, write_arch_trial
 
     for one in [ins] + ([mirrored(ins)] if args.pair else []):
         trial = {}
+        clear_arch_trial(Path(args.output), f"{one.foot}-insole")  # never one left from another make
         if args.trial:  # first, so insole.json has its numbers
             try:
                 trial = write_arch_trial(one, Path(args.output), f"{one.foot}-insole")
-            except InsoleError as err:
-                print(f"  arch trial: not made ({err})", file=sys.stderr)
+            except Exception as err:  # noqa: BLE001 - a test piece that can't be cut mustn't cost the insole its files
+                clear_arch_trial(Path(args.output), f"{one.foot}-insole")
+                print(f"  arch trial: not made ({err if isinstance(err, InsoleError) else f'{type(err).__name__}: {err}'})",
+                      file=sys.stderr)
         files = write_outputs(one, Path(args.output), f"{one.foot}-insole", str(args.mesh), paper=args.paper)
         files.update(trial)
         r = one.report

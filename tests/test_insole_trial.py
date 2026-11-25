@@ -40,10 +40,11 @@ def test_the_arch_trial_stays_inside_the_insole():
     """An arch support read near an end (a short foot, a long shoe) still gets a whole piece ARCH_TRIAL_MM long, cut
     inside the insole: never a cut past its end, which would leave a piece shorter than said."""
     ins = insole.from_scan(synth.curved_foot("right", leg=False), "right", insole.InsoleParams(target_length_mm=275.0))
-    ins.report["arch_fill"] = dict(ins.report["arch_fill"], x=float(ins.mesh.bounds[0, 0]) + 5.0)
+    ins.report["arch_fill"] = dict(ins.report["arch_fill"], x=float(ins.mesh.bounds[0, 0]) + 0.5)
     piece, rep = insole.arch_trial(ins)
     assert piece.bounds[0, 0] >= ins.mesh.bounds[0, 0] + 0.99
     assert rep["length_mm"] == pytest.approx(insole.ARCH_TRIAL_MM, abs=0.1)
+    assert rep["arch_fill_mm"] is None  # moved off the arch's top: it doesn't claim to hold it
 
 
 def test_the_arch_trial_is_the_insole_there_unchanged(right):
@@ -86,3 +87,32 @@ def test_footscan_insole_trial_writes_the_piece_and_says_never_to_stand_on_it(tm
     out2 = tmp_path / "out2"
     assert cli.main(["insole", str(foot), "--foot", "right", "-o", str(out2), "--length", "275"]) == 0
     assert not (out2 / "right-insole-arch-trial.3mf").exists()
+
+
+def test_the_arch_trial_is_placed_on_the_bed_at_the_insoles_angle(tmp_path):
+    """A 275 mm insole is turned to fit the 256 mm bed; its trial is turned the same, so the walls and infill run
+    the same way across the arch as on the insole (the firmness it shows depends on them)."""
+    ins = insole.from_scan(synth.curved_foot("right", leg=False), "right", insole.InsoleParams(target_length_mm=275.0))
+    assert ins.report["bed_fit"]["angle_deg"] != 0
+    insole.write_outputs(ins, tmp_path, "right-insole", "synthetic", synthetic=True)
+    insole.write_arch_trial(ins, tmp_path, "right-insole", synthetic=True)
+    t_insole = insole.read_3mf(tmp_path / "right-insole.3mf")["transform"]
+    t_trial = insole.read_3mf(tmp_path / "right-insole-arch-trial.3mf")["transform"]
+    assert t_trial[:2] == pytest.approx(t_insole[:2], abs=1e-6)
+
+
+def test_a_trial_that_cant_be_cut_costs_the_insole_nothing_and_no_old_trial_is_left(tmp_path, capsys, monkeypatch):
+    foot, out = tmp_path / "foot.stl", tmp_path / "out"
+    synth.curved_foot("right", leg=False).export(foot)
+    assert cli.main(["insole", str(foot), "--foot", "right", "-o", str(out), "--length", "275", "--trial"]) == 0
+    assert (out / "right-insole-arch-trial.3mf").is_file()
+
+    def broken(_):
+        raise RuntimeError("cut failed")
+
+    monkeypatch.setattr(insole, "arch_trial", broken)
+    (out / "right-insole.3mf").unlink()
+    assert cli.main(["insole", str(foot), "--foot", "right", "-o", str(out), "--length", "275", "--trial"]) == 0
+    assert "arch trial: not made (RuntimeError: cut failed)" in capsys.readouterr().err
+    assert (out / "right-insole.3mf").is_file() and (out / "right-insole-summary.html").is_file()
+    assert not any((out / f"right-insole-arch-trial{end}").exists() for end in (".3mf", ".stl", ".txt"))

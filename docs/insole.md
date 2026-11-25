@@ -576,8 +576,10 @@ on the page is the insole's to 0.2 mm, the square and the scale are 50 and
 `footscan insole --trial` also writes `right-insole-arch-trial.3mf` (and
 `.stl`, and a `.txt` of what to look at): the insole between two flat cuts
 50 mm apart (`ARCH_TRIAL_MM`, a judgment), centred on the arch support as
-printed. Nothing else is changed, so it is the insole there: the arch, the
-rounded edge, the base, lying on the bed the same way. Printed first, with
+printed (kept inside the insole; if that moves it off the arch's top, its
+notes say so). Nothing else is changed, so it is the insole there: the
+arch, the rounded edge, the base, placed on the bed at the insole's own
+angle so the walls and infill run the same way across the arch. Printed first, with
 the filament and settings the insole will get and at 100%, it shows the
 arch's height and firmness in TPU and whether the rounded edge prints
 cleanly. On the right-foot sole-up scan
@@ -590,7 +592,9 @@ It is a test piece with cut ends, not an insole: its sheet says never to
 stand or walk on it. The checks are a thumb on the arch for firmness, and,
 seated, the foot resting on it to see whether the high side meets the
 arch. If it is too hard or too soft, the infill changes, not the shape.
-The studio doesn't offer it yet.
+Each run clears a trial left from an earlier one under the same name, and
+a trial that can't be cut never stops the insole's own files being
+written. The studio doesn't offer it yet.
 
 ## What's been checked
 

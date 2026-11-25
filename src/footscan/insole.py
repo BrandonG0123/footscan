@@ -804,19 +804,21 @@ def mirrored(insole: Insole) -> Insole:
 THREEMF_CORE = "http://schemas.microsoft.com/3dmanufacturing/core/2015/02"
 
 
-def write_3mf(mesh, path: Path, title: str, notes: str, bed_mm: float = 256.0) -> None:
+def write_3mf(mesh, path: Path, title: str, notes: str, bed_mm: float = 256.0, angle_deg: float | None = None) -> None:
     """A plain 3MF (core spec): one object, millimetres, placed in the middle of the bed.
 
     Slicers (Bambu Studio, Orca, Prusa) open this as geometry; it carries no
     printer or filament settings. If it doesn't fit straight, it is turned
-    to whichever angle fits best (``bed_fit_shape``).
+    to whichever angle fits best (``bed_fit_shape``), or to ``angle_deg`` if given (a piece printed the way a
+    larger one is).
     """
     import zipfile
     from xml.sax.saxutils import escape
 
     V = np.asarray(mesh.vertices, dtype=float)
     F = np.asarray(mesh.faces, dtype=int)
-    angle = bed_fit_shape(V[:, :2], bed_mm)["angle_deg"]  # the turn that fits the bed best (0 if it fits straight)
+    angle = bed_fit_shape(V[:, :2], bed_mm)["angle_deg"] if angle_deg is None else float(angle_deg)  # the turn that
+    # fits the bed best (0 if it fits straight)
     c, s = np.cos(np.radians(angle)), np.sin(np.radians(angle))
     # build transform (3MF: 3 x 4, row vectors): rotate about z, then move the turned footprint's
     # middle to the bed's middle, bottom on z = 0
@@ -895,6 +897,8 @@ After printing: compare it with your shoe's own insole, trim the toe end if need
 # ---------------------------------------------------------------------------
 # the arch trial: the insole's midfoot on its own, to print before the whole insole
 # ---------------------------------------------------------------------------
+ARCH_TRIAL_CRUMB_MM3 = 1.0  # where a cut crosses the rounded edge it can free a sliver: loose bits smaller than this
+                            # altogether are dropped, anything more and no piece is made
 ARCH_TRIAL_MM = 50.0  # how long the piece is, across the arch support's highest point (a judgment: the arch's
                       # top and the slopes either side; on right scan 2349, generic outline at 280 mm, 31% of the
                       # insole's volume)
@@ -923,23 +927,29 @@ def arch_trial(insole: Insole):
     ix0, ix1 = float(insole.mesh.bounds[0, 0]), float(insole.mesh.bounds[1, 0])
     a = float(np.clip(mid - ARCH_TRIAL_MM / 2, ix0 + 1.0, ix1 - 1.0 - ARCH_TRIAL_MM))
     b = a + ARCH_TRIAL_MM
+    holds_arch = bool(arch) and a <= arch["x"] <= b  # moved to stay inside the insole, it can miss the arch's top
     whole = m3.Manifold(m3.Mesh(vert_properties=np.asarray(insole.mesh.vertices, np.float32),
                                 tri_verts=np.asarray(insole.mesh.faces, np.uint32)))
     if whole.status() != m3.Error.NoError:
         raise InsoleError(f"the insole's solid can't be cut ({whole.status()}); please report the scan")
     cut = whole.trim_by_plane((1.0, 0.0, 0.0), float(a)).trim_by_plane((-1.0, 0.0, 0.0), -float(b))
-    parts = cut.decompose()
-    out = cut.to_mesh()
-    mesh = trimesh.Trimesh(np.asarray(out.vert_properties)[:, :3], np.asarray(out.tri_verts), process=True)
-    if len(parts) != 1 or not mesh.is_watertight or mesh.volume <= 0:
+    parts = sorted(cut.decompose(), key=lambda m: -m.volume())
+    crumbs = sum(m.volume() for m in parts[1:])
+    if not parts or crumbs > ARCH_TRIAL_CRUMB_MM3:
         raise InsoleError(f"the arch trial didn't come out as one closed piece ({len(parts)} parts); please report "
                           "the scan")
+    out = parts[0].to_mesh()
+    mesh = trimesh.Trimesh(np.asarray(out.vert_properties)[:, :3], np.asarray(out.tri_verts), process=True)
+    if not mesh.is_watertight or mesh.volume <= 0:
+        raise InsoleError("the arch trial didn't come out as a closed piece; please report the scan")
     lo, hi = mesh.bounds
     report = dict(from_mm=round(float(a), 1), to_mm=round(float(b), 1), length_mm=round(float(hi[0] - lo[0]), 1),
                   width_mm=round(float(hi[1] - lo[1]), 1), height_mm=round(float(hi[2] - lo[2]), 1),
                   volume_cm3=round(float(mesh.volume) / 1000, 1),
                   share_of_insole=round(float(mesh.volume / insole.mesh.volume), 2),
-                  arch_fill_mm=(insole.report.get("arch_fill") or {}).get("max_mm"),
+                  arch_fill_mm=arch["max_mm"] if holds_arch else None,
+                  # placed as the insole is, so its infill and walls run the same way across the arch
+                  angle_deg=float(insole.report.get("bed_fit", {}).get("angle_deg", 0.0)),
                   bed_fit=bed_fit_shape(np.asarray(mesh.vertices)[:, :2], p.bed_mm))
     return mesh, report
 
@@ -948,7 +958,7 @@ ARCH_TRIAL_NOTES = """Footscan arch trial: {foot} insole's midfoot, {from_mm:g} 
 NOT A MEDICAL DEVICE, and NOT AN INSOLE: a test piece with cut ends. Never stand or walk on it.
 
 What it is: the insole between two flat cuts, nothing else changed ({length_mm} x {width_mm} x {height_mm} mm,
-{volume_cm3} cm3, about {share:.0%} of the insole). Its arch support stands {arch} above the base, as on the insole.
+{volume_cm3} cm3, about {share:.0%} of the insole). {arch}
 How to print it: exactly as you will print the insole (same TPU, walls, infill, speed), at 100% scale. Never
 rescale it, or it says nothing about the insole.
 What to look at:
@@ -1248,6 +1258,14 @@ def write_outputs(insole: Insole, out_dir: Path, name: str, scan_label: str, syn
     return out_files
 
 
+def clear_arch_trial(out_dir: Path, name: str) -> None:
+    """Remove the arch trial files an earlier run wrote under this name (only the names ``write_arch_trial``
+    writes), so a trial left from another make is never printed as this insole's: the CLI does this before every
+    insole it writes, with --trial or without."""
+    for end in (".3mf", ".stl", ".txt"):
+        (Path(out_dir) / f"{name}-arch-trial{end}").unlink(missing_ok=True)
+
+
 def write_arch_trial(insole: Insole, out_dir: Path, name: str, synthetic: bool = False) -> dict:
     """``<name>-arch-trial.3mf``, ``.stl`` and ``.txt`` (what it is, how to print it, what to look at) in out_dir:
     the midfoot piece (``arch_trial``), to print before the whole insole. Its numbers go in insole.report as
@@ -1260,9 +1278,13 @@ def write_arch_trial(insole: Insole, out_dir: Path, name: str, synthetic: bool =
                  trial_notes=out / f"{name}-arch-trial.txt")
     write_3mf(mesh, files["trial_3mf"], title=f"{tag}{name} arch trial",
               notes=f"{tag}Footscan arch trial ({insole.foot} insole's midfoot). NOT A MEDICAL DEVICE and not an "
-                    "insole: a test piece, never stood or walked on.", bed_mm=insole.params.bed_mm)
+                    "insole: a test piece, never stood or walked on.", bed_mm=insole.params.bed_mm,
+              angle_deg=rep["angle_deg"])
     mesh.export(files["trial_stl"])
-    arch = f"{rep['arch_fill_mm']} mm" if rep["arch_fill_mm"] is not None else "as on the insole"
+    arch = (f"Its arch support stands {rep['arch_fill_mm']} mm above the base at its highest, as on the insole."
+            if rep["arch_fill_mm"] is not None else
+            "It doesn't hold the arch support's highest point (none was read, or the piece was moved to stay inside "
+            "the insole).")
     files["trial_notes"].write_text(tag + ARCH_TRIAL_NOTES.format(foot=insole.foot, share=rep["share_of_insole"],
                                                                   arch=arch, **rep), encoding="utf-8")
     insole.report["arch_trial"] = rep
