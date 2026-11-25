@@ -16,6 +16,10 @@ struct SettingsView: View {
     @State private var showStudio = false
     @State private var confirmDeleteAll = false
     @State private var storage: Int64 = 0
+    /// Of that, working data no built model needs any more (ScanLibrary.workingDataToRemove).
+    @State private var workingData: Int64 = 0
+    @State private var confirmRemoveWorking = false
+    @State private var removeRefused = false
 
     var body: some View {
         @Bindable var settings = settings
@@ -58,6 +62,16 @@ struct SettingsView: View {
                 Section {
                     LabeledContent("Scans on this phone", value: "\(library.scans.count)")
                     LabeledContent("Space used", value: ByteCountFormatter.string(fromByteCount: storage, countStyle: .file))
+                    if workingData > 0 {
+                        Button { confirmRemoveWorking = true } label: {
+                            LabeledContent {
+                                Text(ByteCountFormatter.string(fromByteCount: workingData, countStyle: .file))
+                            } label: {
+                                Label("Remove working data", systemImage: "externaldrive.badge.minus")
+                            }
+                        }
+                        .disabled(library.busy || library.removingWorkingData)
+                    }
                     Button(role: .destructive) { confirmDeleteAll = true } label: {
                         Label("Delete all scans", systemImage: "trash")
                     }
@@ -65,8 +79,10 @@ struct SettingsView: View {
                 } header: {
                     Text("Storage")
                 } footer: {
-                    Text(library.busy ? "A scan is still building or sending; delete once it has finished."
-                                      : "Scans already sent stay in the studio.")
+                    Text(removeRefused ? "A scan started building or sending, so nothing was removed. Try again once it has finished."
+                     : library.busy ? "A scan is still building or sending; delete scans or remove working data once it has finished."
+                                  : workingData > 0 ? "Working data is what the phone used while building each model. Once a model is built it isn't needed: removing it keeps every scan's photos and model. Scans already sent stay in the studio."
+                                  : "Scans already sent stay in the studio.")
                 }
 
                 Section {
@@ -84,6 +100,13 @@ struct SettingsView: View {
             .navigationTitle("Settings")
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
             .sheet(isPresented: $showStudio) { StudioView() }
+            .confirmationDialog("Remove the working data of built models?", isPresented: $confirmRemoveWorking, titleVisibility: .visible) {
+                Button("Remove \(ByteCountFormatter.string(fromByteCount: workingData, countStyle: .file))", role: .destructive) {
+                    Task { removeRefused = !(await library.removeWorkingData()) }
+                }
+            } message: {
+                Text("Every scan keeps its photos and its 3D model, and nothing in the studio changes.")
+            }
             .confirmationDialog("Delete every scan on this phone?", isPresented: $confirmDeleteAll, titleVisibility: .visible) {
                 Button("Delete all \(library.scans.count)", role: .destructive) {
                     library.deleteAll()
@@ -91,8 +114,11 @@ struct SettingsView: View {
                 }
             }
             .task(id: library.version) {
-                let folders = library.scans.map(\.folder)
-                storage = await Task.detached(priority: .utility) { ScanLibrary.bytes(in: folders) }.value
+                let scans = library.scans
+                let folders = scans.map(\.folder)
+                (storage, workingData) = await Task.detached(priority: .utility) {
+                    (ScanLibrary.bytes(in: folders), ScanLibrary.bytes(in: ScanLibrary.workingDataToRemove(scans)))
+                }.value
             }
         }
         .tint(.fsBrand)

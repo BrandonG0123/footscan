@@ -345,6 +345,43 @@ final class ScanLibrary {
         if let png { try? png.write(to: out, options: .atomic) }
     }
 
+    // MARK: room on the phone
+
+    /// The working data (Checkpoint folder) that can go: Object Capture keeps it to speed up building a model, so
+    /// once a scan's model and its studio copy are built it does nothing. Never a scan still being worked on.
+    /// Runs anywhere: it only looks at files.
+    nonisolated static func workingDataToRemove(_ scans: [Scan]) -> [URL] {
+        let fm = FileManager.default
+        return scans.filter { $0.hasModel && $0.hasOBJ }.map(\.checkpoint).filter { folder in
+            !((try? fm.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil))?.isEmpty ?? true)
+        }
+    }
+
+    /// Empty these folders: what's in them goes, the folders themselves stay. Runs anywhere.
+    nonisolated static func empty(_ folders: [URL]) {
+        let fm = FileManager.default
+        for folder in folders {
+            for item in (try? fm.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)) ?? [] {
+                try? fm.removeItem(at: item)
+            }
+        }
+    }
+
+    /// Removing working data now: Settings' button waits for it.
+    private(set) var removingWorkingData = false
+
+    /// Empty the Checkpoint folders of built models (`workingDataToRemove`). The photos and models stay. -> false
+    /// when refused because something is building, checking or sending (or a removal is already running).
+    @discardableResult
+    func removeWorkingData() async -> Bool {
+        guard !busy, !removingWorkingData else { return false }
+        removingWorkingData = true
+        defer { removingWorkingData = false; reload() }
+        let folders = Self.workingDataToRemove(scans)
+        await Task.detached(priority: .utility) { Self.empty(folders) }.value
+        return true
+    }
+
     /// Bytes used by these scan folders (photos, working data, models).
     /// Runs anywhere: call it off the main thread, it walks every file.
     nonisolated static func bytes(in folders: [URL]) -> Int64 {
