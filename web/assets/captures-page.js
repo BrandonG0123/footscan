@@ -105,7 +105,7 @@ function render() {
     return `<article class="card cap" id="${esc(c.capture_id)}">${thumb}<div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:4px">
         <span class="badge brand">${esc(c.condition)}</span>${KIND_BADGE[c.scan_kind] ?? ""}${c.foot ? `<span class="badge">${esc(c.foot)} foot</span>` : c.condition === "calibration" ? `<span class="badge">accuracy study</span>` : c.condition === "shoe_insole" ? `<span class="badge">for Make insole: fit to this shoe</span>` : `<span class="badge warn">not measurable</span>`}${status}</div>
-      <h3 class="mono">${esc(c.capture_id)}</h3>
+      <h3 class="mono">${esc(c.capture_id)} <button class="linkish" type="button" data-copy-id="${esc(c.capture_id)}" style="font:inherit;font-size:.8rem">Copy</button></h3>
       <dl>
         <div><dt>Session</dt><dd>${esc(c.session)}</dd></div>
         ${c.load_kg == null && imported ? "" : `<div><dt>Load</dt><dd>${c.load_kg == null ? "—" : esc(c.load_kg) + " kg"}</dd></div>`}
@@ -243,6 +243,25 @@ document.addEventListener("click", (e) => {
     focusNotesButton(cancel.dataset.notesCancel);
   }
 });
+// A capture's name copied (to paste into a message about it); where the browser won't (no HTTPS on another
+// computer), the name is selected instead, for the device's own Copy
+document.addEventListener("click", async (e) => {
+  const b = e.target.closest("[data-copy-id]");
+  if (!b) return;
+  const id = b.dataset.copyId;
+  try {
+    await navigator.clipboard.writeText(id);
+    b.textContent = "Copied";
+  } catch {
+    const range = document.createRange();
+    range.selectNodeContents(b.parentElement.firstChild);
+    getSelection().removeAllRanges();
+    getSelection().addRange(range);
+    b.textContent = "Selected";
+  }
+  setTimeout(() => { b.textContent = "Copy"; }, 1500);
+});
+
 // In the notes box: Ctrl/Cmd+Enter saves, Escape puts it back as it was (Enter alone is a new line)
 document.addEventListener("keydown", (e) => {
   const f = e.target.closest?.("[data-notes-form]");
