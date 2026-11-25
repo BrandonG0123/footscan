@@ -155,7 +155,7 @@ struct HomeView: View {
             }
             .navigationDestination(for: Scan.self) { ScanDetailView(scan: $0, onScanAgain: scanAgain) }
             .modifier(NameScanAlert(scan: $naming))
-            .refreshable { library.reload() }
+            .refreshable { library.reload(); sendWaiting() } // pulling down also tries the scans waiting to go, without holding the spinner
         }
         .tint(.fsBrand)
         .sheet(isPresented: $showSettings) { SettingsView() }
