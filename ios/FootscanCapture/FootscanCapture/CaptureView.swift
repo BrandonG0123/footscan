@@ -58,7 +58,12 @@ struct CaptureView: View {
                         Label(cause, systemImage: "exclamationmark.triangle.fill").foregroundStyle(Color.fsWarn)
                     }
                     Text(stopped.detail).font(.footnote).foregroundStyle(.white.opacity(0.6))
-                    Button("Back", action: onCancel).buttonStyle(.borderedProminent).padding(.top, 6)
+                    Button("Back") {
+                        // nothing was kept: no empty scan left in the list
+                        if scan.photoCount == 0 { ScanStore.delete(scan) }
+                        onCancel()
+                    }
+                    .buttonStyle(.borderedProminent).padding(.top, 6)
                 }
                 .foregroundStyle(.white)
                 .multilineTextAlignment(.center)
@@ -107,14 +112,16 @@ struct CaptureView: View {
                 onDone(scan)
                 return
             case .failed(let error):
-                let photos = session.numberOfShotsTaken
+                // the photos actually saved (what the scan's page builds from), not the session's count, which can
+                // include shots it hadn't finished writing when it stopped
+                let photos = scan.photoCount
                 var rec = scan.record
                 rec?.error = error.localizedDescription
                 rec?.shotsTaken = photos
                 rec?.scanPasses = passes
                 if let rec { scan.save(rec) }
                 stopped = CaptureStopped.words(photos: photos, error: error.localizedDescription,
-                                               lowSpace: DiskSpace.captureProblem(),
+                                               free: DiskSpace.available(),
                                                hot: ProcessInfo.processInfo.thermalState.rawValue
                                                    >= ProcessInfo.ThermalState.serious.rawValue)
                 UINotificationFeedbackGenerator().notificationOccurred(.error)
@@ -144,13 +151,26 @@ enum CaptureStopped {
         var detail: String
     }
 
-    static func words(photos: Int, error: String, lowSpace: String?, hot: Bool) -> Words {
-        let body = photos > 0
-            ? "The \(photos) photos taken so far are kept with the scan. Its page can build a model from them, though a "
-                + "capture stopped partway may be missing a side. Or go back and scan again."
-            : "No photos were taken, so nothing was kept. Go back and scan again."
-        let cause = lowSpace
-            ?? (hot ? "The phone is hot, and iOS slows a hot phone down. Let it cool, out of direct sun, before scanning again." : nil)
+    /// Free space under this, after a capture has written its photos, makes a full phone a likely cause. A judgment,
+    /// not measured: a capture's photos take a few hundred MB, and the 1.5 GB asked for before a capture
+    /// (DiskSpace.neededForCapture) is often gone by the end of one that had nothing to do with space.
+    static let nearlyFull: Int64 = 300_000_000
+
+    /// `photos`: saved in the scan's folder. `free`: bytes free now (nil: not known). `hot`: thermal state serious or
+    /// critical, which outranks space (it's seen for certain; space only makes a cause likely).
+    static func words(photos: Int, error: String, free: Int64?, hot: Bool) -> Words {
+        let body = switch photos {
+        case 0: "No photos were saved, so nothing was kept. Go back and scan again."
+        case 1: "The 1 photo taken so far is kept with the scan, but a model needs many more. Go back and scan again."
+        default: "The \(photos) photos taken so far are kept with the scan. Its page can build a model from them, though "
+            + "a capture stopped partway may be missing a side. Or go back and scan again."
+        }
+        let cause: String? = if hot {
+            "The phone is hot, and iOS slows a hot phone down. Let it cool, out of direct sun, before scanning again."
+        } else if let free, free < nearlyFull {
+            "The phone is nearly full (\(ByteCountFormatter.string(fromByteCount: free, countStyle: .file)) free). Delete "
+                + "some old scans (Settings shows how much they use) or other files before scanning again."
+        } else { nil }
         return Words(title: "The capture stopped", body: body, cause: cause, detail: "What the phone said: \(error)")
     }
 }
