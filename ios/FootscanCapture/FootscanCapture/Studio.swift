@@ -48,7 +48,7 @@ struct StudioLink: Codable, Equatable {
     func isSameStudio(as other: StudioLink) -> Bool {
         switch (fingerprint?.lowercased(), other.fingerprint?.lowercased()) {
         case let (a?, b?): a == b
-        case (nil, nil): !Set(addresses).isDisjoint(with: other.addresses)
+        case (nil, nil): addresses.contains { a in other.addresses.contains { StudioStore.sameAddress(a, $0) } }
         default: false
         }
     }

@@ -24,6 +24,7 @@ final class StudioConnection {
 
     /// Try a connect code; save it only if the studio answers to it (at any of its addresses).
     func connect(_ text: String) async -> Bool {
+        pendingSwitch = nil // connecting any way answers the question
         guard let parsed = StudioStore.parse(text) else {
             if let other = StudioStore.parse(text, allowPublic: true) {
                 status = other.link.fingerprint != nil
@@ -54,13 +55,35 @@ final class StudioConnection {
         return true
     }
 
-    /// A connect code that came from outside the app (a link, or the iPhone's own Camera app) and would put a
-    /// different studio in place of the connected one: that studio's address, to ask first. nil when nothing is
-    /// connected, when it's the same studio again (a new key, say), or when it isn't a studio code at all
-    /// (connect() then says why). Asked because scans waiting to go would go to the new studio by themselves.
-    func otherStudio(in text: String) -> String? {
-        guard let link, let parsed = StudioStore.parse(text), !link.isSameStudio(as: parsed.link) else { return nil }
-        return Self.describe(parsed.link.url)
+    /// A connect code that came from outside the app (a link, or the iPhone's own Camera app) for a different
+    /// studio from the connected one, waiting for a yes on the studio screen. The studio's own Scan the code and
+    /// screenshot paths don't ask: the person chose to connect there.
+    var pendingSwitch: (code: String, address: String)?
+
+    /// A code from outside the app: connected straight away, unless it would put a different studio in place of
+    /// the connected one, which is asked first (scans waiting to go would go to the new studio by themselves).
+    func open(_ code: String) async {
+        if let address = Self.otherStudio(in: code, connected: link) {
+            pendingSwitch = (code, address)
+            status = nil
+            return
+        }
+        _ = await connect(code)
+    }
+
+    /// Yes to the pending switch: connect to the studio the link named.
+    func confirmSwitch() async {
+        guard let pending = pendingSwitch else { return }
+        pendingSwitch = nil
+        _ = await connect(pending.code)
+    }
+
+    /// The address of the studio `code` names, when it's a different studio from `connected`; nil when nothing
+    /// is connected, when it's the same studio again (a new key, say), or when it isn't a studio code at all
+    /// (connect() then says why).
+    nonisolated static func otherStudio(in code: String, connected: StudioLink?) -> String? {
+        guard let connected, let parsed = StudioStore.parse(code), !connected.isSameStudio(as: parsed.link) else { return nil }
+        return describe(parsed.link.url)
     }
 
     /// Test the connection: try every address the studio has, and say which one answered.
@@ -129,6 +152,7 @@ struct StudioView: View {
                         Text("Scans go straight from this phone to the Footscan studio on your computer: over your Wi-Fi at home, or over Tailscale from anywhere if the studio has it.")
                             .foregroundStyle(Color.fsMuted)
                     }
+                    if let pending = studio.pendingSwitch { switchQuestion(pending.address) }
                     if let link = studio.link { connected(link) } else { howTo }
                     if let status = studio.status {
                         Label(status, systemImage: "info.circle")
@@ -192,6 +216,23 @@ struct StudioView: View {
                 .frame(width: 28, height: 28).background(Color.fsBrand, in: Circle())
             Text(text).font(.body).foregroundStyle(Color.fsInk).padding(.top, 3)
         }
+    }
+
+    /// A link named a different studio from the connected one: connect to it, or keep this one.
+    private func switchQuestion(_ address: String) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Label("Connect to a different studio?", systemImage: "arrow.left.arrow.right").font(.headline)
+            Text("The code you opened is for the studio at \(address). Scans waiting to be sent would go there instead. "
+                 + "Only connect if it's your own studio.")
+                .font(.subheadline).foregroundStyle(Color.fsMuted)
+            HStack {
+                Button("Connect to \(address)") { Task { await studio.confirmSwitch() } }
+                    .buttonStyle(PrimaryButtonStyle())
+                Button("Keep this one") { studio.pendingSwitch = nil }
+                    .buttonStyle(SecondaryButtonStyle())
+            }
+        }
+        .card()
     }
 
     private func connected(_ link: StudioLink) -> some View {
