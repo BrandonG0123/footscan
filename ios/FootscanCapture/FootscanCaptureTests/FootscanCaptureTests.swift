@@ -500,6 +500,36 @@ struct FreeSpace {
     @Test func unknownFreeSpaceDoesNotBlockScanning() {
         #expect(DiskSpace.captureProblem(free: nil) == nil)
     }
+
+    /// A scan folder with a file in Checkpoint, and (`built`) its model and studio copy.
+    private func scan(_ name: String, in root: URL, built: Bool) throws -> Scan {
+        let scan = Scan(folder: root.appending(path: name, directoryHint: .isDirectory))
+        try FileManager.default.createDirectory(at: scan.checkpoint, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: scan.images, withIntermediateDirectories: true)
+        try Data(count: 1000).write(to: scan.checkpoint.appending(path: "work.bin"))
+        try Data(count: 10).write(to: scan.images.appending(path: "IMG_0.HEIC"))
+        if built {
+            try Data(count: 10).write(to: scan.usdz)
+            try Data(count: 10).write(to: scan.obj)
+        }
+        return scan
+    }
+
+    @Test func onlyBuiltModelsWorkingDataCanGoAndThePhotosAndModelStay() throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString, directoryHint: .isDirectory)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let built = try scan("built", in: root, built: true)
+        let waiting = try scan("waiting", in: root, built: false)
+        // a scan still waiting for its model needs its working data to build it
+        #expect(ScanLibrary.workingDataToRemove([built, waiting]) == [built.checkpoint])
+        #expect(ScanLibrary.bytes(in: ScanLibrary.workingDataToRemove([built, waiting])) == 1000)
+        // once emptied there's nothing more to remove, and the photos and model are still there
+        for item in try FileManager.default.contentsOfDirectory(at: built.checkpoint, includingPropertiesForKeys: nil) {
+            try FileManager.default.removeItem(at: item)
+        }
+        #expect(ScanLibrary.workingDataToRemove([built, waiting]).isEmpty)
+        #expect(built.hasModel && built.hasOBJ && built.photoCount == 1)
+    }
 }
 
 // MARK: - the welcome scene's ring

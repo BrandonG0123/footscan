@@ -226,6 +226,34 @@ final class ScanLibrary {
         if let png { try? png.write(to: out, options: .atomic) }
     }
 
+    // MARK: room on the phone
+
+    /// The working data (Checkpoint folder) that can go: Object Capture keeps it to speed up building a model, so
+    /// once a scan's model and its studio copy are built it does nothing. Never a scan still being worked on.
+    /// Runs anywhere: it only looks at files.
+    nonisolated static func workingDataToRemove(_ scans: [Scan]) -> [URL] {
+        let fm = FileManager.default
+        return scans.filter { $0.hasModel && $0.hasOBJ }.map(\.checkpoint).filter { folder in
+            !((try? fm.contentsOfDirectory(atPath: folder.path()))?.isEmpty ?? true)
+        }
+    }
+
+    /// Empty those Checkpoint folders (the folders stay, so nothing else changes). The photos and models stay.
+    /// Waits for nothing: refused while anything is building, checking or sending.
+    func removeWorkingData() async {
+        guard !busy else { return }
+        let folders = Self.workingDataToRemove(scans)
+        await Task.detached(priority: .utility) {
+            let fm = FileManager.default
+            for folder in folders {
+                for item in (try? fm.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)) ?? [] {
+                    try? fm.removeItem(at: item)
+                }
+            }
+        }.value
+        reload()
+    }
+
     /// Bytes used by these scan folders (photos, working data, models).
     /// Runs anywhere: call it off the main thread, it walks every file.
     nonisolated static func bytes(in folders: [URL]) -> Int64 {
