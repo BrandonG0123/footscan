@@ -56,6 +56,10 @@ never suggest posting or any correction (the first fit has none). Every number y
    - `3mf_size`: the 3MF isn't the size insole.json says. Don't print it; rebuild.
    - `foot`, `no_posting`, `fill_cap`, `summary_sheet`, `real_scan`: don't print; tell Brandon.
    - `bed`: it doesn't fit the printer bed as placed; tell Brandon.
+   - `heel_cup_rim`: on one side of the heel the cup's rim stands under half the depth asked for, because the
+     outline is about as narrow as the heel there and leaves no room for the wall outside it. Not a reason to stop
+     on its own: say which side and how high, and check side.png. The fix is an outline with room round the heel
+     (the shoe's own, saved), never a narrower heel cup or a scaled file. Tell Brandon if the heel looks unheld.
    Generator warnings (sole barely seen, clipped fill, heel off the floor, ...) are the scan's own doubts: repeat
    them, and if one says the scan is incomplete, the fix is a new scan, not a parameter.
 

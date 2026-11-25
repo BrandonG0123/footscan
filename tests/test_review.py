@@ -68,7 +68,9 @@ def test_an_insole_built_to_the_shoe_length_passes_the_size_checks(data):
     [p] = review.run_once(data, SPEC)
     assert _check(p, "length")["ok"] and _check(p, "3mf_size")["ok"] and _check(p, "summary_sheet")["ok"]
     assert _check(p, "foot")["ok"] and _check(p, "no_posting")["ok"] and _check(p, "bed")["ok"]
-    assert json.loads((p / "review.json").read_text())["flags"] == []
+    # the block foot's heel is its whole 90 mm width, wider than the generic outline's heel: no room for the cup's
+    # wall beside it (test_the_heel_cup_rim_is_flagged_when_the_outline_leaves_no_room_for_the_wall)
+    assert json.loads((p / "review.json").read_text())["flags"] == ["heel_cup_rim"]
     md = (p / "packet.md").read_text()
     assert "NOT A MEDICAL DEVICE" in md and "100% scale" in md and "ASICS Gel Resolution X" in md
 
@@ -153,8 +155,23 @@ def test_the_packet_gives_the_foots_own_highest_fill_only_when_it_is_past_the_ou
     assert "past the outline's edge, so not printed" not in review.packet_markdown(packet)
     i = packet["insole"]
     i["foot_max_fill_mm"], i["foot_max_fill_at_mm"] = i["max_fill_mm"] + 2.0, dict(x=110.0, y=107.0)
+    i["foot_max_fill_past_edge"] = True
     assert (f"The foot's own highest fill is {i['foot_max_fill_mm']} mm, at x 110.0, y 107.0 mm: past the outline's "
             "edge, so not printed") in review.packet_markdown(packet)
+    # the generator says where the foot's peak is: on the insole, a printed top lowered by the rounded edge or the
+    # ball's cap is no overhang, however much lower
+    i["foot_max_fill_past_edge"] = False
+    assert "past the outline's edge, so not printed" not in review.packet_markdown(packet)
+
+
+def test_the_packet_gives_the_arch_support_as_printed(data):
+    _only(data, "R275")
+    [p] = review.run_once(data, SPEC)
+    packet = json.loads((p / "review.json").read_text())
+    a = packet["insole"]["arch_fill"]
+    assert a and 0.30 <= a["share"] <= 0.62
+    assert (f"Arch support as printed: {a['max_mm']} mm above the base at most, {a['side']} side, "
+            f"{a['share']:.0%} of the foot's length from the heel.") in (p / "packet.md").read_text()
 
 
 def test_pictures_are_real_pngs_at_half_a_millimetre_per_pixel(data):
@@ -603,3 +620,15 @@ def test_a_review_spec_saved_with_a_byte_order_mark_still_loads(tmp_path):
     spec.write_bytes(b"\xef\xbb\xbf" + json.dumps({"shoe": "Test Shoe", "target_length_mm": 271.0}).encode())
     got = review.load_spec(spec)
     assert got["shoe"] == "Test Shoe" and got["target_length_mm"] == 271.0
+
+
+def test_the_heel_cup_rim_is_flagged_when_the_outline_leaves_no_room_for_the_wall(data):
+    """SYNTHETIC block foot: its heel as wide as its ball (90 mm), wider than the generic outline's heel, so the
+    cup's wall has no room at the sides. The packet gives the rim as printed and flags it for a look."""
+    _only(data, "R275")
+    [p] = review.run_once(data, SPEC)
+    c = _check(p, "heel_cup_rim")
+    assert not c["ok"] and "inner side" in c["found"] and "asked for 12 mm" in c["found"]
+    rim = json.loads((p / "review.json").read_text())["insole"]["heel_cup_rim_mm"]
+    assert rim["back"] >= 11.5 and min(rim["inner"], rim["outer"]) < 6.0
+    assert "Heel cup rim as printed:" in (p / "packet.md").read_text()

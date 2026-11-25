@@ -72,6 +72,10 @@ From heights to a solid
    the foot, tapering to 2 mm at the toes; beyond the heel it thins to
    1.2 mm over the last 4 mm to the edge (a bevel), so it follows the
    curve where a shoe's footbed meets its sides instead of digging in.
+   Beyond the heel the top's corner at the edge is rounded too (a 4 mm
+   quarter circle, ``edge_roll_mm``): where the outline cuts through the
+   arch fill, the edge would otherwise be a square wall with a sharp
+   corner right under the arch's border. Rounding only lowers the top.
 6. **Solid**: the outline is extruded 1 mm, refined to 1.5 mm triangles,
    and every vertex's height is scaled by the top-surface height at its
    (x, y): z -> z * top(x, y). The bottom stays at 0, the top lands on the
@@ -141,11 +145,16 @@ class InsoleParams:
     heel_wall_ramp_mm: float = 2.5      # the wall reaches the cup depth this far out from the heel
     edge_mm: float = 1.2                # beyond the heel, the base thins to this at the outline's edge...
     edge_bevel_mm: float = 4.0          # ...over this width, so it follows a shoe's curved toe box
+    edge_roll_mm: float = 4.0           # beyond the heel, the top's corner at the outline is rounded to this radius:
+                                        # no square edge under the arch's border, see build()
     heel_zone: float = 0.30         # back fraction of the foot that gets the cup wall
     max_arch_fill_mm: float = 20.0
     posting_rearfoot_deg: float = 0.0   # first fit: no posting, always
     posting_forefoot_deg: float = 0.0
     toes_flat_from: float | None = None  # if set, fill tapers to none under the toes, from this share of the length
+    forefoot_cap_mm: float | None = 3.0  # under the ball of the foot, the top rises no more than this above the base,
+    forefoot_from: float = 0.62          # eased in between these shares of the foot's length (the ball's edges,
+    forefoot_full_at: float = 0.72       # captured unloaded, would stand as a lip): see build()
     target_length_mm: float | None = None  # if set, the outline reaches this length (a shoe's insole), see build()
     shoe_outline: tuple | None = None   # if set, the outline is this shoe's own insole's ((x, y), ...) mm, heel at
                                         # the origin (recon/shoe.py), fitted round the foot; see build()
@@ -171,7 +180,9 @@ class Insole:
     surface: dict | None = None     # the fill as a grid, before the base goes under it (xs, ys, fill), the foot's
                                     # outline it was read under, and the heel zone's weight along xs (1 in the
                                     # heel, fading to 0 past it: where the caps changed): footwear.py builds a
-                                    # shoe's footbed from the same heights and caps
+                                    # shoe's footbed from the same heights and caps. Also the printed outline
+                                    # (outline) and the foot's outline near the floor it was placed against
+                                    # (standing; None with the foot's own outline), for the paper template
 
 
 # ---------------------------------------------------------------------------
@@ -351,7 +362,7 @@ def build(foot_mesh, foot: str, params: InsoleParams | None = None) -> Insole:
     except (InsoleError, shapely.errors.GEOSException, ValueError):
         cup_sil = sil
 
-    extended, shoe_fit, outline_from = 0.0, None, "foot"
+    extended, shoe_fit, outline_from, standing = 0.0, None, "foot", None
     if p.shoe_outline is not None and p.foot_outline:
         raise InsoleError("give the shoe's insole or the foot's own outline, not both")
     if not p.foot_outline:
@@ -443,7 +454,42 @@ def build(foot_mesh, foot: str, params: InsoleParams | None = None) -> Insole:
     b = np.clip(d_in / p.edge_bevel_mm, 0, 1)
     bevel = p.edge_mm + (base - p.edge_mm) * b * b * (3 - 2 * b)
     base = np.where(w_heel > 0, base, np.minimum(base, bevel))  # the heel keeps its full base under the cup wall
-    top = base + np.maximum(fill, wall)
+
+    # 5b. the top's corner at the outline, rounded (beyond the heel). Where the outline cuts through the arch fill
+    # (a shoe's or the generic outline is narrower than the foot's arch, as on a flat foot), the edge stood as a
+    # square wall as tall as the fill there (SYNTHETIC curved_foot at 275 mm: 13.7 mm tall, base included, at the
+    # inner midfoot), with a sharp corner on top, right under the arch's border: the place SAFETY.md's skin check
+    # looks for pressure marks, and the corner a shoe's upper catches on the way in. So the fill (never the base)
+    # is lowered within edge_roll_mm of the edge by a quarter circle of that radius: at the edge by the whole
+    # radius, 1 mm in by about a third of it, nothing from the radius in. Only ever lowered, never raised, so the insole still never
+    # comes closer than the relief to the sole. The heel zone keeps its cup wall as it is (the radius fades in
+    # with the heel's weight), so the cup holds the heel to its full depth
+    r_roll = p.edge_roll_mm * (1.0 - w_heel)
+    k = np.clip(r_roll - d_in, 0.0, None)  # how far inside the rounded band a point is, from its inner end
+    roll = r_roll - np.sqrt(np.clip(r_roll * r_roll - k * k, 0.0, None))
+    above = np.maximum(np.maximum(fill, wall) - roll, 0.0)
+
+    # 5c. under the ball of the foot, no lip. A scan of an unloaded foot (sole up, legs flat) sees the ball's edges
+    # rounding up off the floor, and where the outline is narrower than the foot those edges become a lip along the
+    # insole's side under the ball: on the right-foot sole-up scan LIDAR_nwb_relaxed_R_20261027-151404-2349, generic
+    # outline at 280 mm, 8.6-9.0 mm high at the inner edge from 62% to 70% of the foot's length and 7.1-8.6 mm from
+    # 70% to 78% (2026-11-25). Standing, the ball spreads wider and would land on it, by the big toe's joint:
+    # SAFETY.md's skin check looks under the met heads. So from forefoot_from the top's rise above the base is
+    # drawn down toward forefoot_cap_mm, all of the way by forefoot_full_at (a JUDGMENT: past the arch, before the
+    # ball): a smooth blend between the rise as scanned and
+    # the rise capped, over about a tenth of the foot's length, so it slopes down gently instead of stepping. Only
+    # ever lowered; the arch itself, behind forefoot_from, is untouched. footwear.py's clog reads ``fill``, which
+    # this leaves as it was
+    def forefoot(rise):
+        if p.forefoot_cap_mm is None:
+            return rise
+        f0, f1 = x0 + p.forefoot_from * length, x0 + p.forefoot_full_at * length
+        t = np.clip((X - f0) / max(f1 - f0, 1e-6), 0, 1)
+        t = t * t * (3 - 2 * t)
+        return rise * (1 - t) + np.minimum(rise, p.forefoot_cap_mm) * t
+
+    above = forefoot(above)
+    top = base + above
 
     # 6. the solid: extrude the outline 1 mm, refine, lift every vertex to the surface
     from scipy.interpolate import RegularGridInterpolator
@@ -484,7 +530,12 @@ def build(foot_mesh, foot: str, params: InsoleParams | None = None) -> Insole:
     peak = np.unravel_index(np.argmax(np.where(in_sil, fill, -1)), fill.shape)
     if not on.any():  # fit_to_foot places an outline round the foot: one that misses it is a broken fit
         raise InsoleError("the insole's outline doesn't cover the foot; please report the scan")
-    top_at = np.unravel_index(np.argmax(np.where(on, fill, -1)), fill.shape)
+    printed = forefoot(np.maximum(fill - roll, 0.0))  # the fill as printed: the rounded edge and the forefoot's cap
+    # can lower it
+    top_at = np.unravel_index(np.argmax(np.where(on, printed, -1)), fill.shape)
+    past_edge = not bool(in_out[peak])  # the foot's own highest point hangs over the outline's edge: not printed
+    arch_fill = arch_support(printed, on, X, Y, x0 + p.heel_zone * length, x0 + p.forefoot_from * length,
+                             x0, length, outline, foot)
     warnings = []
     if arch_seen < 0.05:
         warnings.append("the scan saw almost none of the sole under the arch, so the insole is flat there. "
@@ -512,12 +563,23 @@ def build(foot_mesh, foot: str, params: InsoleParams | None = None) -> Insole:
         sole=dict(seen=round(seen, 3), resting_on_floor=round(contact, 3), holes=round(holes, 3),
                   open_above=round(inside_seen, 3),
                   seen_under_arch=round(arch_seen, 3)),
-        max_fill_mm=round(float(fill[top_at]), 2),
+        max_fill_mm=round(float(printed[top_at]), 2),
         max_fill_at_mm=dict(x=round(float(X[top_at]), 1), y=round(float(Y[top_at]), 1)),
-        # under the whole foot, printed or not: higher than max_fill_mm where the foot's highest point hangs over
-        # the outline's edge; where it is says which side the arch is on (foot_prep.plausibility)
-        foot_max_fill_mm=round(float(fill[peak]), 2),
+        # under the whole foot, printed or not: where the foot's highest point hangs over the outline's edge, its
+        # height there (higher than max_fill_mm: not printed); where it is on the insole, the printed highest fill
+        # (the rounded edge and the forefoot's cap may lower the printed top a little, which is no overhang). Where
+        # it is says which side the arch is on (foot_prep.plausibility)
+        foot_max_fill_mm=round(float(fill[peak] if past_edge else printed[top_at]), 2),
+        foot_max_fill_past_edge=past_edge,
         foot_max_fill_at_mm=dict(x=round(float(X[peak]), 1), y=round(float(Y[peak]), 1)),
+        # the arch support as printed: the highest printed fill between the heel zone and the ball (max_fill_mm is
+        # the whole insole's, and on a flat foot it is the heel's rounded back, not the arch)
+        arch_fill=arch_fill,
+        # the insole's side at its tallest beyond the heel (the cup's wall is meant to be tall): how high its edge
+        # stands where a shoe's side meets it, after the rounding (5b)
+        edge_beyond_heel=edge_height(mesh, outline, x0 + (p.heel_zone + 0.15) * length, foot),
+        # the heel cup as printed: how high its rim stands above the base at the back and along each side
+        heel_cup_rim_mm=heel_cup_rim(mesh, outline, x0, length, foot, p.base_mm),
         bed_fit=bed_fit_shape(np.asarray(mesh.vertices)[:, :2], p.bed_mm),
         shoe_fit=shoe_fit,
         lengthened_mm=round(float(extended), 1),  # added to the front to reach the shoe's length (0: none needed)
@@ -532,7 +594,91 @@ def build(foot_mesh, foot: str, params: InsoleParams | None = None) -> Insole:
         frame="mm; x forward from the back of the heel, y toward the foot's left, z up; bottom at z = 0",
     )
     return Insole(mesh=mesh, foot=foot, params=p, report=report, sole=m,
-                  surface=dict(xs=xs, ys=ys, fill=fill, under_foot=in_sil, foot_outline=sil, heel_weight=w_heel[0]))
+                  surface=dict(xs=xs, ys=ys, fill=fill, under_foot=in_sil, foot_outline=sil, heel_weight=w_heel[0],
+                               outline=outline, standing=standing,
+                               rise=np.where(in_out, above, np.nan)))  # the top above the base, as printed
+
+
+def heel_cup_rim(mesh, outline, x0: float, length: float, foot: str, base_mm: float) -> dict | None:
+    """How high the heel cup's rim stands above the base as printed, in mm: at the back (the highest point of the
+    side within 3% of the length of the outline's back end) and along each side of the heel, from 4% to 18% of the
+    foot's ``length`` from its heel ``x0``: the lowest of the side's highest points, 2 mm slice by slice (the weakest
+    place along the cup's wall). The cup's wall only stands where the outline leaves room for it outside the heel
+    (a shoe's or the generic outline can be as narrow as the heel), and inside it the scanned heel's own rounded
+    underside forms the cup: this says what that adds up to, rather than the depth asked for. None for a side the
+    outline has no edge on there."""
+    import shapely
+
+    V = np.asarray(mesh.vertices)
+    E = V[shapely.distance(outline.exterior, shapely.points(V[:, :2])) < 0.05]
+    if not len(E):
+        return None
+    sides: dict[str, list[float]] = {"inner": [], "outer": []}
+    for a in np.arange(x0 + 0.04 * length, x0 + 0.18 * length, 2.0):
+        b = E[(E[:, 0] >= a) & (E[:, 0] < a + 2.0)]
+        if len(b) < 4:
+            continue
+        left = b[:, 1] > _middle_at(outline, a + 1.0, (b[:, 1].min() + b[:, 1].max()) / 2)  # the foot's left half
+        for side, sel in (("inner", left == (foot == "right")), ("outer", left != (foot == "right"))):
+            if sel.any():
+                sides[side].append(float(b[sel][:, 2].max()))
+    back = E[E[:, 0] < E[:, 0].min() + 0.03 * length]
+
+    def above(z):
+        return None if z is None else round(max(z - base_mm, 0.0), 1)
+
+    return dict(inner=above(min(sides["inner"]) if sides["inner"] else None),
+                back=above(float(back[:, 2].max()) if len(back) else None),
+                outer=above(min(sides["outer"]) if sides["outer"] else None))
+
+
+def edge_height(mesh, outline, from_x: float, foot: str) -> dict | None:
+    """How tall the insole's side stands at the outline, forward of ``from_x`` (mm, from the bed: the base
+    included, as a shoe's side meets it): the highest point of the side wall there (its vertices lie on the
+    outline: the solid is the outline extruded and lifted, never moved sideways), where it is, and whether that's
+    on the inner (arch) or outer side of the outline's middle line at that point (the output frame's y is toward
+    the foot's left: the inner side is +y for a right foot, -y for a left). None if the outline has no edge forward of ``from_x``."""
+    import shapely
+
+    V = np.asarray(mesh.vertices)
+    on_edge = shapely.distance(outline.exterior, shapely.points(V[:, :2])) < 0.05
+    E = V[on_edge & (V[:, 0] >= from_x)]
+    if not len(E):
+        return None
+    i = int(np.argmax(E[:, 2]))
+    x, y, z = (float(v) for v in E[i])
+    mid = _middle_at(outline, x, y)
+    return dict(max_mm=round(z, 1), x=round(x, 1), y=round(y, 1), side="inner" if (y > mid) == (foot == "right") else "outer")
+
+
+def arch_support(printed, on, X, Y, from_x: float, to_x: float, x0: float, length: float, outline, foot: str):
+    """The arch support as printed: the highest printed fill (mm above the base) on the insole and under the foot
+    between ``from_x`` and ``to_x`` (the end of the heel zone and the start of the ball's cap: the midfoot, where the
+    arch is), where it is (mm, and as a share of the foot's length from its heel), and on which side of the
+    outline's middle line. None if no part of the insole lies under the foot there."""
+    band = on & (X >= from_x) & (X <= to_x)
+    if not band.any():
+        return None
+    at = np.unravel_index(np.argmax(np.where(band, printed, -1.0)), printed.shape)
+    x, y = float(X[at]), float(Y[at])
+    _, y0, _, y1 = outline.bounds
+    mid = _middle_at(outline, x, (y0 + y1) / 2)
+    return dict(max_mm=round(float(printed[at]), 2), x=round(x, 1), y=round(y, 1),
+                share=round((x - x0) / length, 2), side="inner" if (y > mid) == (foot == "right") else "outer")
+
+
+def _middle_at(outline, x: float, fallback: float) -> float:
+    """The outline's middle line at ``x``: halfway between its two sides there (from the polygon itself, so a point
+    near the rounded toe or heel end, where the vertices nearby lie on one side only, still gets the right side).
+    ``fallback`` if a line across at ``x`` misses the outline."""
+    import shapely
+
+    _, y0, _, y1 = outline.bounds
+    cut = outline.intersection(shapely.LineString([(x, y0 - 1.0), (x, y1 + 1.0)]))
+    if cut.is_empty:
+        return fallback
+    _, cy0, _, cy1 = cut.bounds
+    return (cy0 + cy1) / 2
 
 
 def bed_fit_shape(xy, bed: float, clearance: float = 3.0) -> dict:
@@ -590,6 +736,66 @@ def from_scan(mesh, foot: str, params: InsoleParams | None = None) -> Insole:
         highest_medial_point=s["highest_medial_point"],
     )
     return insole
+
+
+def mirrored(insole: Insole) -> Insole:
+    """The same insole for the other foot: its mirror image (y -> -y), for a matched pair from one foot's scan when
+    the other foot's scans can't be used. NOT made from the other foot's scan, and its sheet and warnings say so
+    first: two feet are not mirror images (their arches differ), so the other foot's own scan replaces it as soon
+    as there is a good one. The outline is the same shape mirrored, as a shoe's left and right insoles are."""
+    import copy
+
+    import shapely.affinity
+    import trimesh
+
+    other = "left" if insole.foot == "right" else "right"
+    V = np.array(insole.mesh.vertices, dtype=float)
+    V[:, 1] *= -1.0
+    mesh = trimesh.Trimesh(V, np.asarray(insole.mesh.faces)[:, ::-1], process=True)  # faces turned back outward
+    r = copy.deepcopy(insole.report)
+    r["foot"] = other
+    r["mirrored_from"] = insole.foot
+    for k in ("max_fill_at_mm", "foot_max_fill_at_mm", "edge_beyond_heel", "arch_fill"):
+        if r.get(k):
+            r[k]["y"] = -r[k]["y"]  # the inner side stays the inner side: the edge's "side" is unchanged
+    if r.get("shoe_fit"):  # the outline, placed as the source's mirrored: turned and slid the other way
+        from .recon import shoe as shoe_mod
+
+        f = r["shoe_fit"]
+        generic = r.get("outline_from") == "generic"
+        saved = insole.params.shoe_saved or generic
+        before = shoe_mod.fit_warnings(f, saved=saved, generic=generic)
+        f["mirrored"] = not f["mirrored"]
+        f["turned_deg"], f["slid_mm"] = -f["turned_deg"], -f["slid_mm"]
+        # the fit's own warnings, said again for the flipped fit (whether the outline had to be mirrored is the
+        # other way round for the other foot), in the place the source's stood
+        after = shoe_mod.fit_warnings(f, saved=saved, generic=generic)
+        at = next((j for j, w in enumerate(r["warnings"]) if w in before), len(r["warnings"]))
+        kept = [w for w in r["warnings"] if w not in before]
+        r["warnings"] = kept[:at] + after + kept[at:]
+    r["bed_fit"] = bed_fit_shape(V[:, :2], insole.params.bed_mm)
+    r["warnings"] = [f"this {other} insole is the {insole.foot} insole's mirror image: its arch fill and heel cup are the "
+                     f"{insole.foot} foot's, not made from a scan of the {other} foot. Two feet differ; make it again "
+                     f"from the {other} foot's own scan before relying on it."] + r["warnings"]
+
+    def flip(geom):
+        return None if geom is None else shapely.affinity.scale(geom, 1.0, -1.0, origin=(0.0, 0.0))
+
+    surface = None
+    if insole.surface is not None:
+        surface = dict(insole.surface)
+        surface["ys"] = -np.asarray(insole.surface["ys"])[::-1]
+        for k in ("fill", "under_foot", "rise"):
+            if k in surface:
+                surface[k] = np.asarray(surface[k])[::-1, :]
+        for k in ("foot_outline", "outline", "standing"):
+            if k in surface:
+                surface[k] = flip(surface[k])
+    sole = None
+    if insole.sole is not None:
+        sole = insole.sole.copy()
+        sole.apply_transform(np.diag([1.0, -1.0, 1.0, 1.0]))  # trimesh re-winds the faces
+    return Insole(mesh=mesh, foot=other, params=insole.params, report=r, sole=sole, surface=surface)
 
 
 # ---------------------------------------------------------------------------
@@ -763,9 +969,43 @@ def fill_row(r: dict) -> str:
     outline's edge (a shoe's or the generic outline narrower than the foot), so the sheet doesn't give a height
     that isn't printed."""
     foot = r.get("foot_max_fill_mm")
-    if foot is None or foot <= r["max_fill_mm"] + FILL_PAST_EDGE_MM:
+    if foot is None or r.get("foot_max_fill_past_edge") is False or foot <= r["max_fill_mm"] + FILL_PAST_EDGE_MM:
         return f"{r['max_fill_mm']} mm"
     return f"{r['max_fill_mm']} mm on the insole ({foot} mm under the foot, past the outline's edge)"
+
+
+def arch_row(r: dict, p: InsoleParams) -> str | None:
+    """The sheet's arch support as printed: its highest point between the heel zone and the ball, which the sheet's
+    highest fill (the whole insole's) isn't when the heel's rounded back stands taller."""
+    a = r.get("arch_fill")
+    if not a:
+        return None
+    return (f"at most {a['max_mm']} mm above the base, {a['side']} side, {a['share']:.0%} of the foot's length from "
+            f"the heel (highest printed fill from {p.heel_zone:.0%} to {p.forefoot_from:.0%} of the length)")
+
+
+def heel_row(r: dict, p: InsoleParams) -> str:
+    """The sheet's heel cup: the depth asked for, and the rim as printed (the outline may leave no room for the
+    wall outside the heel on a side; the scanned heel's own rounded underside still forms a cup inside it)."""
+    asked = f"{p.heel_cup_depth_mm} mm (wall outside the scanned heel, where the outline leaves room)"
+    rim = r.get("heel_cup_rim_mm")
+    if not rim:
+        return asked
+    parts = [f"{rim[k]} mm {where}" for k, where in (("inner", "inner side"), ("back", "back"), ("outer", "outer side"))
+             if rim.get(k) is not None]
+    return f"{asked}; as printed, its rim stands {', '.join(parts)} above the base"
+
+
+def edge_row(r: dict, p: InsoleParams) -> str:
+    """The sheet's line on the insole's edge beyond the heel: its rounding, and how tall it stands at its tallest
+    (where the arch fill reaches the outline, the arch border is a place to check the skin for pressure marks)."""
+    e = r.get("edge_beyond_heel")
+    rounding = (f"top corner rounded to {p.edge_roll_mm:g} mm beyond the heel" if p.edge_roll_mm > 0 else
+                "square (not rounded)")
+    if not e:
+        return rounding
+    return (f"{rounding}; at its tallest {e['max_mm']} mm tall (base included), on the {e['side']} side "
+            f"{e['x']:.0f} mm from the back of the heel")
 
 
 # The break-in protocol (docs/SAFETY.md, requirement 2), as every summary sheet prints it: the insole's and the
@@ -801,7 +1041,7 @@ def summary_html(insole: Insole, scan_label: str, synthetic: bool = False) -> st
 <div class="safety"><b>NOT A MEDICAL DEVICE.</b> A homemade insole from a phone scan. It does not diagnose or treat
 anything and is not equivalent to, or a substitute for, a prescribed orthotic. Not for sport until signed below.</div>
 {synth}
-<h1>First-fit insole: {escape(insole.foot)} foot</h1>
+<h1>First-fit insole: {escape(insole.foot)} foot{f" (the {escape(r['mirrored_from'])} insole's mirror image)" if r.get('mirrored_from') else ""}</h1>
 <p>Scan: {escape(scan_label)}</p>
 
 <h2>What this device is</h2>
@@ -812,9 +1052,12 @@ anything and is not equivalent to, or a substitute for, a prescribed orthotic. N
 <table>
 <tr><th>Rearfoot posting</th><td>{p.posting_rearfoot_deg}&deg; (none)</td><th>Forefoot posting</th><td>{p.posting_forefoot_deg}&deg; (none)</td></tr>
 <tr><th>Arch fill</th><td>scanned sole &minus; {p.relief_mm} mm, capped at {p.max_arch_fill_mm} mm</td><th>Highest fill</th><td>{fill_row(r)}</td></tr>
-<tr><th>Heel cup depth</th><td>{p.heel_cup_depth_mm} mm (wall outside the scanned heel)</td><th>Base thickness</th><td>{p.base_mm} mm, {p.toe_base_mm} mm at toes</td></tr>
+<tr><th>Heel cup depth</th><td>{heel_row(r, p)}</td><th>Base thickness</th><td>{p.base_mm} mm, {p.toe_base_mm} mm at toes</td></tr>
+{f'<tr><th>Arch support as printed</th><td colspan="3">{arch_row(r, p)}</td></tr>' if arch_row(r, p) else ''}
+<tr><th>Edge</th><td colspan="3">{edge_row(r, p)}</td></tr>
 <tr><th>Stiffness</th><td colspan="3">Uniform (no lattice zones). Material and infill as printed: record below.</td></tr>
 <tr><th>Size</th><td colspan="3">{r['length_mm']} &times; {r['width_mm']} mm, {r['height_mm']} mm tall</td></tr>
+{f'<tr><th>Under the ball</th><td colspan="3">the top no more than {p.forefoot_cap_mm:g} mm above the base from {p.forefoot_full_at:.0%} of the foot\'s length (drawn down to it from {p.forefoot_from:.0%}): no lip where the ball spreads standing</td></tr>' if p.forefoot_cap_mm is not None else ''}
 {f'<tr><th>Under the toes</th><td colspan="3">no fill from {p.toes_flat_from:.0%} of the length (the toes lie flat when standing)</td></tr>' if p.toes_flat_from is not None else ''}
 {shoe_row(r.get('shoe_fit'), r.get('shoe_name'), p.target_length_mm, r.get('lengthened_mm'), r.get('outline_from'))}
 </table>
@@ -905,8 +1148,11 @@ def write_preview(insole: Insole, out_dir: Path, name: str = "insole") -> dict:
     return {k: str(v) for k, v in files.items() if v.exists()}
 
 
-def write_outputs(insole: Insole, out_dir: Path, name: str, scan_label: str, synthetic: bool = False) -> dict:
-    """insole.3mf, insole.stl, summary.html, print-notes.txt, insole.json and the 3-D preview in out_dir."""
+def write_outputs(insole: Insole, out_dir: Path, name: str, scan_label: str, synthetic: bool = False,
+                  paper: str = "letter") -> dict:
+    """insole.3mf, insole.stl, summary.html, print-notes.txt, insole.json, the 3-D preview and the paper template
+    (``<name>-template.pdf``, full size on ``paper``: footscan/template.py) in out_dir. A template that can't be
+    made (an insole wider than the page) leaves the rest as they are; insole.json says why."""
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
     tag = "SYNTHETIC TEST GEOMETRY, not a foot. " if synthetic else ""
@@ -916,6 +1162,16 @@ def write_outputs(insole: Insole, out_dir: Path, name: str, scan_label: str, syn
                  notes=out / "print-notes.txt", json=out / f"{name}.json")
     write_3mf(insole.mesh, files["threemf"], title=f"{tag}{name}", notes=notes, bed_mm=insole.params.bed_mm)
     insole.mesh.export(files["stl"])
+    from . import template
+
+    try:
+        pdf, info = template.make(insole, scan_label, paper=paper, synthetic=synthetic)
+        files["template"] = out / f"{name}-template.pdf"
+        files["template"].write_bytes(pdf)
+        insole.report["template"] = dict(paper=paper, **info)
+    except Exception as e:  # noqa: BLE001 - a paper check that can't be drawn mustn't cost the insole its files
+        insole.report["template"] = dict(paper=paper, error=f"{type(e).__name__}: {e}" if not isinstance(e, ValueError)
+                                         else str(e))
     files["summary"].write_text(summary_html(insole, scan_label, synthetic), encoding="utf-8")
     files["notes"].write_text(PRINT_NOTES, encoding="utf-8")
     files["json"].write_text(json.dumps(dict(synthetic=synthetic, params=asdict(insole.params), **insole.report), indent=2), encoding="utf-8")
