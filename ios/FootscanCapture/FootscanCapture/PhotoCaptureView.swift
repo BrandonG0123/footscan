@@ -36,6 +36,10 @@ struct PhotoCaptureView: View {
     @State private var unsavedPhotos = 0
     @State private var confirmDiscard = false
     @State private var stillSending = false
+    /// The screen stays on while this page is open: the studio's page takes its photos by itself as the phone goes
+    /// round, so nobody touches the screen, and iOS would dim and lock it partway (ending the camera). The page
+    /// asks for this itself too (a web wake lock), but a web view in an app can't be relied on to honour that.
+    @State private var releaseScreen: (() -> Void)?
 
     private var url: URL {
         var c = URLComponents(url: link.url.appending(path: "studio/capture.html"), resolvingAgainstBaseURL: false)!
@@ -73,6 +77,8 @@ struct PhotoCaptureView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { Task { await done() } } } }
             .interactiveDismissDisabled()
+            .onAppear { if releaseScreen == nil { releaseScreen = KeepAlive.screen() } }
+            .onDisappear { releaseScreen?(); releaseScreen = nil }
             .confirmationDialog("Discard \(unsavedPhotos) photo\(unsavedPhotos == 1 ? "" : "s")?", isPresented: $confirmDiscard,
                                 titleVisibility: .visible) {
                 Button("Discard and close", role: .destructive, action: onClose)
