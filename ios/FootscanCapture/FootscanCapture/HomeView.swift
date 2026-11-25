@@ -795,6 +795,10 @@ private struct InsolePath: View {
                         .foregroundStyle(i <= step ? .white : .white.opacity(0.45))
                         .multilineTextAlignment(.center)
                         .lineLimit(2).minimumScaleFactor(0.8) // "Make insole" takes two lines at the larger text sizes
+                        // Four labels share the card's width, so at the accessibility sizes they ran into each other
+                        // and "Make insole" was cut short. They stop growing at the largest standard size; the step
+                        // you're on is spelt out at full size above, and VoiceOver reads the whole card.
+                        .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
                 }
                 .frame(maxWidth: .infinity)
                 .background(alignment: .top) {
