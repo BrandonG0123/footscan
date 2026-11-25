@@ -624,7 +624,8 @@ private struct InsolePath: View {
                     node(i)
                     Text(steps[i].label).font(.caption2.weight(i == step ? .bold : .medium))
                         .foregroundStyle(i <= step ? .white : .white.opacity(0.45))
-                        .lineLimit(1).minimumScaleFactor(0.8)
+                        .multilineTextAlignment(.center)
+                        .lineLimit(2).minimumScaleFactor(0.8) // "Make insole" takes two lines at the larger text sizes
                 }
                 .frame(maxWidth: .infinity)
                 .background(alignment: .top) {
