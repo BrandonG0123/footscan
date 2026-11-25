@@ -554,6 +554,9 @@ private struct SubjectCard: View {
     let selected: Bool
     let firstTime: Bool
     var onTap: () -> Void
+    /// The card grows with the phone's text size, so a larger text setting doesn't cut its words off.
+    @ScaledMetric(relativeTo: .headline) private var width = 156.0
+    @ScaledMetric(relativeTo: .headline) private var minHeight = 150.0
 
     var body: some View {
         Button(action: onTap) {
@@ -569,12 +572,13 @@ private struct SubjectCard: View {
                 Text(subject.shortLabel).font(.headline).foregroundStyle(selected ? Color.fsBrandInk : Color.fsInk)
                     .lineLimit(1).minimumScaleFactor(0.8)
                 Text(firstTime ? "First time · \(subject.purpose)" : subject.purpose).font(.caption.weight(.semibold))
-                    .lineLimit(1).minimumScaleFactor(0.8)
+                    .lineLimit(2).minimumScaleFactor(0.8)
+                    .fixedSize(horizontal: false, vertical: true)
                     .foregroundStyle(selected ? Color.fsBrandInk.opacity(0.8) : Color.fsMuted)
             }
             .padding(14)
-            .frame(width: 156, alignment: .topLeading)
-            .frame(minHeight: 150, alignment: .topLeading)
+            .frame(width: min(width, 280), alignment: .topLeading) // at the largest sizes, still narrower than the screen
+            .frame(minHeight: minHeight, alignment: .topLeading)
             .background(selected ? Color.fsBrand : Color.fsSurface, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).stroke(selected ? .clear : Color.fsLine, lineWidth: 1))
             .shadow(color: selected ? Color.fsBrand.opacity(0.35) : .black.opacity(0.04), radius: selected ? 14 : 8, y: 6)
