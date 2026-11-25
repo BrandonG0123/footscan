@@ -34,6 +34,7 @@ import numpy as np
 ROOT = Path(__file__).resolve().parents[2]
 SPEC_PATH = ROOT / "review-spec.json"
 MM_PER_PX = 0.5
+HEEL_RIM_SHARE = 0.5  # a heel cup whose rim stands under this share of the depth asked for, on a side, is flagged
 
 DEFAULT_SPEC = dict(shoe="ASICS Gel Resolution X", size="US men's 9.5", target_length_mm=275.0,
                     target_length_source="size-chart insole length, not a ruler measurement",
@@ -190,6 +191,19 @@ def checks(ins_dir: Path, meta: dict, report: dict, mesh, spec: dict, other: dic
     cap = float(report["params"]["max_arch_fill_mm"])
     add("fill_cap", float(report["max_fill_mm"]) <= cap + 0.01,
         f"highest fill {report['max_fill_mm']} mm (cap {cap:g} mm)")
+
+    # The heel cup as printed (insole.heel_cup_rim): its wall only stands where the outline leaves room outside the
+    # heel, so a shoe's or the generic outline as narrow as the heel leaves a cup that is the heel's own rounded
+    # underside alone on that side. Under half the depth asked for on either side (HEEL_RIM_SHARE, a judgment) is
+    # flagged for a look: the sheet still says the depth asked for. Insoles made before the rim was recorded skip it
+    rim = report.get("heel_cup_rim_mm") or {}
+    if rim.get("inner") is not None and rim.get("outer") is not None:
+        depth = float(report["params"]["heel_cup_depth_mm"])
+        low = min(rim["inner"], rim["outer"])
+        add("heel_cup_rim", low >= HEEL_RIM_SHARE * depth,
+            f"the heel cup's rim stands {rim['inner']} mm on the inner side, {rim.get('back')} mm at the back, "
+            f"{rim['outer']} mm on the outer side above the base (asked for {depth:g} mm; flagged under "
+            f"{HEEL_RIM_SHARE * depth:g} mm on a side)")
 
     # The bed from the spec (the printer actually used), not the generator's default
     from .insole import bed_fit_shape
@@ -460,6 +474,8 @@ def _write_packet(data_dir, folder, meta, made, spec, work, out, read_json) -> N
                     foot_max_fill_at_mm=report.get("foot_max_fill_at_mm"), sole=report.get("sole"),
                     shoe_fit=report.get("shoe_fit"), shoe_name=report.get("shoe_name"),
                     outline_from=report.get("outline_from"), warnings=report.get("warnings", []),
+                    heel_cup_rim_mm=report.get("heel_cup_rim_mm"), edge_beyond_heel=report.get("edge_beyond_heel"),
+                    arch_fill=report.get("arch_fill"), foot_max_fill_past_edge=report.get("foot_max_fill_past_edge"),
                     frame=report.get("frame")),
         other_foot=other_info, other_note=other_note,
         checks=results, flags=[c["name"] for c in results if not c["ok"]],
@@ -512,7 +528,16 @@ def packet_markdown(p: dict) -> str:
               f"({i['frame']}).",
               *([f"- The foot's own highest fill is {i['foot_max_fill_mm']} mm, at x {i['foot_max_fill_at_mm']['x']}, "
                  f"y {i['foot_max_fill_at_mm']['y']} mm: past the outline's edge, so not printed."]
-                if (i.get("foot_max_fill_mm") or 0) > i["max_fill_mm"] + insole_mod.FILL_PAST_EDGE_MM else []),
+                if i.get("foot_max_fill_past_edge") is not False
+                and (i.get("foot_max_fill_mm") or 0) > i["max_fill_mm"] + insole_mod.FILL_PAST_EDGE_MM else []),
+              *([f"- Arch support as printed: {i['arch_fill']['max_mm']} mm above the base at most, "
+                 f"{i['arch_fill']['side']} side, {i['arch_fill']['share']:.0%} of the foot's length from the heel."]
+                if i.get("arch_fill") else []),
+              *([f"- Heel cup rim as printed: {i['heel_cup_rim_mm'].get('inner')} mm inner side, "
+                 f"{i['heel_cup_rim_mm'].get('back')} mm back, {i['heel_cup_rim_mm'].get('outer')} mm outer side, above "
+                 "the base."] if i.get("heel_cup_rim_mm") else []),
+              *([f"- Tallest edge forward of the heel: {i['edge_beyond_heel']['max_mm']} mm (base included), {i['edge_beyond_heel']['side']} "
+                 f"side, x {i['edge_beyond_heel']['x']} mm."] if i.get("edge_beyond_heel") else []),
               f"- Sole seen by the scan: {i['sole']['seen']:.0%} of the footprint, "
               f"{i['sole']['seen_under_arch']:.0%} under the arch." if i.get("sole") else "- Sole coverage: not recorded."]
     if p["other_foot"]:
