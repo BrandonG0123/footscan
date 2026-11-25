@@ -47,6 +47,8 @@ struct RootView: View {
         // a model build cut off by leaving the app starts again once it's back in front (and at once, if the
         // build only reported failing after the app came back)
         .onChange(of: library.interrupted) { _, cut in if !cut.isEmpty && scenePhase == .active { resumeBuilds() } }
+        // and once a capture that was on screen closes
+        .onChange(of: library.captureOnScreen) { _, on in if !on && scenePhase == .active { resumeBuilds() } }
         // and when the phone joins a network or Tailscale comes on: home again, say
         .onChange(of: network.changes) { sendWaiting() }
         .task(id: scenePhase) {
@@ -65,7 +67,12 @@ struct RootView: View {
 
     private func resumeBuilds() {
         guard !library.interrupted.isEmpty else { return }
-        Task { await library.resumeInterrupted(settings: settings, studio: studio) }
+        Task {
+            // a moment back in front first: SwiftUI can say the app is active before UIKit does, and the pass
+            // stops at once for an app that isn't
+            try? await Task.sleep(for: .seconds(1))
+            await library.resumeInterrupted(settings: settings, studio: studio)
+        }
     }
 }
 
@@ -84,6 +91,8 @@ struct HomeView: View {
     @State private var error: String?
     @State private var startAfterPrep: Subject?
     @State private var photoCapture: Subject?
+    /// A capture fills the screen (cut-off builds wait for it to close: ScanLibrary.captureOnScreen).
+    private var captureShown: Bool { capturing != nil || photoCapture != nil }
     /// Finding which of the studio's addresses answers before the camera page opens (up to 3 s): the button
     /// says so and can't be tapped again meanwhile.
     @State private var findingStudio: Subject?
@@ -183,6 +192,7 @@ struct HomeView: View {
                 }
             }
         }
+        .onChange(of: captureShown, initial: true) { _, on in library.captureOnScreen = on }
         .fullScreenCover(item: $capturing) { scan in
             CaptureView(scan: scan, retake: retake, onDone: { done in
                 capturing = nil
