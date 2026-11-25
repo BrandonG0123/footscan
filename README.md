@@ -144,7 +144,7 @@ options are on (Claude's look, the description reader, whether an API key is
 set; never the key itself), and when the iPhone app last got through and from
 which network (home network or Tailscale), or was turned away for an old key
 (scan the connect code again), and the last 20 requests that hit a problem the
-studio didn't expect (what was asked, the error, where in the code; the studio's
+studio didn't expect (what was asked, the error, where in the code, with a button to copy the list into a message; the studio's
 log has the rest). That is kept in memory from the studio's start.
 `GET /api/studio/status` answers the same.
 
