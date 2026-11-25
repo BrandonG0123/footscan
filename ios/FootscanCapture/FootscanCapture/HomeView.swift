@@ -124,6 +124,11 @@ struct HomeView: View {
         Subject(rawValue: subjectRaw).flatMap { subjects.contains($0) ? $0 : nil } ?? subjects[0]
     }
 
+    /// Pulling down also tries the scans waiting to go. The send runs on its own, so the spinner doesn't wait for it.
+    private func tryWaitingScans() {
+        Task { await library.sendWaiting(settings: settings, studio: studio) }
+    }
+
     var body: some View {
         NavigationStack(path: $path) {
             ScrollView {
@@ -155,7 +160,7 @@ struct HomeView: View {
             }
             .navigationDestination(for: Scan.self) { ScanDetailView(scan: $0, onScanAgain: scanAgain) }
             .modifier(NameScanAlert(scan: $naming))
-            .refreshable { library.reload(); sendWaiting() } // pulling down also tries the scans waiting to go, without holding the spinner
+            .refreshable { library.reload(); tryWaitingScans() }
         }
         .tint(.fsBrand)
         .sheet(isPresented: $showSettings) { SettingsView() }
