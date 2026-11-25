@@ -112,8 +112,10 @@ left rescan.
 3. **Level the ball of the foot.** The helper lays a book (anything flat
    and stiff) across the ball of the foot, from the big-toe joint to the
    little-toe joint. Both sides should touch it. If one doesn't, turn the
-   foot gently until it does, then take the book away and keep still. This
-   is the step the failed left scan missed.
+   foot gently until it does, then take the book away and keep still. (It
+   was written for the left scan 89df's rolled forefoot, which on 25 Nov
+   turned out to be the studio's old floor, not the foot: see above. It
+   still keeps the ball level, which the insole needs.)
 
    (This replaced "look along the sole: if the big-toe side is higher, turn
    the foot outward". The 8.6 mm on 89df is the big-toe side's height above
@@ -126,7 +128,9 @@ left rescan.
    repeats the checks under the box until you tap Start.
 5. The helper walks slowly all the way round, phone pointing down at the
    sole, until the ring fills. Then a **second lap**, closer, over the
-   arch, the toes and the back of the heel. Then Finish.
+   arch, the toes and the back of the heel, and low along the outer side of
+   the foot (the little-toe side), where the left scan 89df came out 8-21 mm
+   narrower than the right foot (above). Then Finish.
 6. Make insole in the studio and read the warnings before anything else. Any
    capitalised warning means scan again, not print.
 
