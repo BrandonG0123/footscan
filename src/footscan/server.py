@@ -42,6 +42,7 @@ PUT  /api/captures/<id>/calipers                        caliper readings of the 
 POST/GET /api/submissions/<id>/scans/<key>/recon[/<file>]   the same for a customer's scan
 GET  /api/captures/<id>/viewer.bin                      the 3-D model for the landmark viewer
 GET  /api/captures/<id>/mesh.ply                        an imported model as kept (PLY, mm), to download
+PUT  /api/captures/<id>/notes                           {notes}: change a capture's notes
 GET  /api/captures/<id>/thumb.png                       a picture of the 3-D model from above, for the library
 GET  /api/captures/<id>/picks                           landmark spec + saved picks (Phase 3)
 PUT  /api/captures/<id>/picks/<n>                       save pick n {landmarks: {name: [x, y, z]}} -> measurements
@@ -120,6 +121,7 @@ MAX_FRAME_BYTES = 8 * 1024 * 1024
 MAX_JSON_BYTES = 2 * 1024 * 1024
 MAX_FRAMES = 200
 MAX_MESH_BYTES = 150 * 1024 * 1024
+MAX_NOTES_CHARS = 2000  # a capture's notes
 MESH_TYPES = {"obj", "ply", "stl", "glb", "gltf", "off"}
 # New submissions per client per hour. Stops a script flooding the disk; a
 # real person makes one or two.
@@ -255,7 +257,7 @@ def validate_setup(body: dict) -> dict:
     out = dict(
         foot=foot, condition=cond, session=session, method=method, load_kg=load,
         measurable=not is_object,
-        notes=str(body.get("notes", ""))[:2000], device=str(body.get("device", ""))[:300],
+        notes=str(body.get("notes", ""))[:MAX_NOTES_CHARS], device=str(body.get("device", ""))[:300],
     )
     if not is_object:
         out["scan_kind"] = kind
@@ -1697,6 +1699,20 @@ def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check
                     write_json(d / "capture.json", meta)
                     return self.send_json({"ok": True, "mesh": stats, "accuracy": meta.get("accuracy"),
                                            "second_look": (check or {}).get("second_look")})
+            if p[1:] == ["notes"] and method == "PUT":
+                # a capture's notes changed afterwards (a scan from the iPhone app arrives without any): words only,
+                # nothing about the scan or its insole changes. Under the capture's lock, so a model or insole being
+                # written at the same time can't put the old notes back.
+                notes = self.json_body().get("notes")
+                if not isinstance(notes, str):
+                    raise BadRequest("notes must be text")
+                if len(notes) > MAX_NOTES_CHARS:
+                    raise BadRequest(f"notes can be at most {MAX_NOTES_CHARS} characters")
+                with capture_lock(d.name):
+                    meta = read_json(d / "capture.json")
+                    meta["notes"] = notes.strip()
+                    write_json(d / "capture.json", meta)
+                return self.send_json({"ok": True, "notes": meta["notes"]})
             if p[1:] == ["mesh.ply"] and method == "GET":
                 # an imported model (the iPhone app's, or a file imported) as the studio keeps it: scaled to mm,
                 # otherwise as it arrived (its own axes: Y up for the iPhone app's), to open in MeshLab or keep

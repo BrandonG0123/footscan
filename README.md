@@ -134,7 +134,9 @@ a picture of the model from above (drawn by the studio the first time, kept
 beside the model), so a bad scan (the other foot in the frame, a torn sole)
 shows at a glance; nothing is measured from it. Its **3D model** page says what
 the studio read from the file (size, faces, units) and downloads the model as
-the studio keeps it (PLY in millimetres). The top of the library lists
+the studio keeps it (PLY in millimetres). A search box finds captures by name,
+session or notes, and each card's notes can be added or changed (a scan from the
+iPhone app arrives with none). The top of the library lists
 insoles that need making again, with a button to remake them all (see
 [docs/insole.md](docs/insole.md)). *Status* in the studio's menu shows which
 commit the studio runs, since when, its free disk, what it holds, and which

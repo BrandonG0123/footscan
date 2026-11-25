@@ -120,7 +120,7 @@ function render() {
       </dl>
       ${c.accuracy?.error ? `<p class="hint" style="margin:8px 0 0;color:var(--warn)">${esc(c.accuracy.error)}</p>` : ""}
       ${c.accuracy && !c.accuracy.error ? `<p class="hint" style="margin:6px 0 0"><a href="/api/captures/${encodeURIComponent(c.capture_id)}/accuracy">Full accuracy report</a></p>` : ""}
-      ${c.notes ? `<p class="hint" style="margin:8px 0 0">${esc(c.notes)}</p>` : ""}
+      ${notesHtml(c)}
       <p class="btn-row" style="margin:10px 0 0">
         ${(c.status === "complete" && c.frame_files?.length && c.condition !== "object") || (imported && c.mesh)
           ? `<a class="btn secondary" href="/studio/model.html?capture=${encodeURIComponent(c.capture_id)}">3D model</a>` : ""}
@@ -205,6 +205,56 @@ document.addEventListener("change", (e) => {
     if (!takesLength(sel.value)) len.value = "";
     else if (!len.value && sel.value === "generic") len.value = lastShoeLength();
   }
+});
+
+// A capture's notes, changed on its card (a scan from the iPhone app arrives with none). What is being typed is
+// kept here, like the shoe form, so the list being drawn again doesn't lose it.
+const noteEdits = {}; // capture id -> {text, saving, msg}
+
+function notesHtml(c) {
+  const id = esc(c.capture_id), ed = noteEdits[c.capture_id];
+  if (!ed) {
+    return `<p class="hint notes" style="margin:8px 0 0">${c.notes ? esc(c.notes) : ""}
+      <button class="linkish" type="button" data-edit-notes="${id}">${c.notes ? "Edit notes" : "Add notes"}</button></p>`;
+  }
+  return `<form data-notes-form="${id}" style="margin:8px 0 0;display:grid;gap:8px">
+    <label class="hint" for="notes-${id}">Notes (the library's search finds them)</label>
+    <textarea id="notes-${id}" name="notes" rows="2" maxlength="2000">${esc(ed.text)}</textarea>
+    <p class="btn-row" style="margin:0"><button class="btn secondary" type="submit" ${ed.saving ? "disabled" : ""}>Save notes</button>
+      <button class="btn secondary" type="button" data-notes-cancel="${id}">Cancel</button>
+      <span class="hint" role="status">${esc(ed.msg || "")}</span></p></form>`;
+}
+
+document.addEventListener("input", (e) => {
+  const f = e.target.closest("[data-notes-form]");
+  if (f && noteEdits[f.dataset.notesForm]) noteEdits[f.dataset.notesForm].text = f.elements.notes.value;
+});
+document.addEventListener("click", (e) => {
+  const open = e.target.closest("[data-edit-notes]"), cancel = e.target.closest("[data-notes-cancel]");
+  if (open) {
+    const id = open.dataset.editNotes;
+    noteEdits[id] = { text: all.find((c) => c.capture_id === id)?.notes || "" };
+    render();
+    document.getElementById(`notes-${id}`)?.focus();
+  } else if (cancel) {
+    delete noteEdits[cancel.dataset.notesCancel];
+    render();
+  }
+});
+document.addEventListener("submit", async (e) => {
+  const f = e.target.closest("[data-notes-form]");
+  if (!f) return;
+  e.preventDefault();
+  const id = f.dataset.notesForm, ed = noteEdits[id];
+  ed.saving = true; ed.msg = "Saving…"; render();
+  const [ok, out] = await ask(`/api/captures/${encodeURIComponent(id)}/notes`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ notes: ed.text }),
+  });
+  if (!ok) { ed.saving = false; ed.msg = `Couldn't save: ${out.error}`; render(); return; }
+  delete noteEdits[id];
+  const c = all.find((x) => x.capture_id === id);  // the list as it is now (it may have been loaded again)
+  if (c) c.notes = out.notes;
+  render();
 });
 
 // Save a shoe's-insole scan as a saved shoe: its outline, kept for that shoe model and size. A small form on the

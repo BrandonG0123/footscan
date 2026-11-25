@@ -186,3 +186,18 @@ def test_a_downloaded_insole_is_named_by_its_foot_and_length_so_a_pair_cant_be_m
 
     folder = data / "captures" / cid
     assert insole_download_name(folder, folder / "insole", "insole.3mf") == f"{cid}-insole.3mf"
+
+
+def test_a_captures_notes_can_be_changed_afterwards_and_nothing_else_moves(servers):
+    op, phone, data = servers
+    cid = _imported(op)
+    before = body(call(f"{op}/api/captures/{cid}"))
+    status, raw, _ = call(f"{op}/api/captures/{cid}/notes", "PUT", {"notes": "  Adidas tennis sock, standing \n"})
+    assert status == 200 and body((status, raw))["notes"] == "Adidas tennis sock, standing"
+    after = body(call(f"{op}/api/captures/{cid}"))
+    assert after["notes"] == "Adidas tennis sock, standing"
+    assert {k: v for k, v in after.items() if k != "notes"} == {k: v for k, v in before.items() if k != "notes"}
+    assert call(f"{op}/api/captures/{cid}/notes", "PUT", {"notes": 5})[0] == 400
+    assert call(f"{op}/api/captures/{cid}/notes", "PUT", {"notes": "x" * 2001})[0] == 400
+    assert call(f"{phone}/api/captures/{cid}/notes", "PUT", {"notes": "from the Wi-Fi"})[0] == 403
+    assert body(call(f"{op}/api/captures/{cid}"))["notes"] == "Adidas tennis sock, standing"
