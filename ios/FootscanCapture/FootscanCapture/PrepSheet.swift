@@ -37,7 +37,7 @@ extension Subject {
             ("arrow.up", "Bend this knee, sole up", "Lower leg straight up, sole to the ceiling, ankle relaxed. Don't point the foot or pull the toes back; let the toes lie straight, not curled."),
             ("ruler.fill", "The ball of the foot level", "Your helper lays a book (anything flat and stiff) across the ball of the foot: the big-toe side and the little-toe side should both touch it. If one doesn't, turn the foot gently until it does, then take the book away."),
             ("shoeprints.fill", "Bare foot or a thin sock", "Nothing loose or thick."),
-            ("person.2.fill", "A helper scans, two laps", "They circle the foot slowly, phone pointing down at the sole, until the ring is full; then a second lap, closer, over the toes and the back of the heel. You keep still."),
+            ("person.2.fill", "A helper scans, two laps", "They circle the foot slowly, phone pointing down at the sole, until the ring is full; then a second lap, closer, over the arch, the toes and the back of the heel, and low along the outer (little-toe) side. You keep still."),
         ]
         case .rightSoleFlat, .leftSoleFlat: [
             ("bed.double.fill", "Lie face down, legs straight", "Feet just past the end of the bed: ankles at the edge, feet hanging relaxed."),
