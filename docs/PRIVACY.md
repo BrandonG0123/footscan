@@ -17,6 +17,7 @@ it to. Nothing goes to the app's developer, and there are no accounts, ads, anal
 | Photos and depth readings of your foot, and the 3-D model built from them (3D capture) | To make the model an insole can be designed from | On your iPhone, in the app's own storage, which you can also see in the Files app under Footscan |
 | Photos of your foot on the printed mat (Photos + mat) | The studio builds the 3-D model from them | Held only in the photo page while you take them, then sent to your studio when you tap Save to library (Discard sends nothing); not saved on the phone |
 | What each scan is of (which foot, sole up or a foam print), the date, your phone model and iOS version | So the studio can tell scans apart and read them the right way | With the scan on your iPhone |
+| A name you give a scan, if you give one (such as whose foot it is) | To tell scans of the same kind apart on the phone | With the scan on your iPhone; it isn't sent to the studio |
 | A bathroom-scale reading, if you enter one: how much weight was on the foot during a loaded scan | The studio needs it to read a loaded foot scan | With the scan on your iPhone |
 | The address and key of your studio | To send scans to it | The address in the app's settings; the key in the iPhone's Keychain, on this phone only |
 | Your settings (for example, whether to send scans automatically) | So you're asked things once | In the app's settings on your iPhone |
