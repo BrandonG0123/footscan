@@ -12,17 +12,20 @@ enum BatteryCheck {
     /// simulator).
     static func note(level: Float, state: UIDevice.BatteryState) -> String? {
         guard state == .unplugged, level >= 0, level < low else { return nil }
-        // rounded down, so a level under the line never shows as the line itself
-        return "Battery at \(Int(level * 100))%. A scan uses a lot of it (a 3D scan's model is built on the phone too), "
+        // to the nearest percent, as the status bar shows it (0.13 is 12.99999 as a Float), but never shown as the
+        // line itself or over it
+        let percent = min(Int((level * 100).rounded()), Int((low * 100).rounded()) - 1)
+        return "Battery at \(percent)%. A scan uses a lot of it (a 3D scan's model is built on the phone too), "
             + "and the phone turning off partway would end the scan. Plug it in if you can."
     }
 
+    /// Start reading the battery. Called when the app starts and left on (it costs next to nothing): straight after
+    /// it is switched on, iOS can still report the level and state as unknown, which would skip the note.
+    @MainActor static func watch() { UIDevice.current.isBatteryMonitoringEnabled = true }
+
     /// The phone's own reading, now.
     @MainActor static func now() -> String? {
-        let device = UIDevice.current
-        let wasOn = device.isBatteryMonitoringEnabled
-        device.isBatteryMonitoringEnabled = true
-        defer { device.isBatteryMonitoringEnabled = wasOn }
-        return note(level: device.batteryLevel, state: device.batteryState)
+        watch()
+        return note(level: UIDevice.current.batteryLevel, state: UIDevice.current.batteryState)
     }
 }

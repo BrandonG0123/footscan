@@ -513,6 +513,9 @@ struct BatteryBeforeAScan {
         #expect(note?.hasPrefix("Battery at 12%.") == true)
         // just under the line reads as under it, never as the line itself
         #expect(BatteryCheck.note(level: 0.196, state: .unplugged)?.hasPrefix("Battery at 19%.") == true)
+        // as the status bar shows it: 0.13 as a Float is 12.99999, which mustn't read as 12%
+        #expect(BatteryCheck.note(level: 0.13, state: .unplugged)?.hasPrefix("Battery at 13%.") == true)
+        #expect(BatteryCheck.note(level: 0.19, state: .unplugged)?.hasPrefix("Battery at 19%.") == true)
     }
 
     @Test func chargingOrEnoughOrUnknownSaysNothing() {
