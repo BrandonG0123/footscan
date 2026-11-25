@@ -219,7 +219,7 @@ function notesHtml(c) {
       <button class="linkish" type="button" data-edit-notes="${id}">${c.notes ? "Edit notes" : "Add notes"}</button></p>`;
   }
   return `<form data-notes-form="${id}" style="margin:8px 0 0;display:grid;gap:8px">
-    <label class="hint" for="notes-${id}">Notes (the library's search finds them)</label>
+    <label class="hint" for="notes-${id}">Notes (the library's search finds them; Ctrl or ⌘ + Enter saves, Esc cancels)</label>
     <textarea id="notes-${id}" name="notes" rows="2" maxlength="2000">${esc(ed.text)}</textarea>
     <p class="btn-row" style="margin:0"><button class="btn secondary" type="submit" ${ed.saving ? "disabled" : ""}>Save notes</button>
       <button class="btn secondary" type="button" data-notes-cancel="${id}">Cancel</button>
@@ -240,7 +240,15 @@ document.addEventListener("click", (e) => {
   } else if (cancel) {
     delete noteEdits[cancel.dataset.notesCancel];
     render();
+    focusNotesButton(cancel.dataset.notesCancel);
   }
+});
+// In the notes box: Ctrl/Cmd+Enter saves, Escape puts it back as it was (Enter alone is a new line)
+document.addEventListener("keydown", (e) => {
+  const f = e.target.closest?.("[data-notes-form]");
+  if (!f || e.target.name !== "notes") return;
+  if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); f.requestSubmit(); }
+  else if (e.key === "Escape") { e.preventDefault(); f.querySelector("[data-notes-cancel]")?.click(); }
 });
 document.addEventListener("submit", async (e) => {
   const f = e.target.closest("[data-notes-form]");
@@ -256,7 +264,10 @@ document.addEventListener("submit", async (e) => {
   const c = all.find((x) => x.capture_id === id);  // the list as it is now (it may have been loaded again)
   if (c) c.notes = out.notes;
   render();
+  focusNotesButton(id);
 });
+// back on the card's Add/Edit notes button once the box closes, so the keyboard carries on from where it was
+const focusNotesButton = (id) => document.querySelector(`[data-edit-notes="${CSS.escape(id)}"]`)?.focus();
 
 // Save a shoe's-insole scan as a saved shoe: its outline, kept for that shoe model and size. A small form on the
 // card (not the browser's prompt boxes, which a phone shows one at a time over the page)
