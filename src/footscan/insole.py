@@ -950,7 +950,8 @@ def arch_trial(insole: Insole):
                   arch_fill_mm=arch["max_mm"] if holds_arch else None,
                   # placed as the insole is, so its infill and walls run the same way across the arch
                   angle_deg=float(insole.report.get("bed_fit", {}).get("angle_deg", 0.0)),
-                  bed_fit=bed_fit_shape(np.asarray(mesh.vertices)[:, :2], p.bed_mm))
+                  # (a 50 mm piece fits at any angle the insole itself fits at)
+                  fits_bed=bool(bed_fit_shape(np.asarray(mesh.vertices)[:, :2], p.bed_mm)["fits"]))
     return mesh, report
 
 

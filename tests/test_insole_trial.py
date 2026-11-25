@@ -33,7 +33,7 @@ def test_the_arch_trial_is_one_closed_piece_cut_across_the_arch_supports_highest
     assert rep["from_mm"] == round(a, 1) and rep["to_mm"] == round(b, 1)
     assert 0.1 < rep["share_of_insole"] < 0.4  # a fraction of the print
     assert rep["arch_fill_mm"] == right.report["arch_fill"]["max_mm"]
-    assert rep["bed_fit"]["fits"]
+    assert rep["fits_bed"] is True
 
 
 def test_the_arch_trial_stays_inside_the_insole():
