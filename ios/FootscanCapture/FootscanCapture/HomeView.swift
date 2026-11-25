@@ -69,6 +69,14 @@ struct HomeView: View {
     @State private var cameraOff: CameraAccess?
     /// iOS is asking whether Footscan may use the camera: the Scan button waits for the answer.
     @State private var askingCamera = false
+    /// The battery is low: asked before the camera opens (Scan anyway, or not now).
+    @State private var lowBattery: LowBattery?
+
+    struct LowBattery: Identifiable {
+        let subject: Subject
+        let note: String
+        var id: String { subject.rawValue }
+    }
 
     struct PrepRequest: Identifiable {
         let subject: Subject
@@ -117,6 +125,14 @@ struct HomeView: View {
             .refreshable { library.reload() }
         }
         .tint(.fsBrand)
+        .confirmationDialog("The battery is low", isPresented: Binding(get: { lowBattery != nil },
+                                                                       set: { if !$0 { lowBattery = nil } }),
+                            titleVisibility: .visible, presenting: lowBattery) { low in
+            Button("Scan anyway") { begin(low.subject, batteryAsked: true) }
+            Button("Not now", role: .cancel) {}
+        } message: { low in
+            Text(low.note)
+        }
         .sheet(isPresented: $showSettings) { SettingsView() }
         .sheet(isPresented: $showStudio) { StudioView() }
         // The camera opens only once the get-ready sheet has fully gone:
@@ -404,7 +420,8 @@ struct HomeView: View {
         prep = PrepRequest(subject: rec.subject, mustTick: false, retake: retake)
     }
 
-    private func begin(_ s: Subject) {
+    /// `batteryAsked`: the person saw the low-battery question and chose to scan anyway.
+    private func begin(_ s: Subject, batteryAsked: Bool = false) {
         switch CameraAccess.state() {
         case .allowed:
             cameraOff = nil
@@ -446,6 +463,10 @@ struct HomeView: View {
         if let problem = DiskSpace.captureProblem() {
             withAnimation(.smooth) { error = problem }
             UINotificationFeedbackGenerator().notificationOccurred(.warning)
+            return
+        }
+        if !batteryAsked, let note = BatteryCheck.now() {
+            lowBattery = LowBattery(subject: s, note: note)
             return
         }
         do {
