@@ -26,7 +26,11 @@ final class StudioConnection {
     func connect(_ text: String) async -> Bool {
         // one at a time: two codes connecting at once would leave whichever answered last, and waiting scans
         // would go there
-        guard !connecting else { return false }
+        guard !connecting else {
+            // said on the studio screen, so a code that came in meanwhile (a link, a screenshot) isn't lost unseen
+            status = Self.busyConnecting
+            return false
+        }
         connecting = true
         defer { connecting = false }
         pendingSwitch = nil // connecting any way answers the question
@@ -63,6 +67,8 @@ final class StudioConnection {
     /// A connect code that came from outside the app (a link, or the iPhone's own Camera app) for a different
     /// studio from the connected one, waiting for a yes on the studio screen. The studio's own Scan the code and
     /// screenshot paths don't ask: the person chose to connect there.
+    nonisolated static let busyConnecting = "Still checking the last code. Once it has finished, use the new one again."
+
     var pendingSwitch: (code: String, address: String, at: Date)?
     /// A connect is under way (checking the studio answers): another waits until it's done.
     private(set) var connecting = false
@@ -95,6 +101,7 @@ final class StudioConnection {
     /// Yes to the pending switch: connect to the studio the link named.
     func confirmSwitch() async {
         guard let pending = currentSwitch() else { pendingSwitch = nil; return }
+        guard !connecting else { status = Self.busyConnecting; return } // the question stays, to answer once it's done
         pendingSwitch = nil
         _ = await connect(pending.code)
     }
