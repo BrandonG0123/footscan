@@ -11,6 +11,7 @@ struct ScanDetailView: View {
     @Environment(StudioConnection.self) private var studio
     @Environment(AppSettings.self) private var settings
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.dynamicTypeSize) private var typeSize
     @State private var loadText = ""
     @State private var showStudio = false
     @State private var confirmDelete = false
@@ -338,8 +339,14 @@ struct ScanDetailView: View {
     }
 
     private func row(_ k: String, _ v: String) -> some View {
-        HStack(alignment: .firstTextBaseline) {
-            Text(k).font(.subheadline).foregroundStyle(Color.fsMuted).frame(width: 110, alignment: .leading)
+        // At the accessibility text sizes a 110-point name column would wrap every name a word to a line, so the
+        // name goes above its value instead.
+        let layout = typeSize.isAccessibilitySize
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 2))
+            : AnyLayout(HStackLayout(alignment: .firstTextBaseline))
+        return layout {
+            Text(k).font(.subheadline).foregroundStyle(Color.fsMuted)
+                .frame(width: typeSize.isAccessibilitySize ? nil : 110, alignment: .leading)
             Text(v).font(.subheadline).foregroundStyle(Color.fsInk)
         }
     }
