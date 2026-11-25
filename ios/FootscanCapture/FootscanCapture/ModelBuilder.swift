@@ -49,6 +49,7 @@ final class ModelBuilder {
             var rec = scan.record
             rec?.modelBuiltOnPhone = true
             rec?.modelSeconds = Date().timeIntervalSince(started).rounded()
+            rec?.error = nil // an earlier failed try (shown as "Last problem") no longer applies
             if let rec { scan.save(rec) }
             phase = .done
         } catch {
