@@ -37,7 +37,8 @@ allows TestFlight.)
    capture**. Walk slowly all the way round; when the ring is full, do
    **Another lap** higher up, looking down, then **Finish**.
 4. The phone builds the model (a few minutes; keep the app open).
-5. **Send model.obj** > AirDrop to the Mac.
+5. Under *Share*, tap **.obj** > AirDrop to the Mac. The file is named after
+   the scan, for example `Calibration object 2026-11-18 110640.obj`.
 6. In the studio: **Import 3D** > *The calibration object (accuracy test)* >
    choose the file > Import. The score appears straight away, and in the
    research library. Type your caliper readings of the print into the
@@ -47,9 +48,9 @@ allows TestFlight.)
 Or from the command line:
 
 ```bash
-.venv/bin/footscan accuracy-mesh ~/Downloads/model.obj -o reports/lidar-calib.json
+.venv/bin/footscan accuracy-mesh ~/Downloads/"Calibration object 2026-11-18 110640.obj" -o reports/lidar-calib.json
 # with caliper readings of the print:
-.venv/bin/footscan accuracy-mesh ~/Downloads/model.obj --calipers calipers.json
+.venv/bin/footscan accuracy-mesh ~/Downloads/"Calibration object 2026-11-18 110640.obj" --calipers calipers.json
 ```
 
 It reports the same numbers as the photo pipeline's study: surface
