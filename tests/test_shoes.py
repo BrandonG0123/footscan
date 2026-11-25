@@ -69,7 +69,10 @@ def test_feet_of_different_sizes_in_the_same_saved_shoe_get_the_same_outline(tmp
     # ...the saved shoe's doesn't: the same outline (placed round each foot, so compared by size, not position)
     assert _outline_area(fitted[1]) == pytest.approx(_outline_area(fitted[0]), rel=0.01)
     for f in fitted:
-        assert f.report["length_mm"] == pytest.approx(s["length_mm"], abs=1.5)  # as placed (turned a little)
+        assert f.report["shoe_fit"]["outline_length_mm"] == pytest.approx(s["length_mm"], abs=0.1)  # its own shape
+        # as placed, turned round the foot: the small foot's by 6.75 degrees since the foot's axis runs down the
+        # middle of its footprint (25 Nov; 4.75 before), which reads 269.0 mm along the foot of 271.3
+        assert f.report["length_mm"] == pytest.approx(s["length_mm"], abs=3.0)
         assert f.report["outline_from"] == "shoe" and f.report["shoe_name"] == "Test Trainer, 9.5"
     assert own[0].report["outline_from"] == "foot"
     # the top under the foot is still the foot's

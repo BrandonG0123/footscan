@@ -44,11 +44,23 @@ The two left scans fail for different reasons:
    scan's centre, which the shin pulls over the heel, and which face that
    was changed with how the foot was held: turned a few degrees before
    preparing, 89df read 228.5-250.2 mm long and "rolled" 7.9-16.9 mm. Laid
-   where the sole stands (docs/insole.md), it reads 225.0 x 80.5 mm, its
+   where the sole stands (docs/insole.md), it reads 225.1 x 80.5 mm, its
    heel and both sides of the ball on the floor, the ball level to 1.0 mm,
    whichever way it's turned. It is still refused: 18 mm shorter than the
    right foot's 2349 (243.1 mm). Whether the left foot really is shorter
    needs a ruler length of the left foot.
+   It is narrower too, and on one side only. Mirrored and laid over 2349,
+   lined up at the heel's back and its inner edge (both prepared as Make
+   insole does, the outline below 30 mm, 25 Nov), the inner edges run within about 4 mm of each other from heel to
+   ball; the outer edge of 89df is 8-10 mm further in along the heel and
+   arch and 15-21 mm further in across the ball (150-190 mm from the heel),
+   and its toes end 18 mm sooner. Up to 120 mm above the floor it is no
+   wider, so the outer side isn't raised out of the outline: it isn't in the
+   model. The shin leans back about 20 degrees in both scans, so the ankle
+   was held the same way. So the likeliest reading is that the outer side
+   and the front of the toes weren't captured, not that the left foot is
+   that much smaller: the retake should take the phone low along the
+   outside of the foot and round the toes.
 3. **Short captures.** 35 and 41 photos, one lap each. The right scan also
    had one lap and came out fine, so this isn't proven to be a cause, but a
    second, closer lap over the toes and the back of the heel is cheap.
