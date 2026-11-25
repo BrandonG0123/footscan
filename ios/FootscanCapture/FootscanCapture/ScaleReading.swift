@@ -35,7 +35,7 @@ enum ScaleReading {
     /// shows 150 lb again when the scan is opened.
     static func kilograms(_ text: String, unit: ScaleUnit) -> Double? {
         let plain = text.trimmingCharacters(in: .whitespacesAndNewlines).replacingOccurrences(of: ",", with: ".")
-        guard plain.wholeMatch(of: /[0-9]+(\.[0-9]*)?|\.[0-9]+/) != nil, let value = Double(plain) else { return nil }
+        guard plain.wholeMatch(of: #/[0-9]+(\.[0-9]*)?|\.[0-9]+/#) != nil, let value = Double(plain) else { return nil }
         let kg = (unit.kilograms(value) * 100).rounded() / 100
         return kg > 0 && kg < studioLimitKg ? kg : nil
     }
