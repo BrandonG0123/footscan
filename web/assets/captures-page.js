@@ -122,7 +122,7 @@ function render() {
       ${c.accuracy && !c.accuracy.error ? `<p class="hint" style="margin:6px 0 0"><a href="/api/captures/${encodeURIComponent(c.capture_id)}/accuracy">Full accuracy report</a></p>` : ""}
       ${c.notes ? `<p class="hint" style="margin:8px 0 0">${esc(c.notes)}</p>` : ""}
       <p class="btn-row" style="margin:10px 0 0">
-        ${c.status === "complete" && c.frame_files?.length && c.condition !== "object"
+        ${(c.status === "complete" && c.frame_files?.length && c.condition !== "object") || (imported && c.mesh)
           ? `<a class="btn secondary" href="/studio/model.html?capture=${encodeURIComponent(c.capture_id)}">3D model</a>` : ""}
         ${c.foot && (c.frame_files?.length || c.mesh)
           ? `<a class="btn secondary" href="/studio/landmarks.html?capture=${encodeURIComponent(c.capture_id)}">Landmarks</a>` : ""}

@@ -38,6 +38,7 @@ async function init() {
     meta = ok ? one : {};
     $("title").textContent = meta.condition === "calibration" ? "Calibration object" :
       meta.foot ? `${meta.foot} foot · ${meta.condition}` : `${meta.condition || "Capture"}`;
+    if (meta.method === "imported_mesh") return importedCard(meta);  // nothing to build: it came as a model
   } else {
     $("back").innerHTML = `Submission <a class="mono" href="/studio/submission.html?id=${esc(submission)}">${esc(submission)}</a> · scan ${esc(scanKey)}`;
     meta = { condition: scanKey?.split("-")[1] };
@@ -213,6 +214,33 @@ function filesCard(s) {
   return `<section class="card"><h2 style="margin:0 0 10px;font-size:1.2rem">Files</h2>
     <div class="files">${s.files.map((f) => `<a class="btn secondary" href="${api}/${f}">${esc(NAMES[f] || f)}</a>`).join("")}</div>
     <p class="hint" style="margin:10px 0 0">Millimetres. PLY opens in MeshLab, Blender, or most slicers.</p></section>`;
+}
+
+// A scan that arrived as a 3-D model (the iPhone app, or Import a 3D scan) has no photos to build from: what the
+// studio read from it, and where to go next, instead of a Build button the studio would refuse.
+function importedCard(c) {
+  const m = c.mesh;
+  const id = encodeURIComponent(capture);
+  if (!m) {
+    $("root").innerHTML = `<section class="card"><h2 style="margin:0;font-size:1.2rem">No model yet</h2>
+      <p class="muted" style="margin:8px 0 0">This capture was started for a 3-D model that hasn't arrived. Send it again from the
+      iPhone app, or use <a href="/studio/import.html">Import a 3D scan</a>.</p></section>`;
+    return;
+  }
+  const units = m.units_detected === "m" ? "metres" : m.units_detected === "cm" ? "centimetres" : "millimetres";
+  $("root").innerHTML = `<section class="card"><h2 style="margin:0;font-size:1.2rem">Arrived as a 3-D model</h2>
+    <p class="muted" style="margin:8px 0 0">It came from the iPhone app or an imported file, so there are no photos to
+      build from: the model as sent is what the studio uses. ${c.foot ? "Landmarks and Make insole work from it." : ""}</p>
+    <dl class="big">
+      <div><dt>Size</dt><dd>${m.extents_mm.map((v) => esc(v)).join(" × ")} mm<small>longest side first</small></dd></div>
+      <div><dt>Surface</dt><dd>${Number(m.faces).toLocaleString()} faces<small>${m.watertight ? "closed" : "open"}, ${Number(m.vertices).toLocaleString()} points</small></dd></div>
+      <div><dt>Units in the file</dt><dd>${esc(units)}<small>scaled by ${esc(m.scale_to_mm)} to mm</small></dd></div>
+    </dl>
+    <p class="btn-row" style="margin:14px 0 0">
+      <a class="btn secondary" href="/api/captures/${id}/mesh.ply" download>Download the model (PLY, mm)</a>
+      ${c.foot ? `<a class="btn secondary" href="/studio/landmarks.html?capture=${id}">Landmarks</a>` : ""}
+      <a class="btn secondary" href="/studio/captures.html#${esc(capture)}">Its card in the library</a>
+    </p></section>`;
 }
 
 function render(s) {

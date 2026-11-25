@@ -41,6 +41,7 @@ GET  /api/captures/<id>/recon/<file>                    mesh.ply, report.json, .
 PUT  /api/captures/<id>/calipers                        caliper readings of the calibration object
 POST/GET /api/submissions/<id>/scans/<key>/recon[/<file>]   the same for a customer's scan
 GET  /api/captures/<id>/viewer.bin                      the 3-D model for the landmark viewer
+GET  /api/captures/<id>/mesh.ply                        an imported model as kept (PLY, mm), to download
 GET  /api/captures/<id>/thumb.png                       a picture of the 3-D model from above, for the library
 GET  /api/captures/<id>/picks                           landmark spec + saved picks (Phase 3)
 PUT  /api/captures/<id>/picks/<n>                       save pick n {landmarks: {name: [x, y, z]}} -> measurements
@@ -1692,6 +1693,14 @@ def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check
                     write_json(d / "capture.json", meta)
                     return self.send_json({"ok": True, "mesh": stats, "accuracy": meta.get("accuracy"),
                                            "second_look": (check or {}).get("second_look")})
+            if p[1:] == ["mesh.ply"] and method == "GET":
+                # an imported model (the iPhone app's, or a file imported) as the studio keeps it: scaled to mm,
+                # otherwise as it arrived (its own axes: Y up for the iPhone app's), to open in MeshLab or keep
+                meta = read_json(d / "capture.json")
+                if meta.get("method") != "imported_mesh" or not (d / "mesh.ply").is_file():
+                    raise FileNotFoundError
+                return self.send_file(d / "mesh.ply", "application/octet-stream", headers={
+                    "Content-Disposition": f'attachment; filename="{p[0]}.ply"'})
             if p[1:] == ["thumb.png"] and method == "GET":
                 # a picture of the model from above, for the library (thumbnails.py): drawn once per model version
                 from . import thumbnails

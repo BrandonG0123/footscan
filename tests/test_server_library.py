@@ -156,3 +156,14 @@ def test_the_way_a_request_came_is_named_by_its_address():
     assert app_asked("PUT", "/api/captures/LIDAR_x_1/mesh") == "sent a scan's model"
     assert app_asked("POST", "/api/captures") == "started sending a scan"
     assert app_asked("GET", "/api/captures/LIDAR_x_1") == "GET /api/captures"
+
+
+def test_an_imported_model_can_be_downloaded_as_kept_but_only_by_the_studio(servers):
+    op, phone, data = servers
+    cid = _imported(op)
+    status, raw, h = call(f"{op}/api/captures/{cid}/mesh.ply")
+    assert status == 200 and raw == (data / "captures" / cid / "mesh.ply").read_bytes() and raw.startswith(b"ply")
+    assert h["Content-Disposition"] == f'attachment; filename="{cid}.ply"'
+    assert call(f"{phone}/api/captures/{cid}/mesh.ply")[0] == 403  # a foot's shape: the studio's only
+    photo = body(call(f"{op}/api/captures", "POST", {"condition": "object", "session": "S1"}))["id"]
+    assert call(f"{op}/api/captures/{photo}/mesh.ply")[0] == 404  # photos only: its model is under recon/
