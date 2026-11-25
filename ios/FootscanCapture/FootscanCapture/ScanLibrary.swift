@@ -234,24 +234,33 @@ final class ScanLibrary {
     nonisolated static func workingDataToRemove(_ scans: [Scan]) -> [URL] {
         let fm = FileManager.default
         return scans.filter { $0.hasModel && $0.hasOBJ }.map(\.checkpoint).filter { folder in
-            !((try? fm.contentsOfDirectory(atPath: folder.path()))?.isEmpty ?? true)
+            !((try? fm.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil))?.isEmpty ?? true)
         }
     }
 
-    /// Empty those Checkpoint folders (the folders stay, so nothing else changes). The photos and models stay.
-    /// Waits for nothing: refused while anything is building, checking or sending.
-    func removeWorkingData() async {
-        guard !busy else { return }
-        let folders = Self.workingDataToRemove(scans)
-        await Task.detached(priority: .utility) {
-            let fm = FileManager.default
-            for folder in folders {
-                for item in (try? fm.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)) ?? [] {
-                    try? fm.removeItem(at: item)
-                }
+    /// Empty these folders: what's in them goes, the folders themselves stay. Runs anywhere.
+    nonisolated static func empty(_ folders: [URL]) {
+        let fm = FileManager.default
+        for folder in folders {
+            for item in (try? fm.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)) ?? [] {
+                try? fm.removeItem(at: item)
             }
-        }.value
-        reload()
+        }
+    }
+
+    /// Removing working data now: Settings' button waits for it.
+    private(set) var removingWorkingData = false
+
+    /// Empty the Checkpoint folders of built models (`workingDataToRemove`). The photos and models stay. -> false
+    /// when refused because something is building, checking or sending (or a removal is already running).
+    @discardableResult
+    func removeWorkingData() async -> Bool {
+        guard !busy, !removingWorkingData else { return false }
+        removingWorkingData = true
+        defer { removingWorkingData = false; reload() }
+        let folders = Self.workingDataToRemove(scans)
+        await Task.detached(priority: .utility) { Self.empty(folders) }.value
+        return true
     }
 
     /// Bytes used by these scan folders (photos, working data, models).

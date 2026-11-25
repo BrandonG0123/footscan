@@ -19,6 +19,7 @@ struct SettingsView: View {
     /// Of that, working data no built model needs any more (ScanLibrary.workingDataToRemove).
     @State private var workingData: Int64 = 0
     @State private var confirmRemoveWorking = false
+    @State private var removeRefused = false
 
     var body: some View {
         @Bindable var settings = settings
@@ -69,7 +70,7 @@ struct SettingsView: View {
                                 Label("Remove working data", systemImage: "externaldrive.badge.minus")
                             }
                         }
-                        .disabled(library.busy)
+                        .disabled(library.busy || library.removingWorkingData)
                     }
                     Button(role: .destructive) { confirmDeleteAll = true } label: {
                         Label("Delete all scans", systemImage: "trash")
@@ -78,7 +79,8 @@ struct SettingsView: View {
                 } header: {
                     Text("Storage")
                 } footer: {
-                    Text(library.busy ? "A scan is still building or sending; delete once it has finished."
+                    Text(removeRefused ? "A scan started building or sending, so nothing was removed. Try again once it has finished."
+                     : library.busy ? "A scan is still building or sending; delete scans or remove working data once it has finished."
                                   : workingData > 0 ? "Working data is what the phone used while building each model. Once a model is built it isn't needed: removing it keeps every scan's photos and model. Scans already sent stay in the studio."
                                   : "Scans already sent stay in the studio.")
                 }
@@ -100,7 +102,7 @@ struct SettingsView: View {
             .sheet(isPresented: $showStudio) { StudioView() }
             .confirmationDialog("Remove the working data of built models?", isPresented: $confirmRemoveWorking, titleVisibility: .visible) {
                 Button("Remove \(ByteCountFormatter.string(fromByteCount: workingData, countStyle: .file))", role: .destructive) {
-                    Task { await library.removeWorkingData() }
+                    Task { removeRefused = !(await library.removeWorkingData()) }
                 }
             } message: {
                 Text("Every scan keeps its photos and its 3D model, and nothing in the studio changes.")

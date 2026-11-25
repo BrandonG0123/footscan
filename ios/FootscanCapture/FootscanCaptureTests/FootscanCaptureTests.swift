@@ -523,12 +523,13 @@ struct FreeSpace {
         // a scan still waiting for its model needs its working data to build it
         #expect(ScanLibrary.workingDataToRemove([built, waiting]) == [built.checkpoint])
         #expect(ScanLibrary.bytes(in: ScanLibrary.workingDataToRemove([built, waiting])) == 1000)
-        // once emptied there's nothing more to remove, and the photos and model are still there
-        for item in try FileManager.default.contentsOfDirectory(at: built.checkpoint, includingPropertiesForKeys: nil) {
-            try FileManager.default.removeItem(at: item)
-        }
+        // once emptied there's nothing more to remove; the folder itself, the photos and the model are still there,
+        // and the other scan's working data wasn't touched
+        ScanLibrary.empty(ScanLibrary.workingDataToRemove([built, waiting]))
         #expect(ScanLibrary.workingDataToRemove([built, waiting]).isEmpty)
+        #expect(FileManager.default.fileExists(atPath: built.checkpoint.path(percentEncoded: false)))
         #expect(built.hasModel && built.hasOBJ && built.photoCount == 1)
+        #expect(ScanLibrary.bytes(in: [waiting.checkpoint]) == 1000)
     }
 }
 
