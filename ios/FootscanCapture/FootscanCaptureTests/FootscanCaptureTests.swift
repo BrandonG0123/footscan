@@ -511,6 +511,8 @@ struct BatteryBeforeAScan {
     @Test func aLowBatteryUnpluggedIsSaidWithItsLevel() {
         let note = BatteryCheck.note(level: 0.12, state: .unplugged)
         #expect(note?.hasPrefix("Battery at 12%.") == true)
+        // just under the line reads as under it, never as the line itself
+        #expect(BatteryCheck.note(level: 0.196, state: .unplugged)?.hasPrefix("Battery at 19%.") == true)
     }
 
     @Test func chargingOrEnoughOrUnknownSaysNothing() {

@@ -1,5 +1,5 @@
-// Before a scan: is the battery low? A capture runs the camera, LiDAR and tracking for minutes, and the model is
-// then built on the phone, which is the heaviest thing the app does. Reads only the battery level and whether the
+// Before a scan: is the battery low? A capture runs the camera (and, for a 3D scan, LiDAR and tracking) for
+// minutes, and a 3D scan's model is then built on the phone, which is the heaviest thing the app does. Reads only the battery level and whether the
 // phone is charging (no permission; nothing is kept or sent).
 import UIKit
 
@@ -12,15 +12,17 @@ enum BatteryCheck {
     /// simulator).
     static func note(level: Float, state: UIDevice.BatteryState) -> String? {
         guard state == .unplugged, level >= 0, level < low else { return nil }
-        return "Battery at \(Int((level * 100).rounded()))%. A scan and building its model on the phone use a lot of it, "
+        // rounded down, so a level under the line never shows as the line itself
+        return "Battery at \(Int(level * 100))%. A scan uses a lot of it (a 3D scan's model is built on the phone too), "
             + "and the phone turning off partway would end the scan. Plug it in if you can."
     }
 
     /// The phone's own reading, now.
     @MainActor static func now() -> String? {
         let device = UIDevice.current
+        let wasOn = device.isBatteryMonitoringEnabled
         device.isBatteryMonitoringEnabled = true
-        defer { device.isBatteryMonitoringEnabled = false }
+        defer { device.isBatteryMonitoringEnabled = wasOn }
         return note(level: device.batteryLevel, state: device.batteryState)
     }
 }
