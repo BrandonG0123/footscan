@@ -570,13 +570,36 @@ def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check
             self.wfile.write(data)
 
         def send_file(self, path: Path, ctype: str, cache: str = "no-cache", headers: dict | None = None):
+            """A file, with an ETag so a browser that already has it gets "304 Not Modified" and no body, and
+            gzip-compressed when it is a kind that shrinks (scripts, pages, 3-D previews) and the browser takes it.
+            "no-cache" means the browser asks each time; with the ETag, asking costs a few hundred bytes."""
             headers = {**self._extra_headers, **(headers or {})}
-            data = path.read_bytes()
+            with open(path, "rb") as f:  # stat and read the same file, even if it is replaced meanwhile
+                st = os.fstat(f.fileno())
+                data = f.read()
+            squeeze = compressible(ctype, len(data))
+            gz = squeeze and accepts_gzip(self.headers.get("Accept-Encoding", ""))
+            tag = f'"{st.st_size:x}-{st.st_mtime_ns:x}{"-gz" if gz else ""}"'
+            if squeeze:
+                headers["Vary"] = "Accept-Encoding"
+            if etag_matches(self.headers.get("If-None-Match", ""), tag):
+                self.send_response(HTTPStatus.NOT_MODIFIED)
+                self.send_header("ETag", tag)
+                self.send_header("Cache-Control", cache)
+                for k, v in headers.items():
+                    if k != "Content-Disposition":
+                        self.send_header(k, v)
+                self.end_headers()  # no body, by definition: the connection stays open for the next request
+                return
+            if gz:
+                data = gzipped(path, st, data)
+                headers["Content-Encoding"] = "gzip"
             self.send_response(HTTPStatus.OK)
             self.send_header("Content-Type", ctype)
             self.send_header("Content-Length", str(len(data)))
             self.send_header("Cache-Control", cache)
-            for k, v in (headers or {}).items():
+            self.send_header("ETag", tag)
+            for k, v in headers.items():
                 self.send_header(k, v)
             self.end_headers()
             self.wfile.write(data)
@@ -1576,6 +1599,59 @@ def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check
 
     Handler.tailnet_cached = staticmethod(tailnet_cached)  # serve() prints it at start, and fills the cache
     return Handler
+
+
+# ---- files: revalidation and compression -----------------------------------------
+
+# Kinds of file worth compressing: text, and the 3-D previews (arrays of floats, about half the size gzipped). Not
+# JPEG, PNG or 3MF (already compressed), and not a file too small to gain from it.
+COMPRESSIBLE_TYPES = ("text/", "application/json", "application/javascript", "image/svg+xml", "model/stl",
+                      "application/octet-stream")
+GZIP_MIN_BYTES = 1024
+GZIP_MAX_BYTES = 64 * 1024 * 1024  # a bigger file (a 150 MB model download) goes as it is: not worth the wait
+# Compressed files kept in memory, so a 3-D preview opened again isn't compressed again: up to this much in all.
+GZIP_CACHE_BYTES = 96 * 1024 * 1024
+_gzip_cache: dict[tuple, bytes] = {}
+_gzip_cache_lock = threading.Lock()
+
+
+def compressible(ctype: str, size: int) -> bool:
+    return GZIP_MIN_BYTES <= size <= GZIP_MAX_BYTES and ctype.startswith(COMPRESSIBLE_TYPES)
+
+
+def accepts_gzip(accept_encoding: str) -> bool:
+    """Does the browser take gzip (Accept-Encoding: gzip, deflate, br; a "gzip;q=0" refuses it)?"""
+    for part in accept_encoding.split(","):
+        name, _, params = part.strip().partition(";")
+        if name.strip().lower() in ("gzip", "x-gzip"):
+            q = params.strip().lower()
+            return not (q.startswith("q=") and q[2:].strip() in ("0", "0.0", "0.00", "0.000"))
+    return False
+
+
+def etag_matches(if_none_match: str, tag: str) -> bool:
+    """If-None-Match names this version of the file (or "*"). Weak tags (W/"...") count: the comparison is weak."""
+    want = tag.removeprefix("W/")
+    return any(t.strip() == "*" or t.strip().removeprefix("W/") == want for t in if_none_match.split(",") if t.strip())
+
+
+def gzipped(path: Path, st: os.stat_result, data: bytes) -> bytes:
+    """``data`` (the file at ``path`` as ``st`` describes it) gzip-compressed, from memory if done before."""
+    import gzip
+
+    key = (str(path), st.st_size, st.st_mtime_ns)
+    with _gzip_cache_lock:
+        if (hit := _gzip_cache.get(key)) is not None:
+            return hit
+    out = gzip.compress(data, compresslevel=6, mtime=0)
+    with _gzip_cache_lock:
+        for old in [k for k in _gzip_cache if k[0] == key[0]]:  # an older version of the same file
+            del _gzip_cache[old]
+        while _gzip_cache and sum(map(len, _gzip_cache.values())) + len(out) > GZIP_CACHE_BYTES:
+            del _gzip_cache[next(iter(_gzip_cache))]  # the oldest first
+        if len(out) <= GZIP_CACHE_BYTES:
+            _gzip_cache[key] = out
+    return out
 
 
 def query_param(path: str, name: str) -> str | None:

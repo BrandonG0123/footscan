@@ -2506,3 +2506,67 @@ def test_rate_limiter_is_safe_to_use_from_many_threads_while_it_forgets(monkeypa
     for t in threads:
         t.join()
     assert errors == []
+
+
+# ---- files: revalidation (ETag) and gzip ----------------------------------------------------------------------
+
+def test_a_file_the_browser_already_has_is_answered_not_modified_with_no_body(servers):
+    _, phone, _ = servers
+    status, raw, h = call(f"{phone}/assets/style.css")
+    assert status == 200 and raw == (WEB_DIR / "assets" / "style.css").read_bytes() and h["ETag"]
+    status, raw, h2 = call(f"{phone}/assets/style.css", headers={"If-None-Match": h["ETag"]})
+    assert status == 304 and raw == b"" and h2["ETag"] == h["ETag"]
+    # weak or listed among others, it still matches; another version's tag doesn't
+    assert call(f"{phone}/assets/style.css", headers={"If-None-Match": f'"x", W/{h["ETag"]}'})[0] == 304
+    assert call(f"{phone}/assets/style.css", headers={"If-None-Match": '"1-2"'})[0] == 200
+
+
+def test_a_file_that_changed_gets_a_new_etag(tmp_path):
+    web = tmp_path / "web"
+    (web / "assets").mkdir(parents=True)
+    f = web / "assets" / "a.js"
+    f.write_text("let a = 1;\n" * 10)
+    httpd = StudioServer(("127.0.0.1", 0), make_handler(web, tmp_path, local_check=lambda h: False, studio_key=KEY))
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    url = f"http://127.0.0.1:{httpd.server_address[1]}/assets/a.js"
+    try:
+        tag = call(url)[2]["ETag"]
+        f.write_text("let a = 2;\n" * 11)
+        status, raw, h = call(url, headers={"If-None-Match": tag})
+        assert status == 200 and raw == f.read_bytes() and h["ETag"] != tag
+    finally:
+        httpd.shutdown()
+
+
+def test_text_and_previews_are_gzipped_only_for_a_browser_that_takes_it(servers):
+    import gzip
+
+    _, phone, _ = servers
+    js = (WEB_DIR / "assets" / "app.js").read_bytes()
+    status, raw, h = call(f"{phone}/assets/app.js", headers={"Accept-Encoding": "gzip, deflate, br"})
+    assert status == 200 and h["Content-Encoding"] == "gzip" and gzip.decompress(raw) == js
+    assert int(h["Content-Length"]) == len(raw) < len(js) and "Accept-Encoding" in h["Vary"]
+    # its own tag: a cache never mixes the compressed and plain copies
+    _, plain, hp = call(f"{phone}/assets/app.js")
+    assert plain == js and "Content-Encoding" not in hp and hp["ETag"] != h["ETag"]
+    assert "Content-Encoding" not in call(f"{phone}/assets/app.js", headers={"Accept-Encoding": "gzip;q=0"})[2]
+    # a 304 for the compressed copy, by its own tag
+    assert call(f"{phone}/assets/app.js", headers={"Accept-Encoding": "gzip", "If-None-Match": h["ETag"]})[0] == 304
+
+
+def test_photos_are_never_gzipped(servers):
+    op, _, data = servers
+    cid = body(call(f"{op}/api/captures", "POST", {"condition": "object", "session": "S1"}))["id"]
+    big = JPEG + b"\x00" * 4096
+    assert call(f"{op}/api/captures/{cid}/frames/1", "PUT", big, {"Content-Type": "image/jpeg"})[0] == 200
+    status, raw, h = call(f"{op}/api/captures/{cid}/frames/1.jpg", headers={"Accept-Encoding": "gzip"})
+    assert status == 200 and raw == big and "Content-Encoding" not in h
+
+
+@pytest.mark.parametrize("header,takes", [("gzip", True), ("deflate, gzip;q=0.8", True), ("GZIP", True),
+                                          ("gzip;q=0", False), ("gzip; q=0.0", False), ("br, deflate", False),
+                                          ("", False)])
+def test_accept_encoding_is_read_with_its_q_values(header, takes):
+    from footscan.server import accepts_gzip
+
+    assert accepts_gzip(header) is takes
