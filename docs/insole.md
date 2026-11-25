@@ -216,7 +216,11 @@ size and shape, but it can't see the sole (see the warning below).
 Scan with Footscan on the iPhone, send it to the studio,
 then in the studio's **Research library** press **Make insole** on that
 scan's card. It shows the size, the arch fill and any warnings, with
-buttons for the 3MF, the summary sheet, the print notes and an STL.
+buttons for the 3MF, the summary sheet, the print notes and an STL. The 3MF
+and STL download named by the scan, the foot and the insole's length
+(`<scan>-insole-left-261mm.3mf`), so a pair can't be mixed up; the length is
+the insole's own, and a slicer's box differs when the insole is turned on the
+bed to fit.
 
 **Insoles to make again.** An insole that no longer matches what it was made
 from (the foot's model replaced, the shoe it was cut to saved again, the way
