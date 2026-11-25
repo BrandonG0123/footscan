@@ -498,6 +498,8 @@ struct ScanNames {
         #expect(ScanRecord.cleanName("   ") == nil)
         #expect(ScanRecord.cleanName("") == nil)
         #expect(ScanRecord.cleanName(String(repeating: "a", count: 60))?.count == ScanRecord.nameLimit)
+        // cut at 40 just after a space: the space goes too
+        #expect(ScanRecord.cleanName(String(repeating: "a", count: 39) + " b") == String(repeating: "a", count: 39))
     }
 
     @Test func theCardShowsTheNameElseWhatWasScanned() {
@@ -509,6 +511,7 @@ struct ScanNames {
         #expect(record().sameFoot(as: record()))
         #expect(record(name: "Sam").sameFoot(as: record(name: "Sam")))
         #expect(!record(name: "Sam").sameFoot(as: record()))  // someone else's left sole
+        #expect(record(name: "Zoë").sameFoot(as: record(name: "zoe")))  // capitals and accents don't matter
         #expect(!record(.rightSole).sameFoot(as: record()))
     }
 

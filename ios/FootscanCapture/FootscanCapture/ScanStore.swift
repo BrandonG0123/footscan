@@ -186,15 +186,19 @@ extension ScanRecord {
     /// nothing left means no name.
     static func cleanName(_ typed: String) -> String? {
         let words = typed.split(whereSeparator: \.isWhitespace).joined(separator: " ")
-        return words.isEmpty ? nil : String(words.prefix(nameLimit))
+        let kept = String(words.prefix(nameLimit)).trimmingCharacters(in: .whitespaces) // the cut can land on a space
+        return kept.isEmpty ? nil : kept
     }
 
     /// What the scan is called on its card and page: its name, else what was scanned.
     var heading: String { name ?? subject.label }
 
     /// Two scans count as the same foot (a newer one replaces an older one asking to be scanned again) when they're
-    /// of the same kind and carry the same name, or both none.
-    func sameFoot(as other: ScanRecord) -> Bool { subject == other.subject && name == other.name }
+    /// of the same kind and carry the same name (whatever its capitals and accents), or both none.
+    func sameFoot(as other: ScanRecord) -> Bool {
+        let fold = { (n: String?) in n?.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: nil) }
+        return subject == other.subject && fold(name) == fold(other.name)
+    }
 
     /// What to change on the next scan of this kind, if the studio refused this one: its own steps, or for
     /// a refusal that came without them, each line's headline as the title and its "Scan again ..." ending
@@ -292,7 +296,8 @@ enum ScanStore {
     }
 
     /// A new, empty scan folder for this subject.
-    static func create(_ subject: Subject) throws -> Scan {
+    /// `name`: the name to start it with (a scan again of a named scan carries its name).
+    static func create(_ subject: Subject, name: String? = nil) throws -> Scan {
         let stamp = ISO8601DateFormatter.string(from: Date(), timeZone: .current,
                                                 formatOptions: [.withFullDate, .withTime, .withColonSeparatorInTime])
             .replacingOccurrences(of: ":", with: "")
@@ -300,9 +305,11 @@ enum ScanStore {
         for dir in [scan.images, scan.checkpoint] {
             try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         }
-        scan.save(ScanRecord(subject: subject, created: Date(), device: deviceModel(),
-                             systemVersion: UIDevice.current.systemVersion,
-                             appVersion: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "?"))
+        var record = ScanRecord(subject: subject, created: Date(), device: deviceModel(),
+                                systemVersion: UIDevice.current.systemVersion,
+                                appVersion: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "?")
+        record.name = name
+        scan.save(record)
         return scan
     }
 

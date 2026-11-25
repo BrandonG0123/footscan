@@ -65,6 +65,8 @@ struct HomeView: View {
     @State private var retake: [RetakeAdvice] = []
     /// The scan being named, from its card's menu.
     @State private var naming: Scan?
+    /// Scanning again after a refusal: the refused scan's name, for the new one (so it counts as that foot's).
+    @State private var againName: String?
 
     struct PrepRequest: Identifiable {
         let subject: Subject
@@ -119,7 +121,7 @@ struct HomeView: View {
         // The camera opens only once the get-ready sheet has fully gone:
         // presenting it while the sheet is still closing can lose it.
         .sheet(item: $prep, onDismiss: {
-            if let s = startAfterPrep { startAfterPrep = nil; begin(s) } else { retake = [] }
+            if let s = startAfterPrep { startAfterPrep = nil; begin(s) } else { retake = []; againName = nil }
         }) { req in
             PrepSheet(subject: req.subject, mustTick: req.mustTick, retake: req.retake) { startAfterPrep = req.subject }
                 .presentationDragIndicator(.visible)
@@ -136,6 +138,7 @@ struct HomeView: View {
             CaptureView(scan: scan, retake: retake, onDone: { done in
                 capturing = nil
                 retake = []
+                againName = nil
                 if let s = done.record?.subject { settings.markPrepared(s) }
                 library.reload()
                 path = [done]
@@ -143,6 +146,7 @@ struct HomeView: View {
             }, onCancel: {
                 capturing = nil
                 retake = []
+                againName = nil
                 library.reload()
             })
         }
@@ -373,6 +377,7 @@ struct HomeView: View {
 
     private func start() {
         retake = []
+        againName = nil
         if settings.hasPrepared(subject) { begin(subject) } else { prep = PrepRequest(subject: subject, mustTick: true) }
     }
 
@@ -383,6 +388,7 @@ struct HomeView: View {
         subjectRaw = rec.subject.rawValue
         path = []
         retake = rec.nextTime
+        againName = rec.name
         prep = PrepRequest(subject: rec.subject, mustTick: false, retake: retake)
     }
 
@@ -410,7 +416,7 @@ struct HomeView: View {
             return
         }
         do {
-            capturing = try ScanStore.create(s)
+            capturing = try ScanStore.create(s, name: againName)
             error = nil
         } catch {
             self.error = "Couldn't make a folder for the scan: \(error.localizedDescription)"
@@ -673,6 +679,8 @@ struct NameScanAlert: ViewModifier {
     @Binding var scan: Scan?
     @Environment(ScanLibrary.self) private var library
     @State private var typed = ""
+    /// The scan started building or sending while the name was being typed: it wasn't saved, and the person is told.
+    @State private var refused = false
 
     func body(content: Content) -> some View {
         content
@@ -680,13 +688,18 @@ struct NameScanAlert: ViewModifier {
                 TextField("Sam, left foot", text: $typed)
                     .textInputAutocapitalization(.words)
                 Button("Save") {
-                    if let scan { library.rename(scan, to: typed) }
+                    if let scan, !library.rename(scan, to: typed) { refused = true }
                     scan = nil
                 }
                 Button("Cancel", role: .cancel) { scan = nil }
             } message: {
                 Text("To tell scans of the same kind apart, such as two people's left soles. Kept on this phone, not sent "
                      + "to the studio. Leave it empty to take the name away.")
+            }
+            .alert("The name wasn't saved", isPresented: $refused) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text("The scan started building or sending meanwhile. Name it once that has finished.")
             }
             .onChange(of: scan) { _, now in typed = now?.record?.name ?? "" }
     }
