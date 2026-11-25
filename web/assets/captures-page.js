@@ -463,7 +463,7 @@ function remakeChoice(c) {
 document.addEventListener("click", async (e) => {
   if (e.target.closest("#only-attention")) { onlyAttention = !onlyAttention; render(); return; }
   if (e.target.closest("#clear-filters")) {
-    $("f-cond").value = ""; $("f-foot").value = ""; $("f-text").value = ""; onlyAttention = false; render(); return;
+    $("f-cond").value = ""; $("f-foot").value = ""; $("f-text").value = ""; onlyAttention = false; refilter(); return;
   }
   if (!e.target.closest("#remake-all") || remaking) return;
   const stale = all.filter((c) => c.insole?.stale && !building.has(c.capture_id));
@@ -524,7 +524,32 @@ function showThumbs() {
   }
 }
 
-$("f-cond").addEventListener("change", render);
-$("f-foot").addEventListener("change", render);
-$("f-text").addEventListener("input", render);
+// The filters live in the page's address (?q=…&condition=…&foot=…), so a reload, or Back from a capture's
+// pages, comes back to the same list, and a filtered list can be bookmarked
+const FILTERS = [["q", "f-text"], ["condition", "f-cond"], ["foot", "f-foot"]];
+function filtersFromAddress() {
+  const q = new URLSearchParams(location.search);
+  for (const [name, id] of FILTERS) {
+    const v = q.get(name);
+    // a menu takes only one of its own choices: anything else in the address is left out
+    if (v != null && ($(id).tagName !== "SELECT" || [...$(id).options].some((o) => o.value === v))) $(id).value = v;
+  }
+}
+function filtersToAddress() {
+  const q = new URLSearchParams(location.search);
+  for (const [name, id] of FILTERS) { if ($(id).value) q.set(name, $(id).value); else q.delete(name); }
+  const search = q.toString();
+  history.replaceState(history.state, "", `${location.pathname}${search ? `?${search}` : ""}${location.hash}`);
+}
+const refilter = () => { filtersToAddress(); render(); };
+$("f-cond").addEventListener("change", refilter);
+$("f-foot").addEventListener("change", refilter);
+$("f-text").addEventListener("input", refilter);
+// "/" jumps to the search box (as on many sites), unless something is being typed already
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "/" || e.metaKey || e.ctrlKey || e.altKey || e.target.closest("input, textarea, select, [contenteditable]")) return;
+  e.preventDefault();
+  $("f-text").focus();
+});
+filtersFromAddress();
 load();
