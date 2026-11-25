@@ -58,6 +58,37 @@ def test_a_model_that_cant_be_drawn_is_answered_not_dropped(servers, monkeypatch
     assert status == 422 and "couldn't draw" in body((status, raw))["error"]
 
 
+def test_a_model_that_couldnt_be_drawn_isnt_tried_again_on_every_visit_until_an_hour_passes(servers, monkeypatch):
+    import os
+    import time
+
+    from footscan import thumbnails
+
+    op, _, data = servers
+    cid = _imported(op)
+    tries = []
+
+    def broken(model, up="y"):
+        tries.append(1)
+        raise ValueError("no faces")
+
+    monkeypatch.setattr(thumbnails, "draw", broken)
+    for _ in range(3):
+        status, raw, _ = call(f"{op}/api/captures/{cid}/thumb.png")
+        assert status == 422 and "ValueError: no faces" in body((status, raw))["error"]
+    assert len(tries) == 1
+    marker = next((data / "captures" / cid).glob("thumb-*.failed"))
+    old = time.time() - thumbnails.FAILED_RETRY_S - 5
+    os.utime(marker, (old, old))  # an hour on: tried again (the studio may have been fixed meanwhile)
+    call(f"{op}/api/captures/{cid}/thumb.png")
+    assert len(tries) == 2
+    monkeypatch.undo()  # drawn at last: the picture, and the note of the failure goes
+    assert call(f"{op}/api/captures/{cid}/thumb.png")[0] == 422  # still within the hour of the second try
+    os.utime(marker, (old, old))
+    assert call(f"{op}/api/captures/{cid}/thumb.png")[0] == 200
+    assert not list((data / "captures" / cid).glob("thumb-*.failed"))
+
+
 def test_one_capture_is_answered_as_the_library_lists_it(servers):
     op, phone, _ = servers
     cid = _imported(op)

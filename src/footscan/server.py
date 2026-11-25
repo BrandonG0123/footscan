@@ -1771,6 +1771,8 @@ def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check
                     pic = thumbnails.thumbnail(d, model, up)
                 except (FileNotFoundError, PermissionError):
                     raise
+                except thumbnails.CantDraw as e:  # tried within the last hour, or just now: the page shows its box
+                    return self.send_json({"error": f"couldn't draw this model ({e})"}, HTTPStatus.UNPROCESSABLE_ENTITY)
                 except Exception as e:  # noqa: BLE001 - a model that can't be drawn: the page shows its box
                     return self.send_json({"error": f"couldn't draw this model ({type(e).__name__})"},
                                           HTTPStatus.UNPROCESSABLE_ENTITY)

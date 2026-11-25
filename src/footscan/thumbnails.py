@@ -9,7 +9,8 @@ the picture and nothing is changed in the model: it is only there so a scan can 
 The picture is turned so the model's long axis runs across it (the main direction of its points seen from above),
 because a phone scan arrives turned however the phone was held. It is kept beside the model as
 ``thumb-<stamp>.png``, named by the model file's stamp (filestamp.py): a model replaced or rebuilt gets a new
-picture, and the old one is removed.
+picture, and the old one is removed. A model that can't be drawn leaves ``thumb-<stamp>.failed`` saying why, and
+isn't tried again for an hour (FAILED_RETRY_S).
 """
 
 from __future__ import annotations
@@ -17,6 +18,7 @@ from __future__ import annotations
 import hashlib
 import secrets
 import threading
+import time
 from pathlib import Path
 
 import numpy as np
@@ -25,9 +27,23 @@ from . import atomic
 from .filestamp import file_stamp
 
 PICTURE_PX = 360          # the picture's long side, about (plus the renderer's margin)
+# A model that couldn't be drawn isn't tried again for this long (the library asks on every visit, and a failed
+# try can take seconds of the computer): long enough to spare it, short enough that a fixed studio tries again.
+FAILED_RETRY_S = 3600
 # Pictures drawn at once: a library page asks for all of them together, and each takes a while (about 1 s of one
 # core for a SYNTHETIC curved foot's 4.9 MB mesh.ply in the cloud container, 2026-11-25).
 _drawing = threading.BoundedSemaphore(2)
+
+
+class CantDraw(Exception):
+    """This version of the model couldn't be drawn (and was tried within FAILED_RETRY_S)."""
+
+
+def _recent(marker: Path) -> bool:
+    try:
+        return time.time() - marker.stat().st_mtime < FAILED_RETRY_S
+    except OSError:
+        return False
 
 
 def thumb_path(folder: Path, model: Path) -> Path | None:
@@ -73,10 +89,24 @@ def thumbnail(folder: Path, model: Path, up: str = "y") -> Path:
             raise FileNotFoundError(model)
         if path.is_file():
             break
+        failed = path.with_suffix(".failed")
+        if _recent(failed):
+            raise CantDraw(failed.read_text(encoding="utf-8", errors="replace") or "it couldn't be drawn")
         with _drawing:
             if path.is_file():  # drawn by another request while this one waited
                 break
-            png = draw(model, up)
+            try:
+                png = draw(model, up)
+            except (FileNotFoundError, PermissionError, MemoryError):
+                raise  # the model went, or a moment's trouble: not the model's fault, so not remembered
+            except Exception as e:
+                # remembered beside the model (named for this version of it), so the next visit doesn't try again
+                why = f"{type(e).__name__}: {e}"[:300]
+                try:
+                    failed.write_text(why, encoding="utf-8")
+                except OSError:
+                    pass  # not remembered: tried again next time, no worse than before
+                raise CantDraw(why) from e
             if thumb_path(folder, model) != path:  # replaced while it was drawn: draw the new one instead
                 continue
             tmp = path.with_name(f".{path.name}.{secrets.token_hex(4)}.tmp")
@@ -89,8 +119,9 @@ def thumbnail(folder: Path, model: Path, up: str = "y") -> Path:
     else:
         raise FileNotFoundError(model)  # replaced twice while drawing: asked again later, when it's settled
     current = thumb_path(folder, model)
-    for old in Path(folder).glob("thumb-*.png"):  # pictures of models since replaced
-        if old != current and old != path:
+    # pictures of models since replaced, and notes of failed tries (this version's too: it is drawn now)
+    for old in [*Path(folder).glob("thumb-*.png"), *Path(folder).glob("thumb-*.failed")]:
+        if old not in (current, path):
             try:
                 old.unlink(missing_ok=True)
             except OSError:  # being sent right now (Windows won't remove an open file): removed next time
