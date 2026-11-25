@@ -152,6 +152,44 @@ keep still; someone else holds the phone). There is no ground truth for a
 foot, so these go to the studio's **Import 3D**, then **Landmarks**, like
 any imported scan, for comparison with photo scans of the same foot.
 
+## When something goes wrong
+
+What the app does by itself, and what it asks, when a scan or a send doesn't
+go to plan. None of this has been seen on a real iPhone yet: it is tested in
+the simulator (see *Tests*).
+
+- **Stopping or deleting a scan asks first.** Once photos have been taken, the
+  capture's X asks *Stop this scan?*. A scan stopped that way keeps its
+  photos, says *Stopped early*, and isn't nagged about on the home screen. A
+  capture cancelled before its first photo leaves nothing behind. Delete, from
+  a card's menu or the scan's page, says what will be gone first.
+- **Camera not allowed.** Before a scan opens the camera, the app checks that
+  Footscan may use it. If not, the home screen says so, with Open Settings
+  (or, when Screen Time or a device profile blocks it, says that instead).
+- **Phone too hot.** When iOS reports the phone as hot during a capture, a
+  banner says so: iOS slows a hot phone down, which can stop the capture.
+  With VoiceOver on, each new tip and warning is read out once.
+- **Leaving the app while the model builds.** iOS doesn't let an app build a
+  model in the background, so the build fails. It starts again by itself
+  (from Object Capture's working data) when the app is back in front, at most
+  3 times; after that it waits for Try again.
+- **A send that drops partway.** The phone keeps the id of the capture the
+  studio made for it, and the next try finishes that capture (after checking
+  the studio's list that it is still waiting for its model) instead of making
+  another empty one.
+- **No studio in reach.** A scan waiting on a studio that didn't answer goes
+  again by itself when the phone joins a network (a Wi-Fi, or Tailscale
+  coming on), every 2 minutes while the app is open, and when the app comes
+  back to the front.
+- **How far a send has got.** The card reads *Sending 42%* while the model goes
+  up, then *Studio checking* while the studio reads it before it answers.
+- **Short of space.** Settings > Storage can remove Object Capture's working
+  data for scans that are already built. Every photo and model stays, so the
+  Mac can still rebuild a scan in more detail.
+- **Several people's scans.** *Name this scan* (a card's menu, or the pencil
+  on its page) gives a scan a name, kept on the phone only. A scan again of a
+  named scan carries its name.
+
 ## What this decides
 
 Whether the full iPhone app (step 2 onward: native capture with coaching,
@@ -162,7 +200,9 @@ Nothing is concluded until the calibration object has actually been scanned.
 ## Tests
 
 The app's own logic (studio connect codes, the scan list's order, the
-free-space check, the welcome scene's ring, the phone's own scan check) has unit tests in
+free-space check, the welcome scene's ring, the phone's own scan check, and
+the handling above: interrupted builds, dropped sends, network changes,
+camera access, upload progress, scan names) has unit tests in
 `ios/FootscanCapture/FootscanCaptureTests`. In Xcode press Cmd-U, or:
 
 ```bash
