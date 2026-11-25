@@ -84,6 +84,12 @@ def long_axis(xy: np.ndarray) -> tuple[np.ndarray, float, float]:
     the right and the left foot (the insole thread's finding, checked here),
     and the insole's outline was then turned and slid by up to its limits to
     make up for it, differently for each foot.
+
+    The width returned is the hull's extent across that line, no longer the
+    narrowest width in any direction, so it can only come out the same or
+    wider: on the real scans (footprint_mm, 25 Nov) 2349 86.3 -> 86.6 mm and
+    89df 74.8 -> 74.9; the legs-flat 2190, both feet in it, 108.1 -> 110.7,
+    0.504 of its length, past foot_prep.FOOT_RATIO's 0.50 (refused anyway).
     """
     from scipy.spatial import ConvexHull
 
@@ -100,6 +106,7 @@ def long_axis(xy: np.ndarray) -> tuple[np.ndarray, float, float]:
     _, vecs = np.linalg.eigh(np.array([[sxx, sxy], [sxy, syy]]))
     e = vecs[:, -1]
     e = e / np.linalg.norm(e)
+    e = e if e[np.argmax(np.abs(e))] > 0 else -e  # a line has two directions: the one toward +x or +y, every time
     perp = np.array([-e[1], e[0]])
     return e, float(np.ptp(H @ e)), float(np.ptp(H @ perp))
 
@@ -117,7 +124,12 @@ def provisional_frame(mesh, foot: str) -> tuple[FootFrame, dict]:
     elongation = length / max(width, 1e-9)
 
     notes = []
-    by_mat = 1.0 if axis[1] >= 0 else -1.0  # the mat's instruction: toes toward +y
+    # the mat's instruction: toes toward +y. A foot lying across the mat (nearer its x than its y) the instruction
+    # says nothing about: then toward +x, as the SYNTHETIC test feet lie in foot coordinates. Until 25 Nov this
+    # took the sign of the axis's y part alone, which for a foot lying exactly along x is a rounding error's sign:
+    # with the axis down the middle of the footprint, synth.curved_foot without a leg came out heel first.
+    across = abs(axis[0]) > abs(axis[1])
+    by_mat = 1.0 if (axis[0] if across else axis[1]) >= 0 else -1.0
     high = V[V[:, 2] > LEG_MIN_HEIGHT_MM]
     by_leg = None
     if len(high) > 50:

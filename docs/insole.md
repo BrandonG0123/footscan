@@ -277,9 +277,10 @@ preparing, the left sole-up scan `LIDAR_nwb_relaxed_L_20261027-151404-89df`
 read 228.5 to 250.2 mm long with its ball "rolled" 7.9 to 16.9 mm; the right
 one, `LIDAR_nwb_relaxed_R_20261027-151404-2349`, 243.2 to 243.9 mm, rolled 0
 to 2.3 mm (12 and 16 turns, 2026-11-25). Rested where the sole stands, every
-turn reads the same: 89df 225.0 x 80.5 mm with the ball level to 1.0 mm (its
-heel and both sides of the ball on the floor), 2349 243.2 x 90.3 mm, level to
-0.0 mm. So 89df's 9 mm "rolled forefoot" came from the old floor, not the
+turn reads the same: 89df 225.1 x 80.5 mm with the ball level to 1.0 mm (its
+heel and both sides of the ball on the floor), 2349 243.1 x 90.2 mm, level to
+0.0 mm (`scripts/pose_spread.py`, 8 turns each, with the foot's axis change
+below too). So 89df's 9 mm "rolled forefoot" came from the old floor, not the
 foot; it is still refused on arrival, by length, 18 mm shorter than 2349.
 The synthetic test feet have a flat heel and ball, so the old floor found
 them whatever the turn; `tests/test_sole_floor.py` has a shape it fails on

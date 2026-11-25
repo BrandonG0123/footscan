@@ -236,6 +236,7 @@ REST_FACING = 0.5          # ...counted where its surface faces that floor at le
 REST_MAX_TIP_DEG = 55.0    # ...and only floors this close to square to the leg, which stands up in a sole scan: an
                            # ankle hangs the foot at most about SOLE_UP_MAX_TIP_DEG (50) off it. A floor along the leg
                            # would have the long side of the calf on it (the real legs-flat scan 2190: 399 mm "long")
+REST_REFINE_DEG = 2.0      # ...then the face under the middle of what stands on it, if within this of the same plane
 
 
 def _stood_on_area(normals, offsets, faces_c, faces_n, faces_a, candidates) -> np.ndarray:
@@ -264,6 +265,7 @@ def _most_stood_on(normals, offsets, faces_c, faces_n, faces_a, candidates) -> i
     candidates = np.asarray(candidates)[np.sort(first)]
     # a triangle facing up can't face a floor within REST_MAX_TIP_DEG of down squarely enough to count
     keep = faces_n[:, 2] < np.cos(np.radians(180.0 - REST_MAX_TIP_DEG) - np.arccos(REST_FACING)) + 1e-9
+    keep &= faces_a > 0  # a phone model can hold triangles of no area: they stand on nothing (and can't be picked)
     faces_c, faces_n, faces_a = faces_c[keep], faces_n[keep], faces_a[keep]
     if not len(faces_a) or not len(candidates):
         return None
@@ -339,15 +341,22 @@ def rest_on_hull(mesh, by: str = "centre"):
         if best is not None:
             # then, seen square to that face, the face straight under the middle of what stands on it: a flat sole
             # stands on its own facet exactly, not on a neighbour a hair off that takes in a little more of the
-            # rounded edge (SYNTHETIC: 0.09 degrees on the benchmark's clean sole-up scans)
+            # rounded edge (SYNTHETIC: 0.09 degrees on the benchmark's clean sole-up scans). Only a face within
+            # REST_REFINE_DEG of it: the middle can lie under the arch, past the facet, where the hull's faces
+            # climb toward something else (the toes), and a floor there stands on neither the heel nor the ball
             n, d = normals[best], hull.equations[best, 3]
             on = (-(C @ n + d) < REST_CONTACT_MM) & (N @ n > REST_FACING)
             R = imported._level(-n)
             mid = R @ np.average(C[on], axis=0, weights=A[on])
             turned = normals @ R.T
-            under = _face_under(V @ R.T, turned, hull.simplices, mid, down[turned[down, 2] < -0.3])
+            near = down[turned[down, 2] < -np.cos(np.radians(REST_REFINE_DEG))]  # within that of the best face
+            under = _face_under(V @ R.T, turned, hull.simplices, mid, near)
             face = best if under is None else under
             return _lay_on(m, V, normals[face], float(-normals[face][2]))
+        raise FootPrepError(f"couldn't find what the sole stands on: nothing of the scan lies flat on a floor within "
+                            f"{REST_MAX_TIP_DEG:.0f} degrees of square to the leg. Is the sole in the scan?")
+    if by != "centre":
+        raise ValueError(f"by must be 'centre' or 'contact', got {by!r}")
     w = m.area_faces
     c = (m.triangles_center * w[:, None]).sum(0) / w.sum()
     best = _face_under(V, normals, hull.simplices, c, np.nonzero(normals[:, 2] < -0.3)[0])
@@ -641,7 +650,8 @@ def _lay_toes_flat(placed, info):
        profile at least ``TOES_ANGLE_FROM_MM`` further forward: the line from
        the pivot at that angle runs under all of the toes and touches one.
        The profile's last step is left out if it alone climbs steeper than
-       ``TOES_FRONT_WALL_DEG``: that's the toe tip's front, facing forward.
+       ``TOES_FRONT_WALL_DEG`` from toes still near the floor: that's the toe
+       tip's front, facing forward.
     4. The toes bend round their joints, not round the skin: a circle
        ``TOES_JOINT_UP_MM`` across that touches both the floor and that line,
        just behind the pivot. Everything ahead of its centre whose direction
@@ -742,7 +752,7 @@ def _lay_one_joint(W, y0, after, n, info):
     while i + 1 < len(z) and (not have[i + 1] or z[i + 1] <= zb + TOES_ON_FLOOR_MM):
         i += 1
     yp = float(ys[i])
-    have = have & ~_toe_front_wall(ys, z, have, i)
+    have = have & ~_toe_front_wall(ys, z, have, i, zb)
     # how far the underside reaches from the pivot, straight-line: the horizontal reach alone would let toes raised
     # steeply (SYNTHETIC: 50 mm of toes bent up 65 degrees reach 21 mm across the floor) skip both the laying and
     # the too-steep warning
@@ -786,16 +796,19 @@ def _lay_one_joint(W, y0, after, n, info):
                    joint_from_heel_mm=round(float(cy - y0), 1), pivot_y=yp, floor_z=zb)
 
 
-def _toe_front_wall(ys, z, have, i):
+def _toe_front_wall(ys, z, have, i, zb):
     """For ``_lay_one_joint``'s profile (lowest point ``z`` at each step ``ys``, ``have`` where there is one), which
-    steps past the pivot (step ``i``) are the toe tip's front: the last measured step, if it alone climbs from the
-    one before it more steeply than ``TOES_FRONT_WALL_DEG`` (the climb into the step before is shallower)."""
+    steps past the pivot (step ``i``, the floor there at ``zb``) are the toe tip's front: the last measured step, if
+    it alone climbs from the one before it more steeply than ``TOES_FRONT_WALL_DEG`` (the climb into the step before
+    is shallower) and the step before is still near the floor (within ``TOES_STILL_UP_MM``: the toes behind the
+    front are flat, not raised and curling up at the tip)."""
     wall = np.zeros(len(z), dtype=bool)
     steps = np.nonzero(have)[0]
     steps = steps[steps >= i]
     if len(steps) >= 2:
         climb = np.degrees(np.arctan2(np.diff(z[steps[-3:]]), np.diff(ys[steps[-3:]])))
-        if climb[-1] > TOES_FRONT_WALL_DEG and (len(climb) < 2 or climb[-2] <= TOES_FRONT_WALL_DEG):
+        if (climb[-1] > TOES_FRONT_WALL_DEG and (len(climb) < 2 or climb[-2] <= TOES_FRONT_WALL_DEG)
+                and z[steps[-2]] - zb <= TOES_STILL_UP_MM):
             wall[steps[-1]] = True
     return wall
 

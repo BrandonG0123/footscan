@@ -17,10 +17,11 @@ from footscan.recon import completeness, foot_prep
 PADS = np.array([[0.0, 0.0, 0.0], [170.0, 28.0, 0.0], [160.0, -28.0, 0.0]])  # the bottoms of heel, inner and outer ball
 
 
-def _tripod_with_a_leg(lean_back_mm: float, leg_mm: float):
+def _tripod_with_a_leg(lean_back_mm: float, leg_mm: float, split_mm: float | None = 4.0):
     """SYNTHETIC: a foot that stands on three round pads (the heel, 20 mm radius, and the two sides of the ball,
     12 mm: their bottoms at PADS, all on z = 0), the rubber band round them, and a 28 mm radius leg rising from
-    over the heel, its top ``lean_back_mm`` behind it. Split to 4 mm triangles, as a scan's surface is."""
+    over the heel, its top ``lean_back_mm`` behind it. Split to ``split_mm`` triangles, as a scan's surface is
+    (None: left as built)."""
     pads = []
     for c, r in zip(PADS + [[0, 0, 20.0], [0, 0, 12.0], [0, 0, 12.0]], (20.0, 12.0, 12.0)):
         s = trimesh.creation.icosphere(4, r)
@@ -29,7 +30,8 @@ def _tripod_with_a_leg(lean_back_mm: float, leg_mm: float):
     foot = trimesh.convex.convex_hull(np.vstack([p.vertices for p in pads]))
     top = [-lean_back_mm, 0.0, 30.0 + np.sqrt(leg_mm ** 2 - lean_back_mm ** 2)]
     leg = trimesh.creation.cylinder(28.0, segment=[[0.0, 0.0, 30.0], top], sections=48)
-    parts = [trimesh.Trimesh(*trimesh.remesh.subdivide_to_size(p.vertices, p.faces, 4.0)) for p in (foot, leg)]
+    parts = [trimesh.Trimesh(*trimesh.remesh.subdivide_to_size(p.vertices, p.faces, split_mm)) if split_mm else p
+             for p in (foot, leg)]
     return trimesh.util.concatenate(parts)
 
 
@@ -80,3 +82,30 @@ def test_a_sole_up_scan_measures_the_same_however_it_was_turned_before_it_was_se
     lengths, widths, rolls = np.array(seen).T
     assert np.ptp(lengths) < 0.5 and np.ptp(widths) < 0.5
     assert rolls.max() < 1.0
+
+
+def test_triangles_of_no_area_in_a_scan_stand_on_nothing_and_dont_stop_the_floor_being_found():
+    """A phone model can hold triangles of no area (three corners in a line). Judging the floor on a sample of a
+    large scan's triangles picked by area, too few with any area to pick from raised a ValueError instead (found by
+    a code review, 25 Nov)."""
+    body = _tripod_with_a_leg(lean_back_mm=170.0, leg_mm=400.0, split_mm=None)  # a few thousand triangles
+    flat = np.tile([[0, 0, 1]], (25000, 1))  # 25,000 triangles of no area (a corner twice), more than the sample
+    scan = trimesh.Trimesh(body.vertices, np.r_[body.faces, flat], process=False)
+    assert len(scan.faces) > 20000 and (scan.area_faces > 0).sum() < 20000
+    assert _pads_after(scan, np.eye(4), "contact") == pytest.approx([0.0, 0.0, 0.0], abs=0.1)
+
+
+def test_a_scan_with_nothing_facing_a_floor_is_refused_not_laid_on_the_face_under_its_centre():
+    """If no floor within foot_prep.REST_MAX_TIP_DEG of square to the leg has any of the surface standing on it
+    (here: the inside of a bowl, every triangle facing up), the floor isn't looked for under the scan's centre
+    instead, the rule that laid sole scans on their legs: the scan is refused, in words."""
+    bowl = trimesh.creation.icosphere(4, 60.0)
+    bowl.update_faces(bowl.triangles_center[:, 2] < -5.0)
+    bowl.invert()  # facing in: up
+    with pytest.raises(foot_prep.FootPrepError, match="couldn't find what the sole stands on"):
+        foot_prep.rest_on_hull(bowl, by="contact")
+
+
+def test_a_floor_rule_that_isnt_one_is_an_error():
+    with pytest.raises(ValueError, match="by must be"):
+        foot_prep.rest_on_hull(_tripod_with_a_leg(170.0, 400.0), by="contacts")

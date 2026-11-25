@@ -61,3 +61,13 @@ def test_the_front_of_flat_toes_speckled_by_the_scan_is_not_read_as_toes_hanging
     placed, info = foot_prep.prepare_sole_up(scan, foot="right")
     assert "toes_laid_flat" not in info and "toes_warning" not in info
     assert completeness.measure(placed, "sole_up")["length_mm"] == pytest.approx(250.0, abs=1.0)
+
+
+@pytest.mark.parametrize("foot", ["right", "left"])
+def test_a_foot_lying_along_x_with_no_leg_points_its_toes_toward_plus_x(foot):
+    """With no leg in the scan, which end is the toes comes from the mat's instruction (toes toward +y). A foot
+    lying across the mat, here exactly along x as the SYNTHETIC feet are built, took the sign of a rounding error
+    with the axis down the middle of its footprint: heel first, the arch on the outer side. It points toward +x."""
+    frame, info = plantar.provisional_frame(synth.curved_foot(foot, leg=False), foot)
+    assert info["toe_end_from"] == "mat"
+    assert frame.anterior @ [1.0, 0.0, 0.0] == pytest.approx(1.0, abs=1e-6)

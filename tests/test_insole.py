@@ -443,14 +443,13 @@ def test_toes_left_well_off_the_floor_after_laying_flat_are_warned_about_and_ref
     second too steep, and the tip stayed 10.6 mm up with the outline 224.2 mm
     of 250 and nothing said (found by a Codex review, 1 Nov; SYNTHETIC). Turned down the middle of its footprint
     (25 Nov) the second bend is judged too steep (63 degrees); turned a few degrees off, as before, the tip still
-    up was what said so. Either way it's said, and the scan refused."""
+    11 mm up was what said so. The scan is refused either way."""
     from footscan.recon import completeness, foot_prep
 
     mesh = synth.bend_toes(synth.bend_toes(synth.refined(synth.curved_foot("right")), 65.0, x_from=215.0), 15.0,
                            x_from=200.0)
     placed, info = foot_prep.prepare_sole_up(synth.sole_up_capture(mesh), foot="right")
-    assert info["toes_warning"].startswith(("THE TOES ARE STILL 11 MM OFF THE FLOOR",
-                                            "THE FRONT OF THE FOOT RISES 63 DEGREES past the toes' first bend"))
+    assert info["toes_warning"].startswith("THE FRONT OF THE FOOT RISES 63 DEGREES past the toes' first bend")
     assert info["toes_warning"] in completeness.from_prep(info)
 
 
