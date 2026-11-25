@@ -9,6 +9,7 @@ struct OnboardingView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     /// The welcome headline: 40 points at the usual text size, larger or smaller with the phone's text size.
     @ScaledMetric(relativeTo: .largeTitle) private var headlineSize = 40.0
+    @Environment(\.dynamicTypeSize) private var typeSize
 
     enum Page: Int, CaseIterable { case welcome, safety, howTo, camera, studio }
     @State private var page: Page = .welcome
@@ -82,15 +83,19 @@ struct OnboardingView: View {
     private var welcome: some View {
         VStack(alignment: .leading, spacing: 16) {
             OrbitScene()
-                .frame(maxWidth: .infinity)
+                // at the Accessibility text sizes the scene steps back, so the words under it fit on the screen
+                .frame(maxWidth: .infinity, maxHeight: typeSize.isAccessibilitySize ? 200 : nil)
                 .padding(.horizontal, 8)
             Text("Scan it.\nMeasure it.")
                 .font(.system(size: min(headlineSize, 64), weight: .bold, design: .rounded)) // capped at 64 points, so it still fits under the scene
                 .foregroundStyle(Color.fsInk)
                 .accessibilityAddTraits(.isHeader)
+            // the not-a-medical-device line is on the first screen at every text size: at the Accessibility sizes
+            // the paragraph runs below the button, so the line goes above it there
+            if typeSize.isAccessibilitySize { SafetyStrip() }
             Text("Footscan turns a walk round your foot with your iPhone into a 3D model in real millimetres. Try it: drag the phone round the foot above.")
                 .font(.body).foregroundStyle(Color.fsMuted)
-            SafetyStrip()
+            if !typeSize.isAccessibilitySize { SafetyStrip() }
         }
     }
 
