@@ -487,14 +487,21 @@ struct ScanList {
 @Suite("A model build cut off by leaving the app")
 struct InterruptedBuilds {
     @Test func aBuildCutOffByLeavingTheAppIsStartedAgainAFewTimesAtMost() {
-        #expect(ScanLibrary.shouldResume(leftScreen: true, resumesSoFar: 0))
-        #expect(ScanLibrary.shouldResume(leftScreen: true, resumesSoFar: ScanLibrary.maxResumes - 1))
+        #expect(ScanLibrary.shouldResume(awayNow: true, secondsSinceBack: nil, resumesSoFar: 0))
+        #expect(ScanLibrary.shouldResume(awayNow: true, secondsSinceBack: nil, resumesSoFar: ScanLibrary.maxResumes - 1))
         // one that keeps failing shows its own error instead of trying for ever
-        #expect(!ScanLibrary.shouldResume(leftScreen: true, resumesSoFar: ScanLibrary.maxResumes))
+        #expect(!ScanLibrary.shouldResume(awayNow: true, secondsSinceBack: nil, resumesSoFar: ScanLibrary.maxResumes))
     }
 
-    @Test func aBuildThatFailedWithTheAppOnScreenIsNotRetriedByItself() {
-        #expect(!ScanLibrary.shouldResume(leftScreen: false, resumesSoFar: 0))
+    @Test func aFailureThatArrivesJustAfterComingBackStillCountsAsCutOff() {
+        #expect(ScanLibrary.shouldResume(awayNow: false, secondsSinceBack: 2, resumesSoFar: 0))
+        #expect(ScanLibrary.shouldResume(awayNow: false, secondsSinceBack: ScanLibrary.backGrace, resumesSoFar: 0))
+    }
+
+    @Test func aFailureOnScreenIsARealOneAndShowsItsOwnError() {
+        #expect(!ScanLibrary.shouldResume(awayNow: false, secondsSinceBack: nil, resumesSoFar: 0))  // never left
+        // left for a moment early on, failed on screen minutes later: not because of leaving
+        #expect(!ScanLibrary.shouldResume(awayNow: false, secondsSinceBack: 180, resumesSoFar: 0))
     }
 
     @Test func theMessageSaysItCarriesOnByItself() {

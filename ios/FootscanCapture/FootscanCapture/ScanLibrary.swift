@@ -32,12 +32,19 @@ final class ScanLibrary {
     /// How many times each scan's build has been started again that way, this run: a build that keeps failing
     /// stops being retried and shows its own error instead.
     private var resumes: [URL: Int] = [:]
+    /// Builds started by `resumeInterrupted` (not by a tap), while they run: a tap starts the count again.
+    private var autoResuming: Set<URL> = []
     nonisolated static let maxResumes = 3
-    nonisolated static let interruptedMessage = "The model stopped building when Footscan left the screen. It starts again by itself when you come back to the app."
+    nonisolated static let interruptedMessage = "The model stopped building when Footscan left the screen. It starts again by itself when you come back to the app, or tap Try again."
+    /// A failure that reaches the app this soon after it came back to the front still counts as caused by leaving.
+    nonisolated static let backGrace: TimeInterval = 15
 
-    /// Start a cut-off build again? Only if the app left the screen while it ran, and not more than `maxResumes` times.
-    nonisolated static func shouldResume(leftScreen: Bool, resumesSoFar: Int) -> Bool {
-        leftScreen && resumesSoFar < maxResumes
+    /// Start a cut-off build again by itself? Only if the failure came while the app was away from the screen, or
+    /// within `backGrace` seconds of it coming back (a failure later than that, on screen, is a real one, and
+    /// shows its own error), and not more than `maxResumes` times.
+    nonisolated static func shouldResume(awayNow: Bool, secondsSinceBack: TimeInterval?, resumesSoFar: Int) -> Bool {
+        let causedByLeaving = awayNow || (secondsSinceBack.map { $0 <= backGrace } ?? false)
+        return causedByLeaving && resumesSoFar < maxResumes
     }
 
     init() { reload() }
@@ -58,6 +65,7 @@ final class ScanLibrary {
         work[scan.folder] = nil
         problems[scan.folder] = nil
         interrupted.remove(scan.folder)
+        resumes[scan.folder] = nil
         reload()
     }
 
@@ -67,6 +75,7 @@ final class ScanLibrary {
         work = [:]
         problems = [:]
         interrupted = []
+        resumes = [:]
         reload()
     }
 
@@ -119,14 +128,20 @@ final class ScanLibrary {
         guard work[scan.folder] == nil else { return }
         problems[scan.folder] = nil
         interrupted.remove(scan.folder)
+        if !autoResuming.contains(scan.folder) { resumes[scan.folder] = nil } // started by a tap: a fresh count
         work[scan.folder] = .building(0)
         let release = KeepAlive.work("Building a 3D model")
         defer { release() }
-        // a build the app leaves the screen during usually fails there: noted, so it's started again on return
-        let left = LeftScreen()
-        let token = NotificationCenter.default.addObserver(forName: UIApplication.didEnterBackgroundNotification,
-                                                           object: nil, queue: .main) { _ in left.value = true }
-        defer { NotificationCenter.default.removeObserver(token) }
+        // a build the app leaves the screen during usually fails there: when it was away and came back is noted,
+        // so such a failure is started again on return (and a later, real one isn't)
+        let away = AwayFromScreen()
+        let tokens = [
+            NotificationCenter.default.addObserver(forName: UIApplication.didEnterBackgroundNotification,
+                                                   object: nil, queue: .main) { _ in away.left() },
+            NotificationCenter.default.addObserver(forName: UIApplication.didBecomeActiveNotification,
+                                                   object: nil, queue: .main) { _ in away.cameBack() },
+        ]
+        defer { tokens.forEach(NotificationCenter.default.removeObserver) }
         let builder = ModelBuilder()
         let watch = Task { @MainActor in
             while !Task.isCancelled {
@@ -142,9 +157,13 @@ final class ScanLibrary {
         watch.cancel()
         work[scan.folder] = nil
         if case .failed(let message) = builder.phase {
-            if Self.shouldResume(leftScreen: left.value, resumesSoFar: resumes[scan.folder, default: 0]) {
+            let awayNow = UIApplication.shared.applicationState != .active
+            let sinceBack = away.backAt.map { Date().timeIntervalSince($0) }
+            if Self.shouldResume(awayNow: awayNow, secondsSinceBack: sinceBack, resumesSoFar: resumes[scan.folder, default: 0]) {
                 interrupted.insert(scan.folder)
                 problems[scan.folder] = Self.interruptedMessage
+                // the builder saved the system's own words for it; the message above says what happened
+                if var rec = scan.record { rec.error = nil; scan.save(rec) }
             } else {
                 problems[scan.folder] = message
             }
@@ -159,13 +178,27 @@ final class ScanLibrary {
     /// Builds cut off by the app leaving the screen: start each again, oldest first, picking up from the working
     /// data Object Capture kept (its Checkpoint folder). Call when the app is back in front.
     func resumeInterrupted(settings: AppSettings, studio: StudioConnection) async {
-        let waiting = scans.reversed().filter { interrupted.contains($0.folder) }
-        interrupted = []
-        for scan in waiting where !scan.hasOBJ && scan.photoCount > 0 && work[scan.folder] == nil {
+        guard !resumingInterrupted else { return }
+        resumingInterrupted = true
+        defer { resumingInterrupted = false }
+        for scan in scans.reversed() where interrupted.contains(scan.folder) {
+            // left the screen again: the rest wait for the next return, without using up a try in the background
+            guard UIApplication.shared.applicationState == .active else { break }
+            if scan.hasOBJ || scan.photoCount == 0 {
+                // built by other means meanwhile, or nothing left to build from: nothing to say it will restart
+                interrupted.remove(scan.folder)
+                if problems[scan.folder] == Self.interruptedMessage { problems[scan.folder] = nil }
+                continue
+            }
+            guard work[scan.folder] == nil else { continue } // busy: stays waiting for the next return
+            interrupted.remove(scan.folder)
             resumes[scan.folder, default: 0] += 1
+            autoResuming.insert(scan.folder)
             await finish(scan, settings: settings, studio: studio)
+            autoResuming.remove(scan.folder)
         }
     }
+    private var resumingInterrupted = false
 
     /// The model was built but its studio copy (OBJ) wasn't made: make just that.
     func convert(_ scan: Scan) async {
@@ -279,7 +312,10 @@ final class ScanLibrary {
     }
 }
 
-/// Set (on the main queue) when the app goes to the background while a model builds.
-private final class LeftScreen: @unchecked Sendable {
-    var value = false
+/// While a model builds: whether the app went away from the screen, and when it last came back. Changed only on the
+/// main queue.
+private final class AwayFromScreen: @unchecked Sendable {
+    private(set) var backAt: Date?
+    func left() { backAt = nil }
+    func cameBack() { backAt = Date() }
 }
