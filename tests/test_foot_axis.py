@@ -71,3 +71,30 @@ def test_a_foot_lying_along_x_with_no_leg_points_its_toes_toward_plus_x(foot):
     frame, info = plantar.provisional_frame(synth.curved_foot(foot, leg=False), foot)
     assert info["toe_end_from"] == "mat"
     assert frame.anterior @ [1.0, 0.0, 0.0] == pytest.approx(1.0, abs=1e-6)
+
+
+@pytest.mark.parametrize("turn_deg", [-40.0, -46.0, 30.0, 120.0])
+def test_a_foot_with_no_leg_turned_any_way_off_the_mat_points_its_toes_toward_plus_y(turn_deg):
+    """The mat's instruction (toes toward +y) holds however far the foot lies from the mat's y: no jump at 45
+    degrees, where the axis's own direction flips (found by a code review, 25 Nov)."""
+    import trimesh
+
+    m = synth.curved_foot("right", leg=False)
+    m.apply_transform(trimesh.transformations.rotation_matrix(np.radians(turn_deg), [0, 0, 1]))
+    frame, info = plantar.provisional_frame(m, "right")
+    assert info["toe_end_from"] == "mat"
+    assert frame.anterior[1] > 0
+
+
+def test_toes_hanging_up_with_a_speckled_tip_are_laid_flat_once_by_about_their_angle():
+    """The toe-front rule leaves the tip's last step in when the toes behind it are raised (they aren't flat, so
+    it isn't the front of flat toes). SYNTHETIC: bent up 15 degrees at 200 mm, speckled 0.3 mm (seed 2), they are
+    laid flat at one joint, 17.9 degrees, the outline 248.5 mm of 250, with or without that step (25 Nov)."""
+    from footscan.recon import completeness, foot_prep
+
+    bent = synth.bend_toes(synth.refined(synth.curved_foot("right")), 15.0, x_from=200.0)
+    placed, info = foot_prep.prepare_sole_up(synth.sole_up_capture(synth.speckle(bent, 0.3, seed=2)), foot="right")
+    joints = info["toes_laid_flat"]["joints"]
+    assert len(joints) == 1 and joints[0]["raised_deg"] == pytest.approx(15.0, abs=4.0)
+    assert "toes_warning" not in info
+    assert completeness.measure(placed)["length_mm"] == pytest.approx(250.0, abs=2.5)

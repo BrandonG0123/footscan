@@ -326,7 +326,11 @@ def rest_on_hull(mesh, by: str = "centre"):
       250.2 mm long (2026-11-25). The face the sole stands on is the same
       however the scan was turned.
 
-    Returns (mesh, degrees it was tipped, 4 x 4 transform applied).
+    Returns (mesh, degrees it was tipped, 4 x 4 transform applied). Raises
+    FootPrepError if nothing can be rested on: by "contact", no hull face
+    within ``REST_MAX_TIP_DEG`` of square to the leg has any of the sole on it
+    (the arrival check refuses the scan for it; it is not laid by the centre
+    rule instead, which laid sole scans on their legs).
     """
     from scipy.spatial import ConvexHull
 

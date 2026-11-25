@@ -56,6 +56,7 @@ from ..frame import FootFrame
 
 FOOTPRINT_BAND_MM = 12.0
 LEG_MIN_HEIGHT_MM = 70.0
+MAT_ACROSS_TOL = 0.02  # an axis whose y part is under this (about 1 degree off the mat's x) lies along x
 DOWNWARD_COS = 0.25
 PLANTAR_MAX_HEIGHT_MM = 40.0
 PROFILE_STEP_MM = 2.0
@@ -106,7 +107,9 @@ def long_axis(xy: np.ndarray) -> tuple[np.ndarray, float, float]:
     _, vecs = np.linalg.eigh(np.array([[sxx, sxy], [sxy, syy]]))
     e = vecs[:, -1]
     e = e / np.linalg.norm(e)
-    e = e if e[np.argmax(np.abs(e))] > 0 else -e  # a line has two directions: the one toward +x or +y, every time
+    # a line has two directions; the same one every time (its larger part positive). Only the line means anything:
+    # the direction flips where the line passes 45 degrees, so no caller should read the foot's toe end from it
+    e = e if e[np.argmax(np.abs(e))] > 0 else -e
     perp = np.array([-e[1], e[0]])
     return e, float(np.ptp(H @ e)), float(np.ptp(H @ perp))
 
@@ -124,12 +127,12 @@ def provisional_frame(mesh, foot: str) -> tuple[FootFrame, dict]:
     elongation = length / max(width, 1e-9)
 
     notes = []
-    # the mat's instruction: toes toward +y. A foot lying across the mat (nearer its x than its y) the instruction
-    # says nothing about: then toward +x, as the SYNTHETIC test feet lie in foot coordinates. Until 25 Nov this
-    # took the sign of the axis's y part alone, which for a foot lying exactly along x is a rounding error's sign:
+    # the mat's instruction: toes toward +y, however far the foot lies from the mat's y. Only a foot lying along x
+    # (within MAT_ACROSS_TOL) the instruction says nothing about: then toward +x, as the SYNTHETIC test feet lie in
+    # foot coordinates. Until 25 Nov that case took the sign of the axis's y part too, a rounding error's sign:
     # with the axis down the middle of the footprint, synth.curved_foot without a leg came out heel first.
-    across = abs(axis[0]) > abs(axis[1])
-    by_mat = 1.0 if (axis[0] if across else axis[1]) >= 0 else -1.0
+    along_x = abs(axis[1]) < MAT_ACROSS_TOL
+    by_mat = 1.0 if (axis[0] if along_x else axis[1]) >= 0 else -1.0
     high = V[V[:, 2] > LEG_MIN_HEIGHT_MM]
     by_leg = None
     if len(high) > 50:
