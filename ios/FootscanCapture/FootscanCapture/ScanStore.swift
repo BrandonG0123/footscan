@@ -171,11 +171,42 @@ struct ScanRecord: Codable {
     /// What the phone's own check (ScanCheck) found once the model was built. A scan it says to scan again isn't
     /// sent by itself; it goes only if the person taps Send anyway.
     var phoneCheck: PhoneCheck?
+    /// Set when the person stopped the capture partway (the X, then Stop scanning) after photos were taken. The
+    /// photos stay, but the home screen doesn't ask for its model to be built: a scan stopped on purpose is
+    /// usually one they meant to start again. Its page can still build it.
+    var stoppedEarly: Date?
+    /// The capture the studio made for this scan on a try whose upload then dropped: the next try sends the model
+    /// into it, so a shaky connection doesn't leave the studio one empty capture per try.
+    var pendingCapture: PendingCapture?
+    /// A name the person gave the scan ("Sam, left", "after the run"), to tell scans of the same kind apart. Kept on
+    /// this phone only: it isn't sent to the studio (it's in the file name when the person shares a model themselves).
+    var name: String?
     var units = "metres, Y up (Apple Object Capture's own frame). The studio's Import 3D converts to millimetres."
     var note = "Footscan LiDAR test capture. Not a medical device."
 }
 
 extension ScanRecord {
+    /// The longest name kept: enough for "Sam, left foot, after tennis".
+    static let nameLimit = 40
+
+    /// A typed name as kept: spaces at the ends and runs of spaces inside dropped, at most `nameLimit` characters;
+    /// nothing left means no name.
+    static func cleanName(_ typed: String) -> String? {
+        let words = typed.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+        let kept = String(words.prefix(nameLimit)).trimmingCharacters(in: .whitespaces) // the cut can land on a space
+        return kept.isEmpty ? nil : kept
+    }
+
+    /// What the scan is called on its card and page: its name, else what was scanned.
+    var heading: String { name ?? subject.label }
+
+    /// Two scans count as the same foot (a newer one replaces an older one asking to be scanned again) when they're
+    /// of the same kind and carry the same name (whatever its capitals and accents), or both none.
+    func sameFoot(as other: ScanRecord) -> Bool {
+        let fold = { (n: String?) in n?.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: nil) }
+        return subject == other.subject && fold(name) == fold(other.name)
+    }
+
     /// What to change on the next scan of this kind, if the studio refused this one: its own steps, or for
     /// a refusal that came without them, each line's headline as the title and its "Scan again ..." ending
     /// as the one step (the same fallback as the studio's completeness.retake_advice). If the studio hasn't
@@ -190,6 +221,29 @@ extension ScanRecord {
     var heldByPhoneCheck: Bool {
         guard let phoneCheck, phoneCheck.sentAnyway == nil else { return false }
         return !phoneCheck.scanAgain.isEmpty
+    }
+}
+
+/// A capture the studio made for a scan whose upload then dropped. Sending a model into a capture again replaces
+/// the model there, so the next try can finish this one instead of making another.
+struct PendingCapture: Codable, Equatable {
+    var id: String
+    /// Which studio made it (`identity(of:)`): another studio's capture ids mean nothing here.
+    var studio: String
+    /// The scale reading it was made with (foot scans): a different one now needs a new capture.
+    var loadKg: Double?
+
+    /// The same studio whichever address it answers at: its pinned certificate, else (a development build's
+    /// public studio) its address.
+    static func identity(of link: StudioLink) -> String { link.fingerprint ?? link.host }
+}
+
+extension ScanRecord {
+    /// The capture an earlier, dropped try made, if it was made at this studio with the same scale reading.
+    func reusableCapture(at link: StudioLink) -> String? {
+        guard let pendingCapture, pendingCapture.studio == PendingCapture.identity(of: link),
+              pendingCapture.loadKg == loadKg else { return nil }
+        return pendingCapture.id
     }
 }
 
@@ -257,12 +311,41 @@ struct Scan: Identifiable, Hashable {
     }
 
     var hasModel: Bool { FileManager.default.fileExists(atPath: usdz.path()) }
+
+    /// Whether this scan stands in for `refused` (one the studio or the phone said to scan again), so the home
+    /// screen stops asking for it: a newer scan of the same foot, unless this one was stopped partway with no
+    /// model. The foot still needs scanning then, and a stopped scan asks for nothing itself.
+    func replaces(_ refused: ScanRecord) -> Bool {
+        guard let r = record else { return false }
+        return r.sameFoot(as: refused) && r.created > refused.created && (r.stoppedEarly == nil || hasModel)
+    }
+
+    /// What deleting this scan from the phone loses, said in the confirmation before it goes.
+    var deleteWarning: String {
+        record?.studioCaptureID == nil ? "Its photos and model will be gone." : "The copy in the studio stays."
+    }
+
+    /// Photos and no studio copy of the model yet: the home screen asks for it to be finished (built). Not a capture
+    /// the person stopped partway, until a model is built from it anyway (then its copy for the studio is owed).
+    var waitsToBuild: Bool { photoCount > 0 && !hasOBJ && (record?.stoppedEarly == nil || hasModel) }
+
+    /// Nothing was kept or happened: no photos, no model, no shots counted (a stopped capture's photos may still be
+    /// on their way to the folder) and no error saved to explain a failure. A capture cancelled before its first
+    /// photo leaves this, and its folder can go.
+    var keptNothing: Bool {
+        guard photoCount == 0, !hasModel else { return false }
+        guard let rec = record else { return true }
+        return rec.stoppedEarly == nil && rec.error == nil && (rec.shotsTaken ?? 0) == 0
+    }
     var hasOBJ: Bool { FileManager.default.fileExists(atPath: obj.path()) }
 
     var photoCount: Int {
         (try? FileManager.default.contentsOfDirectory(atPath: images.path()))?
             .filter { !$0.hasPrefix(".") }.count ?? 0
     }
+
+    /// "1 photo", "24 photos": a scan stopped early is kept even with a single photo.
+    static func photosWords(_ n: Int) -> String { n == 1 ? "1 photo" : "\(n) photos" }
 }
 
 enum ScanStore {
@@ -272,7 +355,8 @@ enum ScanStore {
     }
 
     /// A new, empty scan folder for this subject.
-    static func create(_ subject: Subject) throws -> Scan {
+    /// `name`: the name to start it with (a scan again of a named scan carries its name).
+    static func create(_ subject: Subject, name: String? = nil) throws -> Scan {
         let stamp = ISO8601DateFormatter.string(from: Date(), timeZone: .current,
                                                 formatOptions: [.withFullDate, .withTime, .withColonSeparatorInTime])
             .replacingOccurrences(of: ":", with: "")
@@ -280,9 +364,11 @@ enum ScanStore {
         for dir in [scan.images, scan.checkpoint] {
             try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         }
-        scan.save(ScanRecord(subject: subject, created: Date(), device: deviceModel(),
-                             systemVersion: UIDevice.current.systemVersion,
-                             appVersion: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "?"))
+        var record = ScanRecord(subject: subject, created: Date(), device: deviceModel(),
+                                systemVersion: UIDevice.current.systemVersion,
+                                appVersion: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "?")
+        record.name = name
+        scan.save(record)
         return scan
     }
 

@@ -12,8 +12,8 @@ z = 0, toes toward +y. Four steps, each recorded:
    foot's lowest scanned points are taken as the floor, trusting gravity
    for level. A coarse phone model is then split to 2 mm triangles (adds
    points, not shape) so the steps below work by area, not vertex luck.
-2. **Which way the foot points**: the footprint's length (its narrowest
-   width, as plantar.long_axis) gives the line. The end the leg stands over
+2. **Which way the foot points**: the footprint's length (the line its
+   filled outline is spread along most, as plantar.long_axis) gives the line. The end the leg stands over
    is the heel. With no leg in the scan, the taller end is the heel (the
    ankle and the back of the foot stand higher than the toes).
 3. **Turn** so the toes point along +y, footprint centred on the mat.
@@ -231,30 +231,60 @@ def _largest_piece(mesh, reaches_z: float | None = None):
     return out, float(areas[order[1]] / areas[order[0]])
 
 
-def rest_on_hull(mesh):
-    """Lay the foot on a flat floor the way it would rest on a table: no weight, no squashing.
+REST_CONTACT_MM = 4.0      # rest_on_hull(by="contact"): the sole this close to a candidate floor stands on it
+REST_FACING = 0.5          # ...counted where its surface faces that floor at least this squarely (cos)
+REST_MAX_TIP_DEG = 55.0    # ...and only floors this close to square to the leg, which stands up in a sole scan: an
+                           # ankle hangs the foot at most about SOLE_UP_MAX_TIP_DEG (50) off it. A floor along the leg
+                           # would have the long side of the calf on it (the real legs-flat scan 2190: 399 mm "long")
+REST_REFINE_DEG = 2.0      # ...then the face under the middle of what stands on it, if within this of the same plane
 
-    Wrap the scan in its convex hull (a rubber band round it) and find the
-    hull's underside directly below the scan's centre (area-weighted). That
-    face touches the lowest parts of the sole, normally the heel and the ball
-    of the foot, and it becomes the floor: turned flat and set to z = 0.
-    The arch stays up, as far above that floor as it really is. Run on the
-    denoised scan (``_denoise``): on the benchmark (scripts/benchmark_prep.py)
-    that leaves no measurable floor bias even with 1 mm of scan noise.
-    Returns (mesh, degrees it was tipped, 4 x 4 transform applied).
-    """
-    from scipy.spatial import ConvexHull
 
-    m = mesh.copy()
-    V = np.asarray(m.vertices)
-    hull = ConvexHull(V)
-    normals = hull.equations[:, :3]  # outward, unit length
-    w = m.area_faces
-    c = (m.triangles_center * w[:, None]).sum(0) / w.sum()
+def _stood_on_area(normals, offsets, faces_c, faces_n, faces_a, candidates) -> np.ndarray:
+    """For each hull face in ``candidates``: the area of the surface that faces it (``REST_FACING``) and lies within
+    ``REST_CONTACT_MM`` of its plane."""
+    out = np.zeros(len(candidates))
+    for i in range(0, len(candidates), 64):  # in blocks: candidates x triangles distances at a time
+        block = candidates[i:i + 64]
+        n, d = normals[block], offsets[block]
+        dist = -(faces_c @ n.T + d)  # >= 0: the hull holds every point on its inner side
+        facing = (faces_n @ n.T) > REST_FACING
+        out[i:i + 64] = ((dist < REST_CONTACT_MM) & facing).T @ faces_a
+    return out
+
+
+def _most_stood_on(normals, offsets, faces_c, faces_n, faces_a, candidates) -> int | None:
+    """Of the hull faces ``candidates``, the one with the most of the sole on it (``_stood_on_area``). -> that
+    face's index, or None.
+
+    Coplanar hull faces (one flat facet split into triangles) are judged once: their planes are the same. A
+    finely split scan has a few hundred thousand triangles and a curved one thousands of hull faces, so every
+    face is first judged on 20,000 of the triangles (the same ones every time, picked by area), and the best
+    eight again on all of them."""
+    planes = np.round(np.c_[normals[candidates], offsets[candidates]], 6)
+    _, first = np.unique(planes, axis=0, return_index=True)
+    candidates = np.asarray(candidates)[np.sort(first)]
+    # a triangle facing up can't face a floor within REST_MAX_TIP_DEG of down squarely enough to count
+    keep = faces_n[:, 2] < np.cos(np.radians(180.0 - REST_MAX_TIP_DEG) - np.arccos(REST_FACING)) + 1e-9
+    keep &= faces_a > 0  # a phone model can hold triangles of no area: they stand on nothing (and can't be picked)
+    faces_c, faces_n, faces_a = faces_c[keep], faces_n[keep], faces_a[keep]
+    if not len(faces_a) or not len(candidates):
+        return None
+    if len(faces_a) > 20000 and len(candidates) > 8:
+        pick = np.random.default_rng(0).choice(len(faces_a), 20000, replace=False, p=faces_a / faces_a.sum())
+        rough = _stood_on_area(normals, offsets, faces_c[pick], faces_n[pick], np.ones(len(pick)), candidates)
+        candidates = candidates[np.argsort(-rough, kind="stable")[:8]]
+    area = _stood_on_area(normals, offsets, faces_c, faces_n, faces_a, candidates)
+    k = int(np.argmax(area))
+    return int(candidates[k]) if area[k] > 0 else None
+
+
+def _face_under(V, normals, simplices, c, candidates) -> int | None:
+    """Of the hull faces ``candidates``, the steepest-down one straight below the point ``c`` (in V's own frame,
+    z up), or None."""
     best, best_cos = None, -1.0
-    for fi in np.nonzero(normals[:, 2] < -0.3)[0]:
+    for fi in candidates:
         n = normals[fi]
-        tri = V[hull.simplices[fi]]
+        tri = V[simplices[fi]]
         z = tri[0][2] - (n[0] * (c[0] - tri[0][0]) + n[1] * (c[1] - tri[0][1])) / n[2]
         q = np.array([c[0], c[1], z])
         v0, v1, v2 = tri[1] - tri[0], tri[2] - tri[0], q - tri[0]
@@ -265,15 +295,89 @@ def rest_on_hull(mesh):
         b1 = (d11 * d20 - d01 * d21) / den
         b2 = (d00 * d21 - d01 * d20) / den
         if b1 >= -1e-6 and b2 >= -1e-6 and b1 + b2 <= 1 + 1e-6 and -n[2] > best_cos:
-            best, best_cos = fi, -n[2]
+            best, best_cos = int(fi), -n[2]
+    return best
+
+
+def rest_on_hull(mesh, by: str = "centre"):
+    """Lay the foot on a flat floor the way it would rest on a table: no weight, no squashing.
+
+    Wrap the scan in its convex hull (a rubber band round it) and pick one of
+    the hull's underside faces. That face touches the lowest parts of the
+    sole, normally the heel and the ball of the foot, and it becomes the
+    floor: turned flat and set to z = 0. The arch stays up, as far above
+    that floor as it really is. Run on the denoised scan (``_denoise``): on
+    the benchmark (scripts/benchmark_prep.py) that leaves no measurable floor
+    bias even with 1 mm of scan noise.
+
+    Which face (``by``):
+
+    - ``"centre"``: the one directly below the scan's centre (area-weighted),
+      as a rigid object rests on a table. Fine for a foam print, whose centre
+      is over the print.
+    - ``"contact"`` (sole scans): the one the most of the sole stands on
+      (``_most_stood_on``): where the heel and the ball of the foot both touch.
+      A sole scan keeps up to 300 mm of shin, so its centre sits over the heel,
+      and right under it are the small, steep facets of the heel's rounded
+      underside. Which of those is under the centre turned on how the foot was
+      held by a few degrees: the real left sole-up scan
+      LIDAR_nwb_relaxed_L_20261027-151404-89df, turned up to 5 degrees before
+      preparing, was laid on faces tipped 4 to 29 degrees, and read 228.5 to
+      250.2 mm long (2026-11-25). The face the sole stands on is the same
+      however the scan was turned.
+
+    Returns (mesh, degrees it was tipped, 4 x 4 transform applied). Raises
+    FootPrepError if nothing can be rested on: by "contact", no hull face
+    within ``REST_MAX_TIP_DEG`` of square to the leg has any of the sole on it
+    (the arrival check refuses the scan for it; it is not laid by the centre
+    rule instead, which laid sole scans on their legs).
+    """
+    from scipy.spatial import ConvexHull
+
+    m = mesh.copy()
+    V = np.asarray(m.vertices)
+    hull = ConvexHull(V)
+    normals = hull.equations[:, :3]  # outward, unit length
+    if by == "contact":
+        down = np.nonzero(normals[:, 2] < -np.cos(np.radians(REST_MAX_TIP_DEG)))[0]
+        C, N, A = m.triangles_center, m.face_normals, m.area_faces
+        best = _most_stood_on(normals, hull.equations[:, 3], C, N, A, down) if len(down) else None
+        if best is not None:
+            # then, seen square to that face, the face straight under the middle of what stands on it: a flat sole
+            # stands on its own facet exactly, not on a neighbour a hair off that takes in a little more of the
+            # rounded edge (SYNTHETIC: 0.09 degrees on the benchmark's clean sole-up scans). Only a face within
+            # REST_REFINE_DEG of it: the middle can lie under the arch, past the facet, where the hull's faces
+            # climb toward something else (the toes), and a floor there stands on neither the heel nor the ball
+            n, d = normals[best], hull.equations[best, 3]
+            on = (-(C @ n + d) < REST_CONTACT_MM) & (N @ n > REST_FACING)
+            R = imported._level(-n)
+            mid = R @ np.average(C[on], axis=0, weights=A[on])
+            turned = normals @ R.T
+            near = down[turned[down, 2] < -np.cos(np.radians(REST_REFINE_DEG))]  # within that of the best face
+            under = _face_under(V @ R.T, turned, hull.simplices, mid, near)
+            face = best if under is None else under
+            return _lay_on(m, V, normals[face], float(-normals[face][2]))
+        raise FootPrepError(f"couldn't find what the sole stands on: nothing of the scan lies flat on a floor within "
+                            f"{REST_MAX_TIP_DEG:.0f} degrees of square to the leg. Is the sole in the scan?")
+    if by != "centre":
+        raise ValueError(f"by must be 'centre' or 'contact', got {by!r}")
+    w = m.area_faces
+    c = (m.triangles_center * w[:, None]).sum(0) / w.sum()
+    best = _face_under(V, normals, hull.simplices, c, np.nonzero(normals[:, 2] < -0.3)[0])
     if best is None:
         raise FootPrepError("couldn't find what the sole would rest on: is the sole in the scan?")
-    R = imported._level(-normals[best])  # that face's downward normal -> straight down
+    return _lay_on(m, V, normals[best], float(-normals[best][2]))
+
+
+def _lay_on(m, V, normal, cos_down: float):
+    """``m`` turned so the hull face with outward ``normal`` is the floor, level at z = 0 (as ``rest_on_hull``
+    returns it)."""
+    R = imported._level(-normal)  # that face's downward normal -> straight down
     T = np.eye(4)
     T[:3, :3] = R
     T[2, 3] = -(V @ R.T)[:, 2].min()  # the floor: that face, now level, at z = 0
     m.apply_transform(T)
-    return m, float(np.degrees(np.arccos(np.clip(best_cos, -1, 1)))), T
+    return m, float(np.degrees(np.arccos(np.clip(cos_down, -1, 1)))), T
 
 
 def _bowl_low(Q, keep_mm: float) -> np.ndarray | None:
@@ -462,7 +566,11 @@ def prep_version(kind: str | None = None) -> str:
     # 2026-10-30: steeply raised toes judged by their reach along the underside (fc4982c, which kept the 29 Oct
     # string for sole scans of both kinds)
     # 2026-10-30 (later): toes that curl as well as bend laid flat at up to three joints (TOES_JOINTS)
-    v = "2026-10-30: toes laid flat at up to three joints" if LAY_TOES_FLAT else "2026-10-30: toes as scanned"
+    # 2026-11-25: rested on the hull face the sole stands on most, not the one under the scan's centre
+    # (rest_on_hull(by="contact")); and the footprint's length axis is its principal axis, not its narrowest-width
+    # edge (plantar.long_axis): both in the one string, made together
+    v = ("2026-11-25: rested where the sole stands, toes laid flat at up to three joints" if LAY_TOES_FLAT
+         else "2026-11-25: rested where the sole stands, toes as scanned")
     if kind == "sole_hanging":
         # 2026-10-30: the leg's direction read from one piece; the gap between shins found by where triangles
         # reach, not their centres
@@ -478,6 +586,17 @@ TOES_MIN_LENGTH_MM = 20.0    # less than this past the ball isn't toes: nothing 
                              # underside, not across the floor: toes raised steeply cover little floor)
 TOES_MIN_RAISE_DEG = 5.0     # toes raised less than this are as good as flat: left exactly as they are
 TOES_MAX_RAISE_DEG = 60.0    # past this it isn't toes hanging up, it's something else: left alone, with a warning
+# The underside profile's last step, if it climbs steeper than this from the step before, is the toe tip's front
+# (a wall facing forward), not toes hanging up, and is left out. The foot's front ends partway into that step, so
+# all it holds is whatever bulges furthest forward, high up the front: SYNTHETIC (benchmark_prep "speckle 0.3",
+# right foot, 25 Nov 2026), flat toes whose last 2 mm step read 18.6 mm up (5.8 the step before) were "laid flat"
+# by 47 degrees at three joints and read 23 mm long, with nothing said; tests/test_foot_axis.py has three more
+# (speckled seeds: two refused as "rising 77-78 degrees", one 258.5 mm of 250). Seen only once the foot was turned
+# down the middle of its footprint (plantar.long_axis, the same day); turned a few degrees off, as before, the last
+# step held lower points. Only the last step: toes raised this steeply climb on over two steps or more and must
+# still be judged too steep (SYNTHETIC: bent up 15 degrees at 200 mm and 65 more at 215, 80 off the floor, climb
+# 77 then 80 degrees over the last two steps; cut there, they were neither laid flat nor warned about, 219 mm of 250).
+TOES_FRONT_WALL_DEG = 75.0
 # The radius the toes bend round: their joints sit inside the ball of the foot, this far above the floor, not at
 # the skin under it; how far up isn't measured here. 10 mm is a judgment, to be set from the first ruler
 # measurement of a scanned foot. On SYNTHETIC sole-up scans (tests/synth.py curved_foot, 250 mm, right foot,
@@ -490,6 +609,14 @@ TOES_MAX_RAISE_DEG = 60.0    # past this it isn't toes hanging up, it's somethin
 # (5 mm: +0.7 to -2.7 bent about the skin, +2.9 to +9.7 about a line 12-18 mm up; 15 mm: -1.5 to -11.1 and
 # +0.4 to +3.5.) At 35 degrees and more, as the tips rise past the outline's height, as scanned reads 14.6-38.2
 # mm short; laid flat, -6.4 to +6.6 mm, depending on where the toes really bend.
+# Since 25 Nov 2026 the foot is turned down the middle of its footprint (plantar.long_axis; before, a few degrees
+# off along one side), and the bends read nearer their true angles (20 and 30 degrees, at 185 and 220 mm: 21.8
+# and 31.6, were 23.5 and 35.3), so less is laid flat. Laid flat (10 mm) then, the same feet (refined to 2 mm,
+# completeness.measure, 25 Nov), 10 / 20 / 35 / 50 degrees:
+#   bent about the skin    -1.5 / -2.5 / -6.0 / -9.0      (were -0.4 / -1.5 / -4.1 / -6.4 on the same day's run)
+#   bent about 12 mm up    +1.5 / +1.5 / +2.0 / +2.0      (+1.7 / +2.7 / +3.6 / +4.5)
+#   bent about 18 mm up           +3.5 / +5.5             (+4.5 / +7.5)
+# The same width of uncertainty, about 1-2.5 mm shorter throughout: still a question for a ruler.
 TOES_JOINT_UP_MM = 10.0
 # After laying flat, the toes' tip (the lowest point of the front completeness.END_PROBE_MM of what's under the
 # outline's height) higher than this off the floor: the toes weren't laid flat (a joint too steep, or the ball not
@@ -526,6 +653,9 @@ def _lay_toes_flat(placed, info):
     3. The raise: the smallest angle, seen from the pivot, of any point of the
        profile at least ``TOES_ANGLE_FROM_MM`` further forward: the line from
        the pivot at that angle runs under all of the toes and touches one.
+       The profile's last step is left out if it alone climbs steeper than
+       ``TOES_FRONT_WALL_DEG`` from toes still near the floor: that's the toe
+       tip's front, facing forward.
     4. The toes bend round their joints, not round the skin: a circle
        ``TOES_JOINT_UP_MM`` across that touches both the floor and that line,
        just behind the pivot. Everything ahead of its centre whose direction
@@ -626,6 +756,7 @@ def _lay_one_joint(W, y0, after, n, info):
     while i + 1 < len(z) and (not have[i + 1] or z[i + 1] <= zb + TOES_ON_FLOOR_MM):
         i += 1
     yp = float(ys[i])
+    have = have & ~_toe_front_wall(ys, z, have, i, zb)
     # how far the underside reaches from the pivot, straight-line: the horizontal reach alone would let toes raised
     # steeply (SYNTHETIC: 50 mm of toes bent up 65 degrees reach 21 mm across the floor) skip both the laying and
     # the too-steep warning
@@ -667,6 +798,23 @@ def _lay_one_joint(W, y0, after, n, info):
     W[fore, 2] = np.maximum(cz - rad * np.cos(phi - turn), np.minimum(W[fore, 2], zb))
     return W, dict(raised_deg=round(raise_deg, 1), pivot_from_heel_mm=round(yp - y0, 1),
                    joint_from_heel_mm=round(float(cy - y0), 1), pivot_y=yp, floor_z=zb)
+
+
+def _toe_front_wall(ys, z, have, i, zb):
+    """For ``_lay_one_joint``'s profile (lowest point ``z`` at each step ``ys``, ``have`` where there is one), which
+    steps past the pivot (step ``i``, the floor there at ``zb``) are the toe tip's front: the last measured step, if
+    it alone climbs from the one before it more steeply than ``TOES_FRONT_WALL_DEG`` (the climb into the step before
+    is shallower) and the step before is still near the floor (within ``TOES_STILL_UP_MM``: the toes behind the
+    front are flat, not raised and curling up at the tip)."""
+    wall = np.zeros(len(z), dtype=bool)
+    steps = np.nonzero(have)[0]
+    steps = steps[steps >= i]
+    if len(steps) >= 2:
+        climb = np.degrees(np.arctan2(np.diff(z[steps[-3:]]), np.diff(ys[steps[-3:]])))
+        if (climb[-1] > TOES_FRONT_WALL_DEG and (len(climb) < 2 or climb[-2] <= TOES_FRONT_WALL_DEG)
+                and z[steps[-2]] - zb <= TOES_STILL_UP_MM):
+            wall[steps[-1]] = True
+    return wall
 
 
 def _orient_and_trim(placed, info, trim_mm, heel_by: str = "leg", track: list | None = None,
@@ -842,8 +990,8 @@ def _finish_unloaded(m, info, track, trim_mm):
     """An unloaded foot already turned sole-down, leg up: the rest of a sole scan's preparation.
 
     Split into 2 mm triangles (after any cuts: what's cut needn't be), keep
-    the biggest piece, take out scan speckle, rest it on its lowest points,
-    then stand it on the tripod (heel and both sides of the ball), turn the
+    the biggest piece, take out scan speckle, rest it where the sole stands
+    (``rest_on_hull(by="contact")``), then stand it on the tripod (heel and both sides of the ball), turn the
     toes to +y, lay toes that hang up flat (``_lay_toes_flat``), centre it and
     trim the leg.
     """
@@ -852,7 +1000,7 @@ def _finish_unloaded(m, info, track, trim_mm):
     if other > 0.2:
         info["pieces_warning"] = "the scan had more than one large piece; the biggest was used"
     m = _denoise(m, info)
-    placed, tip, T = rest_on_hull(m)
+    placed, tip, T = rest_on_hull(m, by="contact")
     T = _settle_floor(placed, info, unloaded=True) @ T
     placed = m.copy()
     placed.apply_transform(T)
@@ -1413,7 +1561,9 @@ FOOT_RATIO = (0.28, 0.50)
 # on the right one from the same session (..._R_20261027-151404-2349), 1.2 mm. The tripod floor
 # (_settle_floor) doesn't level a roll that big: it looks for the ball's sides only up to UNLOADED_CONTACT_MM.
 # 5 mm is a judgment between the two: past it, the fill under the raised side is a wedge that changes how
-# the foot stands.
+# the foot stands. Since 2026-11-25 (rest_on_hull(by="contact")) 89df reads 1.0 mm and 2349 0.0 mm: the 8.6 mm
+# came from the floor the old rule chose, not from the foot. So no real scan has shown a roll this check needs yet;
+# it stays for a foot that is held rolled.
 BALL_ROLL_WARN_MM = 5.0
 INVENTED_SOLE_SHARE = 0.9
 

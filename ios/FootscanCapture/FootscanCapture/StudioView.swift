@@ -1,4 +1,5 @@
 // Connecting the app to the studio, by scanning the code it shows.
+import PhotosUI
 import SwiftUI
 import VisionKit
 
@@ -24,6 +25,16 @@ final class StudioConnection {
 
     /// Try a connect code; save it only if the studio answers to it (at any of its addresses).
     func connect(_ text: String) async -> Bool {
+        // one at a time: two codes connecting at once would leave whichever answered last, and waiting scans
+        // would go there
+        guard !connecting else {
+            // said on the studio screen, so a code that came in meanwhile (a link, a screenshot) isn't lost unseen
+            status = Self.busyConnecting
+            return false
+        }
+        connecting = true
+        defer { connecting = false }
+        pendingSwitch = nil // connecting any way answers the question
         guard let parsed = StudioStore.parse(text) else {
             if let other = StudioStore.parse(text, allowPublic: true) {
                 status = other.link.fingerprint != nil
@@ -52,6 +63,56 @@ final class StudioConnection {
         connections += 1
         status = "Connected to \(Self.describe(reached.link.url))."
         return true
+    }
+
+    /// A connect code that came from outside the app (a link, or the iPhone's own Camera app) for a different
+    /// studio from the connected one, waiting for a yes on the studio screen. The studio's own Scan the code and
+    /// screenshot paths don't ask: the person chose to connect there.
+    nonisolated static let busyConnecting = "Still checking the last code. Once it has finished, use the new one again."
+
+    var pendingSwitch: (code: String, address: String, at: Date)?
+    /// A connect is under way (checking the studio answers): another waits until it's done.
+    private(set) var connecting = false
+    /// A question older than this isn't shown: the link was opened while something else covered the screen, and
+    /// turning up later, out of the blue, it would only confuse.
+    nonisolated static let switchQuestionLasts: TimeInterval = 5 * 60
+
+    /// The pending switch, if it's recent enough to ask about.
+    func currentSwitch(now: Date = .now) -> (code: String, address: String, at: Date)? {
+        guard let p = pendingSwitch, Self.stillAsking(since: p.at, now: now) else { return nil }
+        return p
+    }
+
+    nonisolated static func stillAsking(since asked: Date, now: Date) -> Bool {
+        let age = now.timeIntervalSince(asked)
+        return age >= 0 && age < switchQuestionLasts
+    }
+
+    /// A code from outside the app: connected straight away, unless it would put a different studio in place of
+    /// the connected one, which is asked first (scans waiting to go would go to the new studio by themselves).
+    func open(_ code: String) async {
+        if let address = Self.otherStudio(in: code, connected: link) {
+            pendingSwitch = (code, address, .now)
+            status = nil
+            return
+        }
+        _ = await connect(code)
+    }
+
+    /// Yes to the pending switch: connect to the studio the link named.
+    func confirmSwitch() async {
+        guard let pending = currentSwitch() else { pendingSwitch = nil; return }
+        guard !connecting else { status = Self.busyConnecting; return } // the question stays, to answer once it's done
+        pendingSwitch = nil
+        _ = await connect(pending.code)
+    }
+
+    /// The address of the studio `code` names, when it's a different studio from `connected`; nil when nothing
+    /// is connected, when it's the same studio again (a new key, say), or when it isn't a studio code at all
+    /// (connect() then says why).
+    nonisolated static func otherStudio(in code: String, connected: StudioLink?) -> String? {
+        guard let connected, let parsed = StudioStore.parse(code), !connected.isSameStudio(as: parsed.link) else { return nil }
+        return describe(parsed.link.url)
     }
 
     /// Test the connection: try every address the studio has, and say which one answered.
@@ -103,9 +164,16 @@ final class StudioConnection {
 
 struct StudioView: View {
     @Environment(StudioConnection.self) private var studio
+    /// The numbered dots of the connect steps grow with the text, so a large number still fits inside.
+    @ScaledMetric(relativeTo: .headline) private var stepDot: CGFloat = 28
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.dynamicTypeSize) private var typeSize
     @State private var scanning = false
     @State private var confirmDisconnect = false
+    /// A screenshot or photo of the code, chosen instead of pointing the camera at it.
+    @State private var picture: PhotosPickerItem?
+    /// A connect is under way (from the camera or a picture): one at a time, so their answers can't cross.
+    @State private var connecting = false
 
     private var canScan: Bool { DataScannerViewController.isSupported && DataScannerViewController.isAvailable }
 
@@ -120,7 +188,11 @@ struct StudioView: View {
                         Text("Scans go straight from this phone to the Footscan studio on your computer: over your Wi-Fi at home, or over Tailscale from anywhere if the studio has it.")
                             .foregroundStyle(Color.fsMuted)
                     }
+                    if let pending = studio.currentSwitch() { switchQuestion(pending.address) }
                     if let link = studio.link { connected(link) } else { howTo }
+                    // At the accessibility text sizes the buttons pinned to the bottom took half the screen, leaving
+                    // the steps to scroll in the top half: there they come after the steps instead.
+                    if typeSize.isAccessibilitySize { actions }
                     if let status = studio.status {
                         Label(status, systemImage: "info.circle")
                             .font(.footnote).foregroundStyle(Color.fsMuted)
@@ -133,24 +205,32 @@ struct StudioView: View {
             }
             .background(Color.fsBackground.ignoresSafeArea())
             .safeAreaInset(edge: .bottom) {
-                Group {
-                    if studio.link == nil {
-                        Button { scanning = true } label: { Label("Scan the studio's code", systemImage: "qrcode.viewfinder") }
-                            .buttonStyle(PrimaryButtonStyle())
-                    } else {
-                        Button { scanning = true } label: { Label("Connect to a different studio", systemImage: "qrcode.viewfinder") }
-                            .buttonStyle(SecondaryButtonStyle())
-                    }
+                if !typeSize.isAccessibilitySize {
+                    actions
+                        .padding(.horizontal, 20).padding(.vertical, 10)
+                        .background(.bar)
                 }
-                .disabled(!canScan)
-                .padding(.horizontal, 20).padding(.vertical, 10)
-                .background(.bar)
+            }
+            .onChange(of: picture) { _, item in
+                guard let item else { return }
+                picture = nil // first, so the same picture can be chosen again later
+                guard !connecting else { return }
+                connecting = true
+                Task {
+                    await connect(from: item)
+                    connecting = false
+                }
             }
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
             .sheet(isPresented: $scanning) {
                 CodeScanner { text in
                     scanning = false
-                    Task { await studio.connect(text) }
+                    guard !connecting else { return }
+                    connecting = true
+                    Task {
+                        _ = await studio.connect(text)
+                        connecting = false
+                    }
                 }
                 .ignoresSafeArea()
             }
@@ -164,13 +244,52 @@ struct StudioView: View {
         .sensoryFeedback(.success, trigger: studio.link)
     }
 
+    /// Connect with the code: the camera, or a screenshot of it.
+    private var actions: some View {
+        VStack(spacing: 8) {
+            Group {
+                if studio.link == nil {
+                    Button { scanning = true } label: { Label("Scan the studio's code", systemImage: "qrcode.viewfinder") }
+                        .buttonStyle(PrimaryButtonStyle())
+                } else {
+                    Button { scanning = true } label: { Label("Connect to a different studio", systemImage: "qrcode.viewfinder") }
+                        .buttonStyle(SecondaryButtonStyle())
+                }
+            }
+            .disabled(!canScan || connecting || studio.connecting)
+            // the code on this phone's own screen (a remote-desktop app), or sent as a picture
+            PhotosPicker(selection: $picture, matching: .images) {
+                Label("Use a screenshot of the code", systemImage: "photo.on.rectangle")
+                    .font(.subheadline.weight(.semibold))
+            }
+            .disabled(connecting || studio.connecting)
+        }
+    }
+
+    /// Read the connect code from the chosen picture, and connect with it.
+    private func connect(from item: PhotosPickerItem) async {
+        studio.status = "Reading the picture…"
+        guard let data = try? await item.loadTransferable(type: Data.self),
+              let codes = await CodeInPicture.codes(inPicture: data) else {
+            studio.status = "Couldn't open that picture. Choose it again, or scan the code with the camera."
+            return
+        }
+        guard let code = codes.first else {
+            studio.status = CodeInPicture.noneFound
+            return
+        }
+        if await studio.connect(code) {
+            studio.status = (studio.status.map { $0 + " " } ?? "") + CodeInPicture.deleteIt
+        }
+    }
+
     private var howTo: some View {
         VStack(alignment: .leading, spacing: 12) {
             step(1, "On your computer, open the Footscan studio")
             step(2, "Go to Import 3D and tap Show the connect code")
-            step(3, "Tap the button below and point this camera at it")
+            step(3, "Tap Scan below and point this camera at it, or use a screenshot of it")
             if !canScan {
-                Text("This device can't read codes with its camera. Point the iPhone's Camera app at the code instead; it opens this app.")
+                Text("This device can't read codes with its camera. Point the iPhone's Camera app at the code instead (it opens this app), or take a screenshot of the code and use that.")
                     .font(.footnote).foregroundStyle(Color.fsWarn)
             }
         }
@@ -180,9 +299,27 @@ struct StudioView: View {
     private func step(_ n: Int, _ text: String) -> some View {
         HStack(alignment: .top, spacing: 12) {
             Text("\(n)").font(.headline).foregroundStyle(Color.fsBrandInk)
-                .frame(width: 28, height: 28).background(Color.fsBrand, in: Circle())
+                .frame(width: stepDot, height: stepDot).background(Color.fsBrand, in: Circle())
             Text(text).font(.body).foregroundStyle(Color.fsInk).padding(.top, 3)
         }
+    }
+
+    /// A link named a different studio from the connected one: connect to it, or keep this one.
+    private func switchQuestion(_ address: String) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Label("Connect to a different studio?", systemImage: "arrow.left.arrow.right").font(.headline)
+            Text("The code you opened is for the studio at \(address). Scans waiting to be sent would go there instead. "
+                 + "Only connect if it's your own studio.")
+                .font(.subheadline).foregroundStyle(Color.fsMuted)
+            HStack {
+                Button("Connect to \(address)") { Task { await studio.confirmSwitch() } }
+                    .buttonStyle(PrimaryButtonStyle())
+                    .disabled(studio.connecting)
+                Button("Keep this one") { studio.pendingSwitch = nil }
+                    .buttonStyle(SecondaryButtonStyle())
+            }
+        }
+        .card()
     }
 
     private func connected(_ link: StudioLink) -> some View {

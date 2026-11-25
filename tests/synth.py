@@ -415,7 +415,7 @@ def dome_foot(length: float = 240.0, width: float = 92.0, height: float = 58.0):
     return m
 
 
-def shaped_foot(foot: str = "right", leg: bool = True):
+def shaped_foot(foot: str = "right", leg: bool = True, heel_r: float = 32.0):
     """SYNTHETIC foot-shaped solid for tests, with a heel narrower than the ball of the foot.
 
     Foot coordinates (x forward, y toward the foot's left, z up), mm: the
@@ -425,6 +425,9 @@ def shaped_foot(foot: str = "right", leg: bool = True):
     under the inner side (x 70-150, from 14 mm inside the centre line
     outward; inner = left for a right foot); optionally a 28 mm radius leg
     over the heel at (45, 45), up to 140 mm. Closed (the sole is a surface).
+    ``heel_r`` widens the heel (its circle stays touching x = 0): 36 makes it
+    72 mm wide; the generic outline at 275 mm is 68-73 mm wide 10-18% of
+    its length from the back (measured 25 Nov 2026).
     """
     import manifold3d as m3
     import shapely
@@ -432,7 +435,7 @@ def shaped_foot(foot: str = "right", leg: bool = True):
     from shapely.geometry import Point
 
     M = m3.Manifold
-    plan = shapely.convex_hull(shapely.union_all([Point(32, 45).buffer(32, 64), Point(165, 45).buffer(50, 64),
+    plan = shapely.convex_hull(shapely.union_all([Point(heel_r, 45).buffer(heel_r, 64), Point(165, 45).buffer(50, 64),
                                                   Point(222, 45).buffer(28, 64)]))
     ring = np.asarray(shapely.geometry.polygon.orient(plan, 1.0).exterior.coords)[:-1]
     body = M.extrude(m3.CrossSection([ring], m3.FillRule.Positive), 25.0)

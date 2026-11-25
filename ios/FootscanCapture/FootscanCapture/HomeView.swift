@@ -5,6 +5,7 @@
 // goes straight to the camera, and the model is built (and sent, with a
 // studio connected) by itself. A scan the studio refused has Scan again,
 // which shows what to change before the camera opens and while the box is set.
+import AVFoundation
 import RealityKit
 import SwiftUI
 
@@ -14,6 +15,16 @@ struct RootView: View {
     @Environment(ScanLibrary.self) private var library
     @Environment(\.scenePhase) private var scenePhase
     @State private var showStudio = false
+    @Environment(NetworkWatch.self) private var network
+
+    /// While the app is in front with a scan waiting because the studio didn't answer, it's tried again after this
+    /// long (the studio computer may simply have been asleep, with nothing on the phone's side changing). Each try
+    /// sends the whole model, so a studio that stays silent is tried less often: 2 minutes, then 4, 8, and every
+    /// 16 after that. Once nothing is waiting, or the app comes back to the front, it starts at 2 minutes
+    /// again. A network change or a newly connected studio still tries at once, whatever the count.
+    static func retryDelay(afterTries tries: Int) -> Duration {
+        .seconds(120 << min(max(tries, 0), 3))
+    }
 
     var body: some View {
         ZStack {
@@ -27,20 +38,52 @@ struct RootView: View {
         // The studio's code, read by the iPhone's own Camera app, opens here,
         // whatever is on screen (even the intro, on a brand-new install).
         .onOpenURL { url in
+            // the studio screen shows how it went, or asks first if the code is for a different studio
             showStudio = true
-            Task { await studio.connect(url.absoluteString) }
+            Task { await studio.open(url.absoluteString) }
         }
         .sheet(isPresented: $showStudio) { StudioView() }
         // Scans that couldn't go before go now: when a studio is connected
         // (or reconnected), when the app comes back to the front, and when
         // "send automatically" is switched on.
         .onChange(of: studio.connections) { sendWaiting() }
-        .onChange(of: scenePhase) { _, phase in if phase == .active { sendWaiting() } }
+        .onChange(of: scenePhase) { _, phase in if phase == .active { sendWaiting(); resumeBuilds() } }
         .onChange(of: settings.autoSend) { _, on in if on { sendWaiting() } }
+        // a model build cut off by leaving the app starts again once it's back in front (and at once, if the
+        // build only reported failing after the app came back)
+        .onChange(of: library.interrupted) { _, cut in if !cut.isEmpty && scenePhase == .active { resumeBuilds() } }
+        // and once a capture that was on screen closes
+        .onChange(of: library.captureOnScreen) { _, on in if !on && scenePhase == .active { resumeBuilds() } }
+        // and when the phone joins a network or Tailscale comes on: home again, say
+        .onChange(of: network.changes) { sendWaiting() }
+        .task(id: scenePhase) {
+            guard scenePhase == .active else { return }
+            var tries = 0
+            while !Task.isCancelled {
+                try? await Task.sleep(for: Self.retryDelay(afterTries: tries))
+                if Task.isCancelled { return }
+                if library.unreachable.isEmpty {
+                    tries = 0
+                } else {
+                    tries += 1
+                    sendWaiting()
+                }
+            }
+        }
     }
 
     private func sendWaiting() {
         Task { await library.sendWaiting(settings: settings, studio: studio) }
+    }
+
+    private func resumeBuilds() {
+        guard !library.interrupted.isEmpty else { return }
+        Task {
+            // a moment back in front first: SwiftUI can say the app is active before UIKit does, and the pass
+            // stops at once for an app that isn't
+            try? await Task.sleep(for: .seconds(1))
+            await library.resumeInterrupted(settings: settings, studio: studio)
+        }
     }
 }
 
@@ -48,6 +91,7 @@ struct HomeView: View {
     @Environment(AppSettings.self) private var settings
     @Environment(StudioConnection.self) private var studio
     @Environment(ScanLibrary.self) private var library
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     @AppStorage("lastSubject") private var subjectRaw = Subject.rightSole.rawValue
     @State private var capturing: Scan?
@@ -58,11 +102,33 @@ struct HomeView: View {
     @State private var error: String?
     @State private var startAfterPrep: Subject?
     @State private var photoCapture: Subject?
+    /// A capture fills the screen (cut-off builds wait for it to close: ScanLibrary.captureOnScreen).
+    private var captureShown: Bool { capturing != nil || photoCapture != nil }
     /// Finding which of the studio's addresses answers before the camera page opens (up to 3 s): the button
     /// says so and can't be tapped again meanwhile.
     @State private var findingStudio: Subject?
     /// Scanning again after a refusal: what to change, for the get-ready sheet and the camera.
     @State private var retake: [RetakeAdvice] = []
+    /// Delete, from a card's long-press menu: asked first, as on the scan's own page.
+    @State private var deleting: Scan?
+    /// The camera is off for this app (the intro's "Not now", or turned off in Settings): say so, with the way to
+    /// turn it on, instead of opening a capture that can't see.
+    @State private var cameraOff: CameraAccess?
+    /// iOS is asking whether Footscan may use the camera: the Scan button waits for the answer.
+    @State private var askingCamera = false
+    /// The battery is low: asked before the camera opens (Scan anyway, or Not now), on the home screen itself, so no
+    /// dialog is still closing when the camera's full-screen cover opens.
+    @State private var lowBattery: LowBattery?
+
+    struct LowBattery: Identifiable {
+        let subject: Subject
+        let note: String
+        var id: String { subject.rawValue }
+    }
+    /// The scan being named, from its card's menu.
+    @State private var naming: Scan?
+    /// Scanning again after a refusal: the refused scan's name, for the new one (so it counts as that foot's).
+    @State private var againName: String?
 
     struct PrepRequest: Identifiable {
         let subject: Subject
@@ -76,6 +142,12 @@ struct HomeView: View {
 
     private var subject: Subject {
         Subject(rawValue: subjectRaw).flatMap { subjects.contains($0) ? $0 : nil } ?? subjects[0]
+    }
+
+    /// Pulling down also tries the scans waiting to go (with Send automatically on, as for every other try). The
+    /// send runs on its own, so the spinner doesn't wait for it.
+    private func tryWaitingScans() {
+        Task { await library.sendWaiting(settings: settings, studio: studio) }
     }
 
     var body: some View {
@@ -108,7 +180,8 @@ struct HomeView: View {
                 }
             }
             .navigationDestination(for: Scan.self) { ScanDetailView(scan: $0, onScanAgain: scanAgain) }
-            .refreshable { library.reload() }
+            .modifier(NameScanAlert(scan: $naming))
+            .refreshable { library.reload(); tryWaitingScans() }
         }
         .tint(.fsBrand)
         .sheet(isPresented: $showSettings) { SettingsView() }
@@ -116,7 +189,7 @@ struct HomeView: View {
         // The camera opens only once the get-ready sheet has fully gone:
         // presenting it while the sheet is still closing can lose it.
         .sheet(item: $prep, onDismiss: {
-            if let s = startAfterPrep { startAfterPrep = nil; begin(s) } else { retake = [] }
+            if let s = startAfterPrep { startAfterPrep = nil; begin(s) } else { retake = []; againName = nil }
         }) { req in
             PrepSheet(subject: req.subject, mustTick: req.mustTick, retake: req.retake) { startAfterPrep = req.subject }
                 .presentationDragIndicator(.visible)
@@ -126,13 +199,17 @@ struct HomeView: View {
                 PhotoCaptureView(subject: s, link: link, key: key) {
                     settings.markPrepared(s)
                     photoCapture = nil
+                    retake = []
+                    againName = nil // a photo scan isn't kept on the phone, so the name has nothing to go on
                 }
             }
         }
+        .onChange(of: captureShown, initial: true) { _, on in library.captureOnScreen = on }
         .fullScreenCover(item: $capturing) { scan in
             CaptureView(scan: scan, retake: retake, onDone: { done in
                 capturing = nil
                 retake = []
+                againName = nil
                 if let s = done.record?.subject { settings.markPrepared(s) }
                 library.reload()
                 path = [done]
@@ -140,8 +217,18 @@ struct HomeView: View {
             }, onCancel: {
                 capturing = nil
                 retake = []
+                // cancelled before the first photo: nothing to keep, so no "Empty" card is left behind
+                if scan.keptNothing { ScanStore.delete(scan) }
+                againName = nil
                 library.reload()
             })
+        }
+        .confirmationDialog("Delete this scan from the phone?",
+                            isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } }),
+                            titleVisibility: .visible, presenting: deleting) { scan in
+            Button("Delete", role: .destructive) { withAnimation { library.delete(scan) } }
+        } message: { scan in
+            Text(scan.deleteWarning)
         }
     }
 
@@ -186,10 +273,11 @@ struct HomeView: View {
                         SubjectCard(subject: s, selected: s == subject, firstTime: !settings.hasPrepared(s)) {
                             withAnimation(.spring(duration: 0.35, bounce: 0.35)) { subjectRaw = s.rawValue }
                         }
-                        .scrollTransition(.interactive, axis: .horizontal) { content, phase in
+                        .scrollTransition(.interactive, axis: .horizontal) { [reduce = reduceMotion] content, phase in
+                            // cards off to the side turn away and shrink; with Reduce Motion they only fade
                             content
-                                .scaleEffect(phase.isIdentity ? 1 : 0.9)
-                                .rotation3DEffect(.degrees(phase.value * -14), axis: (0, 1, 0), perspective: 0.6)
+                                .scaleEffect(phase.isIdentity || reduce ? 1 : 0.9)
+                                .rotation3DEffect(.degrees(reduce ? 0 : phase.value * -14), axis: (0, 1, 0), perspective: 0.6)
                                 .opacity(phase.isIdentity ? 1 : 0.6)
                         }
                         .id(s.rawValue)
@@ -218,13 +306,18 @@ struct HomeView: View {
                     .contentTransition(.numericText())
             }
             .buttonStyle(PrimaryButtonStyle())
-            .disabled(findingStudio != nil)
+            .disabled(findingStudio != nil || askingCamera)
             .animation(.smooth, value: subjectRaw)
             .animation(.smooth, value: method)
 
             HStack {
                 if settings.hasPrepared(subject) {
-                    Button { prep = PrepRequest(subject: subject, mustTick: false) } label: {
+                    Button {
+                        // a fresh look at the tips, not a scan again: no refused scan's hints or name carry over
+                        retake = []
+                        againName = nil
+                        prep = PrepRequest(subject: subject, mustTick: false)
+                    } label: {
                         Label("Tips", systemImage: "lightbulb")
                     }
                     .font(.subheadline.weight(.semibold))
@@ -234,7 +327,45 @@ struct HomeView: View {
                 }
                 Spacer()
             }
+            if let cameraOff, let message = cameraOff.message {
+                VStack(alignment: .leading, spacing: 8) {
+                    Label(message, systemImage: "camera.badge.ellipsis")
+                        .font(.footnote).foregroundStyle(Color.fsStop)
+                    if cameraOff == .off {
+                        Button("Open Settings") {
+                            if let url = URL(string: UIApplication.openSettingsURLString) { UIApplication.shared.open(url) }
+                        }
+                        .font(.subheadline.weight(.semibold))
+                    }
+                }
+                .transition(.opacity)
+            }
+            if let low = lowBattery {
+                VStack(alignment: .leading, spacing: 8) {
+                    Label(low.note, systemImage: "battery.25").font(.footnote).foregroundStyle(Color.fsWarn)
+                    HStack(spacing: 18) {
+                        Button("Scan anyway") {
+                            withAnimation(.smooth) { lowBattery = nil }
+                            begin(low.subject, batteryAsked: true)
+                        }
+                        Button("Not now") {
+                            withAnimation(.smooth) { lowBattery = nil }
+                            retake = [] // a scan again that isn't going ahead: its hints and name go too
+                            againName = nil
+                        }
+                    }
+                    .font(.subheadline.weight(.semibold))
+                }
+                .transition(.opacity)
+            }
             if let error { Text(error).font(.footnote).foregroundStyle(Color.fsStop) }
+        }
+        // another kind or way of scanning chosen: the battery question was about the last one
+        .onChange(of: subjectRaw) { lowBattery = nil }
+        .onChange(of: method) { lowBattery = nil }
+        // back from Settings with the camera turned on: the note goes
+        .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in
+            if cameraOff != nil && CameraAccess.state() == .allowed { withAnimation(.smooth) { cameraOff = nil } }
         }
     }
 
@@ -267,8 +398,10 @@ struct HomeView: View {
                             .buttonStyle(PressableStyle())
                             .scrollReveal()
                             .contextMenu {
-                                if scan.hasOBJ { ShareLink(item: scan.obj) { Label("Share model.obj", systemImage: "square.and.arrow.up") } }
-                                Button(role: .destructive) { withAnimation { library.delete(scan) } } label: {
+                                Button { naming = scan } label: { Label("Name this scan", systemImage: "pencil") }
+                                    .disabled(library.work[scan.folder] != nil)
+                                if scan.hasOBJ { ShareLink(item: SharedFile(scan.obj, record: scan.record), preview: SharePreview("3D model")) { Label("Share the .obj", systemImage: "square.and.arrow.up") } }
+                                Button(role: .destructive) { deleting = scan } label: {
                                     Label("Delete", systemImage: "trash")
                                 }
                                 .disabled(library.work[scan.folder] != nil)
@@ -284,15 +417,15 @@ struct HomeView: View {
     private var needsYou: (scan: Scan, title: String, detail: String)? {
         for s in library.scans where library.work[s.folder] == nil {
             guard let r = s.record else { continue }
-            if let p = library.problems[s.folder] { return (s, "\(r.subject.label) needs a look", p) }
+            if let p = library.problems[s.folder] { return (s, "\(r.heading) needs a look", p) }
             if r.retake != nil || r.heldByPhoneCheck, !library.scans.contains(where: { newer in
-                newer.record.map { $0.subject == r.subject && $0.created > r.created } ?? false
+                newer.replaces(r)
             }) {
                 // what went wrong, in short; the steps to fix it are on the scan's page, with Scan again
                 let what = r.nextTime.map(\.title).joined(separator: ". ")
                 return (s, "Scan your \(r.subject.label.lowercased()) again", what + ". Tap to see what to change.")
             }
-            if s.photoCount > 0 && !s.hasOBJ && CaptureMethod.lidarAvailable {
+            if s.waitsToBuild && CaptureMethod.lidarAvailable {
                 return (s, "Finish your \(r.subject.label.lowercased()) scan", "Its 3D model hasn't been built yet.")
             }
             if studio.client != nil, s.hasOBJ, r.studioCaptureID == nil, r.subject.needsScale, r.loadKg == nil {
@@ -323,16 +456,17 @@ struct HomeView: View {
     }
 
     private var studioPill: some View {
-        Button { showStudio = true } label: {
+        let state = StudioPill.State(host: studio.link?.host, notAnswering: !library.unreachable.isEmpty)
+        return Button { showStudio = true } label: {
             Image(systemName: studio.link == nil ? "desktopcomputer" : "desktopcomputer.and.arrow.down")
                 .symbolRenderingMode(.hierarchical)
                 .overlay(alignment: .topTrailing) {
-                    Circle().fill(studio.link == nil ? Color.fsMuted : Color.fsOK)
+                    Circle().fill(state.dot)
                         .frame(width: 8, height: 8)
                         .offset(x: 4, y: -3)
                 }
         }
-        .accessibilityLabel(studio.link == nil ? "Studio: not connected" : "Studio: connected to \(studio.link!.host)")
+        .accessibilityLabel(state.words)
     }
 
     // MARK: actions
@@ -368,6 +502,7 @@ struct HomeView: View {
 
     private func start() {
         retake = []
+        againName = nil
         if settings.hasPrepared(subject) { begin(subject) } else { prep = PrepRequest(subject: subject, mustTick: true) }
     }
 
@@ -378,10 +513,39 @@ struct HomeView: View {
         subjectRaw = rec.subject.rawValue
         path = []
         retake = rec.nextTime
+        againName = rec.name
         prep = PrepRequest(subject: rec.subject, mustTick: false, retake: retake)
     }
 
-    private func begin(_ s: Subject) {
+    /// `batteryAsked`: the person saw the low-battery question and chose to scan anyway.
+    private func begin(_ s: Subject, batteryAsked: Bool = false) {
+        switch CameraAccess.state() {
+        case .allowed:
+            cameraOff = nil
+        case let access where access.message != nil:
+            withAnimation(.smooth) { cameraOff = access; error = nil }
+            UINotificationFeedbackGenerator().notificationOccurred(.warning)
+            return
+        default:
+            // never asked (the intro's "Not now"): iOS asks now, and the scan starts if it's allowed and nothing else
+            // was started or chosen meanwhile
+            guard !askingCamera else { return }
+            askingCamera = true
+            Task {
+                _ = await AVCaptureDevice.requestAccess(for: .video)
+                askingCamera = false
+                guard CameraAccess.state() != .notAsked, subject == s, capturing == nil, photoCapture == nil,
+                      prep == nil else { return }
+                begin(s)
+            }
+            return
+        }
+        if !batteryAsked, let note = BatteryCheck.now() {
+            withAnimation(.smooth) { lowBattery = LowBattery(subject: s, note: note); error = nil }
+            UINotificationFeedbackGenerator().notificationOccurred(.warning)
+            return
+        }
+        lowBattery = nil
         if method == .photos {
             // photos go straight to the studio: nothing big is kept on the phone
             guard studio.client != nil else { showStudio = true; return }
@@ -405,7 +569,7 @@ struct HomeView: View {
             return
         }
         do {
-            capturing = try ScanStore.create(s)
+            capturing = try ScanStore.create(s, name: againName)
             error = nil
         } catch {
             self.error = "Couldn't make a folder for the scan: \(error.localizedDescription)"
@@ -420,6 +584,9 @@ private struct SubjectCard: View {
     let selected: Bool
     let firstTime: Bool
     var onTap: () -> Void
+    /// The card grows with the phone's text size, so a larger text setting doesn't cut its words off.
+    @ScaledMetric(relativeTo: .headline) private var width = 156.0
+    @ScaledMetric(relativeTo: .headline) private var minHeight = 150.0
 
     var body: some View {
         Button(action: onTap) {
@@ -435,12 +602,13 @@ private struct SubjectCard: View {
                 Text(subject.shortLabel).font(.headline).foregroundStyle(selected ? Color.fsBrandInk : Color.fsInk)
                     .lineLimit(1).minimumScaleFactor(0.8)
                 Text(firstTime ? "First time · \(subject.purpose)" : subject.purpose).font(.caption.weight(.semibold))
-                    .lineLimit(1).minimumScaleFactor(0.8)
+                    .lineLimit(2).minimumScaleFactor(0.8)
+                    .fixedSize(horizontal: false, vertical: true)
                     .foregroundStyle(selected ? Color.fsBrandInk.opacity(0.8) : Color.fsMuted)
             }
             .padding(14)
-            .frame(width: 156, alignment: .topLeading)
-            .frame(minHeight: 150, alignment: .topLeading)
+            .frame(width: min(width, 280), alignment: .topLeading) // at the largest sizes, still narrower than the screen
+            .frame(minHeight: minHeight, alignment: .topLeading)
             .background(selected ? Color.fsBrand : Color.fsSurface, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).stroke(selected ? .clear : Color.fsLine, lineWidth: 1))
             .shadow(color: selected ? Color.fsBrand.opacity(0.35) : .black.opacity(0.04), radius: selected ? 14 : 8, y: 6)
@@ -461,9 +629,12 @@ struct ScanCard: View {
             ScanThumb(scan: scan)
                 .frame(width: 72, height: 72)
             VStack(alignment: .leading, spacing: 6) {
-                Text(rec?.subject.label ?? scan.folder.lastPathComponent).font(.headline).foregroundStyle(Color.fsInk)
-                if let d = rec?.created {
-                    Text("\(d.formatted(date: .abbreviated, time: .shortened)) · \(scan.photoCount) photos")
+                Text(rec?.heading ?? scan.folder.lastPathComponent).font(.headline).foregroundStyle(Color.fsInk)
+                if let rec {
+                    // a named scan still says what kind it is
+                    Text(((rec.name != nil ? [rec.subject.label] : [])
+                          + [rec.created.formatted(date: .abbreviated, time: .shortened), Scan.photosWords(scan.photoCount)])
+                        .joined(separator: " · "))
                         .font(.caption).foregroundStyle(Color.fsMuted)
                 }
                 ScanStatus(scan: scan)
@@ -491,7 +662,7 @@ struct ScanStatus: View {
             case .building(let f): Chip(text: "Building model \(Int(f * 100))%", symbol: "gearshape.2.fill")
             case .converting: Chip(text: "Finishing model", symbol: "gearshape.2.fill")
             case .checking: Chip(text: "Checking model", symbol: "checklist")
-            case .sending: Chip(text: "Sending", symbol: "paperplane.fill")
+            case .sending: Chip(text: SendingWords.chip(library.uploaded[scan.folder]), symbol: "paperplane.fill")
             case nil:
                 if library.problems[scan.folder] != nil {
                     Chip(text: "Needs a look", symbol: "exclamationmark.triangle.fill", tint: .fsWarn, soft: .fsWarnSoft)
@@ -501,6 +672,8 @@ struct ScanStatus: View {
                     Chip(text: "Sent to studio", symbol: "checkmark.circle.fill", tint: .fsOK, soft: .fsOKSoft)
                 } else if scan.hasModel {
                     Chip(text: "Model ready", symbol: "cube.fill")
+                } else if rec?.stoppedEarly != nil && scan.photoCount > 0 {
+                    Chip(text: "Stopped early", symbol: "stop.circle", tint: .fsMuted, soft: .fsSurface2)
                 } else if scan.photoCount > 0 {
                     Chip(text: "Photos only", symbol: "photo.stack", tint: .fsMuted, soft: .fsSurface2)
                 } else {
@@ -620,7 +793,12 @@ private struct InsolePath: View {
                     node(i)
                     Text(steps[i].label).font(.caption2.weight(i == step ? .bold : .medium))
                         .foregroundStyle(i <= step ? .white : .white.opacity(0.45))
-                        .lineLimit(1).minimumScaleFactor(0.8)
+                        .multilineTextAlignment(.center)
+                        .lineLimit(2).minimumScaleFactor(0.8) // "Make insole" takes two lines at the larger text sizes
+                        // Four labels share the card's width, so at the accessibility sizes they ran into each other
+                        // and "Make insole" was cut short. They stop growing at the largest standard size; the step
+                        // you're on is spelt out at full size above, and VoiceOver reads the whole card.
+                        .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
                 }
                 .frame(maxWidth: .infinity)
                 .background(alignment: .top) {
@@ -655,6 +833,67 @@ private struct InsolePath: View {
                 Circle().fill(Color.fsAccent.opacity(0.35))
                     .phaseAnimator([false, true]) { c, on in c.scaleEffect(on ? 1.55 : 1).opacity(on ? 0 : 0.8) }
                         animation: { _ in .easeOut(duration: 1.6) }
+            }
+        }
+    }
+}
+
+/// "Name this scan": the name to type, for a card's menu and the scan's page. Saved on the phone only.
+struct NameScanAlert: ViewModifier {
+    @Binding var scan: Scan?
+    @Environment(ScanLibrary.self) private var library
+    @State private var typed = ""
+    /// The scan started building or sending while the name was being typed: it wasn't saved, and the person is told.
+    @State private var refused = false
+
+    func body(content: Content) -> some View {
+        content
+            .alert("Name this scan", isPresented: Binding(get: { scan != nil }, set: { if !$0 { scan = nil } })) {
+                TextField("Sam, left foot", text: $typed)
+                    .textInputAutocapitalization(.words)
+                Button("Save") {
+                    if let scan, !library.rename(scan, to: typed) { refused = true }
+                    scan = nil
+                }
+                Button("Cancel", role: .cancel) { scan = nil }
+            } message: {
+                Text("To tell scans of the same kind apart, such as two people's left soles. Kept on this phone, not sent "
+                     + "to the studio. Leave it empty to take the name away.")
+            }
+            .alert("The name wasn't saved", isPresented: $refused) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text("The scan started building or sending meanwhile. Name it once that has finished.")
+            }
+            .onChange(of: scan) { _, now in typed = now?.record?.name ?? "" }
+    }
+}
+
+/// The studio button's dot: grey with no studio, green when connected, amber when connected but the studio didn't
+/// answer the last send (the scans wait, and go again by themselves). Connected only means paired: without this,
+/// the dot stayed green while nothing could get through.
+enum StudioPill {
+    enum State: Equatable {
+        case notConnected, connected(String), notAnswering(String)
+
+        init(host: String?, notAnswering: Bool) {
+            guard let host else { self = .notConnected; return }
+            self = notAnswering ? .notAnswering(host) : .connected(host)
+        }
+
+        var dot: Color {
+            switch self {
+            case .notConnected: .fsMuted
+            case .connected: .fsOK
+            case .notAnswering: .fsWarn
+            }
+        }
+
+        var words: String {
+            switch self {
+            case .notConnected: "Studio: not connected"
+            case .connected(let host): "Studio: connected to \(host)"
+            case .notAnswering(let host): "Studio: connected to \(host), but it didn't answer the last send. Scans wait and go again by themselves."
             }
         }
     }

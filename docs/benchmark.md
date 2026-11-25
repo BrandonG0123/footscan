@@ -292,6 +292,47 @@ with 0.6 mm speckle. Over the front 1 mm it's 10.7 against 13.3, 13.1 and
 4.5 mm on this foot and 4.1-5.2 on those three. So it joins the near-tip
 curls above, left for the other-foot check and a ruler length.
 
+## The foot's axis and a sole scan's floor (25 Nov)
+
+Two changes to how a scan is read (docs/insole.md): a sole scan is rested on
+the hull face the sole stands on most, not the one under the whole scan's
+centre (on the real left scan 89df that face moved with a few degrees of how
+the foot was held); and the foot's length runs down the middle of its
+footprint (the filled outline's principal axis), not along the straight
+edge down one side, which ran 7.7 degrees off on the SYNTHETIC curved_foot,
+the same way for both feet. A third keeps the toe-laying step from reading
+the front of a toe tip as toes hanging up (`TOES_FRONT_WALL_DEG`): with the
+foot turned down its middle, a speckled tip's last 2 mm held only points
+high up its front.
+
+`scripts/benchmark_prep.py`, all 72 SYNTHETIC cases, main (36cc2ef) and the
+three changes, run the same day, both feet: still failed 0.
+
+| | main | now |
+|---|---|---|
+| clean scans (30 cases): outline length | +0.4 to +0.5 mm | +0.1 mm |
+| clean scans: 95% of points within / arch top / floor tilt | 0.03 mm / 0.05 mm / 0.03 deg | 0.00 mm / 0.03 mm / 0.00 deg |
+| noisy scans (26 cases): 95% of points within | 0.97 mm | 0.92 mm |
+| noisy scans: arch top within / floor tilt | 0.98 mm / 0.91 deg | 0.76 mm / 0.78 deg |
+| noisy scans: outline length | +0.3 to +1.8 mm | +0.1 to +2.0 mm |
+| toes bent up 20 (sole up) | -1.4 mm | -2.8 / -2.9 mm |
+| toes bent up 35 (sole up, legs flat) | -3.9 / -4.0 mm | -5.4 mm |
+| toes up 20, tips 30 more (sole up, legs flat) | -5.3 mm | -7.4 mm |
+| toes up 30, tips 40 more (sole up) | -7.7 / -7.8 mm | -10.4 mm |
+
+Without the third change, "speckle 0.3" on the right foot read 23.0 mm long
+with nothing said (flat toes laid "flat" by 47 degrees at three joints).
+
+The toes read shorter because the bends now read nearer their true angles
+(20 and 30 degrees: 21.8 and 31.6, were 23.5 and 35.3), so less is laid
+flat. These cases bend the toes about the skin, which is where laying them
+about a joint 10 mm up (`TOES_JOINT_UP_MM`) reads shortest. Bent about a
+line 12 or 18 mm up, nearer where a toe's joints are, they now read closer
+than before: +1.5 to +2.0 mm (were +1.7 to +4.5) and +3.5 to +5.5 (were
++4.5 to +7.5), table beside `TOES_JOINT_UP_MM` in `foot_prep.py`. The
+spread is as wide as before; where real toes bend is still for a ruler
+length to settle.
+
 ## The part not measured yet: the capture
 
 The processing is not the weak link; the capture may be. The closest

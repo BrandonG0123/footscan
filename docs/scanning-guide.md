@@ -17,7 +17,7 @@ model built on the phone, one lap each):
 | Scan | Kind | Photos | Insole outline | What the preparation found |
 |---|---|---|---|---|
 | right, `…_R_20261027-151404-2349` | sole up | 46 | 246.4 x 102.3 mm | Fine. Both sides of the ball of the foot within 1.2 mm of the floor. |
-| left, `…_L_20261027-151404-89df` | sole up | 35 | 227.0 x 86.3 mm | Forefoot rolled onto its outer edge: the big-toe side of the ball 8.6 mm higher than the little-toe side. Toes curled up. |
+| left, `…_L_20261027-151404-89df` | sole up | 35 | 227.0 x 86.3 mm | Forefoot rolled onto its outer edge: the big-toe side of the ball 8.6 mm higher than the little-toe side. Toes curled up. (25 Nov: the roll was the floor's, see below.) |
 | left, `…_L_20261027-151815-2190` | legs flat | 41 | (rejected) | Both legs and both feet in the scan (the model is about a metre long), joined at the feet: 221 x 217 mm on the floor. |
 
 The two left scans fail for different reasons:
@@ -39,9 +39,65 @@ The two left scans fail for different reasons:
    gap between the shins and keeps the chosen foot. This scan is still not
    usable: where the feet touched, the inner side of the left foot is missing
    (236 mm of torn edge near the floor), and its forefoot is rolled too.
+   **25 Nov 2026: the 89df roll came from the studio, not the foot.** The
+   studio laid a sole scan on the face of its convex hull under the whole
+   scan's centre, which the shin pulls over the heel, and which face that
+   was changed with how the foot was held: turned a few degrees before
+   preparing, 89df read 228.5-250.2 mm long and "rolled" 7.9-16.9 mm. Laid
+   where the sole stands (docs/insole.md), it reads 225.1 x 80.5 mm, its
+   heel and both sides of the ball on the floor, the ball level to 1.0 mm,
+   whichever way it's turned. It is still refused: 18 mm shorter than the
+   right foot's 2349 (243.1 mm). Whether the left foot really is shorter
+   needs a ruler length of the left foot.
+   It is narrower too, and on one side only. Mirrored and laid over 2349,
+   lined up at the heel's back and its inner edge (both prepared as Make
+   insole does, the outline below 30 mm, 25 Nov), the inner edges run within about 4 mm of each other from heel to
+   ball; the outer edge of 89df is 8-10 mm further in along the heel and
+   arch and 15-21 mm further in across the ball (150-190 mm from the heel),
+   and its toes end 18 mm sooner. Up to 120 mm above the floor it is no
+   wider, so the outer side isn't raised out of the outline: it isn't in the
+   model. The shin leans back about 20 degrees in both scans, so the ankle
+   was held the same way. So the likeliest reading is that the outer side
+   and the front of the toes weren't captured, not that the left foot is
+   that much smaller: the retake should take the phone low along the
+   outside of the foot and round the toes.
 3. **Short captures.** 35 and 41 photos, one lap each. The right scan also
    had one lap and came out fine, so this isn't proven to be a cause, but a
    second, closer lap over the toes and the back of the heel is cheap.
+
+## Where the right foot's length goes (25 Nov 2026)
+
+The right sole-up scan `LIDAR_nwb_relaxed_R_20261027-151404-2349` reads
+243.1 mm long; the owner's ruler gives 256 mm seated and 260 mm standing, in
+the same sock (5 Nov). The calibration block's length read right to within
+1% (17 Nov), so the phone's scale isn't it. What the studio does to the
+model, measured on this scan with the 25 Nov preparation:
+
+| Step | Length | What it shows |
+|---|---|---|
+| The model, toes as scanned (their tip 10.9 mm up) | 244.3 mm | |
+| Toes laid flat (12 degrees, round a joint 10 mm up) | 243.5 mm | laying them flat round a joint above the floor brings the tip back 0.8 mm (round a joint at the skin it would move forward instead). `TOES_JOINT_UP_MM` is still a judgment |
+| Outline below 30 mm (what the insole and the checks read) | 243.5 mm | the same below 100 mm: the back of the heel is 24-53 mm up, inside it |
+| Along the outline's own axis, the old or the new one | 243.1-243.5 mm | the axis isn't it |
+| Turned up to 5 degrees before preparing (16 turns) | 243.1 every time (243.2-243.9 before the floor fix) | how it was held isn't it |
+
+So the studio reads the whole model: the model itself is about 244 mm long.
+The 12-16 mm is between the model and the foot. What's left, none of it
+measured yet:
+- **No weight on the foot.** Sole up, the foot is unloaded with the ankle
+  relaxed; standing, a flexible flat foot's arch drops and the foot
+  lengthens. Seated to standing was 4 mm on the ruler.
+- **The ends of the model.** Object Capture's surface over rounded ends
+  may sit inside the real one: the calibration block's dome read an 18 mm
+  radius against 20 (one scan). A millimetre or two at each end would be
+  several of the 12.
+- **The ruler reading.** Heel against a wall, ruler to the longest toe,
+  standing: the same way each time.
+
+What would settle it: a ruler length of each foot seated, with the foot
+resting flat and no weight (as close to the scan as a ruler gets), and a
+scan of something with a known rounded end. Until then, an insole sized by
+the ruler (draft PR #28, `--foot-length`) sidesteps it.
 
 ## How to scan a sole (phone)
 
@@ -56,8 +112,10 @@ left rescan.
 3. **Level the ball of the foot.** The helper lays a book (anything flat
    and stiff) across the ball of the foot, from the big-toe joint to the
    little-toe joint. Both sides should touch it. If one doesn't, turn the
-   foot gently until it does, then take the book away and keep still. This
-   is the step the failed left scan missed.
+   foot gently until it does, then take the book away and keep still. (It
+   was written for the left scan 89df's rolled forefoot, which on 25 Nov
+   turned out to be the studio's old floor, not the foot: see above. It
+   still keeps the ball level, which the insole needs.)
 
    (This replaced "look along the sole: if the big-toe side is higher, turn
    the foot outward". The 8.6 mm on 89df is the big-toe side's height above
@@ -70,7 +128,9 @@ left rescan.
    repeats the checks under the box until you tap Start.
 5. The helper walks slowly all the way round, phone pointing down at the
    sole, until the ring fills. Then a **second lap**, closer, over the
-   arch, the toes and the back of the heel. Then Finish.
+   arch, the toes and the back of the heel, and low along the outer side of
+   the foot (the little-toe side), where the left scan 89df came out 8-21 mm
+   narrower than the right foot (above). Then Finish.
 6. Make insole in the studio and read the warnings before anything else. Any
    capitalised warning means scan again, not print.
 

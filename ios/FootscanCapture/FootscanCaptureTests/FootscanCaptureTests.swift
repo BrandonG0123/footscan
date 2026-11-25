@@ -1,8 +1,14 @@
 // Tests for the iPhone app's own logic: the parts that don't need a camera.
 // Run: xcodebuild test -project FootscanCapture.xcodeproj -scheme FootscanCapture
 //      -destination 'platform=iOS Simulator,name=iPhone 17 Pro'
+import AVFoundation
+import CoreImage
 import Foundation
+import RealityKit
+import SwiftUI
 import Testing
+import UIKit
+import WebKit
 @testable import FootscanCapture
 
 // MARK: - studio connect codes
@@ -319,6 +325,165 @@ struct ConnectionTestFailures {
     }
 }
 
+// MARK: - a send that dropped, tried again
+
+@Suite("A send that dropped, tried again")
+struct DroppedSends {
+    let pin = String(repeating: "cd", count: 32)
+    var studio: StudioLink { StudioLink(url: URL(string: "https://192.168.11.233:8766")!, fingerprint: pin,
+                                        alternates: [URL(string: "https://100.113.53.83:8766")!]) }
+
+    private func record(loadKg: Double? = nil) -> ScanRecord {
+        var rec = ScanRecord(subject: .rightSole, created: Date(timeIntervalSince1970: 1_800_000_000), device: "test",
+                             systemVersion: "0", appVersion: "0")
+        rec.loadKg = loadKg
+        return rec
+    }
+
+    @Test func aCaptureStillWaitingForItsModelIsSentInto() {
+        let list: [[String: Any]] = [["capture_id": "LIDAR_nwb_relaxed_R_1", "status": "uploading"],
+                                     ["capture_id": "LIDAR_nwb_relaxed_R_2", "status": "complete", "mesh": ["file": "mesh.ply"]]]
+        #expect(StudioClient.existing("LIDAR_nwb_relaxed_R_1", in: list) == .waiting)
+    }
+
+    @Test func aCaptureThatAlreadyHasAModelIsTakenAsSentAndNeverSentIntoAgain() {
+        // the earlier upload got there and only its answer was lost; or an insole was made from it since:
+        // sending a model again would replace it, and the studio would remove the insole made from the old one
+        let done: [[String: Any]] = [["capture_id": "C1", "status": "complete", "mesh": ["file": "mesh.ply"],
+                                      "accuracy": ["median_mm": 1.0, "reference": "model"]]]
+        guard case .done(let acc) = StudioClient.existing("C1", in: done) else { Issue.record("not taken as sent"); return }
+        #expect(acc?.median_mm == 1.0)
+        #expect(StudioClient.existing("C2", in: [["capture_id": "C2", "status": "uploading", "insole": ["file": "x"]]]) == .done(nil))
+        #expect(StudioClient.existing("C3", in: [["capture_id": "C3", "status": "uploading", "clog": ["file": "x"]]]) == .done(nil))
+    }
+
+    @Test func aCaptureTheStudioNoLongerHasMeansANewOne() {
+        #expect(StudioClient.existing("C1", in: []) == .gone)
+        #expect(StudioClient.existing("C1", in: [["capture_id": "C9", "status": "uploading"]]) == .gone)
+    }
+
+    @Test func theNextTryUsesTheCaptureTheStudioAlreadyMadeAtWhicheverAddressItAnswers() {
+        var rec = record()
+        rec.pendingCapture = PendingCapture(id: "LIDAR_nwb_relaxed_R_1", studio: PendingCapture.identity(of: studio), loadKg: nil)
+        #expect(rec.reusableCapture(at: studio) == "LIDAR_nwb_relaxed_R_1")
+        // the same studio over Tailscale is the same studio
+        #expect(rec.reusableCapture(at: studio.using(studio.alternates[0])) == "LIDAR_nwb_relaxed_R_1")
+    }
+
+    @Test func anotherStudiosCaptureIsNeverUsed() {
+        var rec = record()
+        rec.pendingCapture = PendingCapture(id: "LIDAR_nwb_relaxed_R_1", studio: PendingCapture.identity(of: studio), loadKg: nil)
+        let other = StudioLink(url: studio.url, fingerprint: String(repeating: "ef", count: 32))
+        #expect(rec.reusableCapture(at: other) == nil)
+    }
+
+    @Test func aDifferentScaleReadingNeedsANewCapture() {
+        var rec = record(loadKg: 31.5)
+        rec.pendingCapture = PendingCapture(id: "LIDAR_swb_R_1", studio: PendingCapture.identity(of: studio), loadKg: 30)
+        #expect(rec.reusableCapture(at: studio) == nil)
+        rec.loadKg = 30
+        #expect(rec.reusableCapture(at: studio) == "LIDAR_swb_R_1")
+    }
+
+    @Test func thePendingCaptureIsKeptWithTheScanAndOlderRecordsStillRead() throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString, directoryHint: .isDirectory)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let scan = Scan(folder: root)
+        var rec = record()
+        rec.pendingCapture = PendingCapture(id: "LIDAR_nwb_relaxed_R_1", studio: pin, loadKg: nil)
+        scan.save(rec)
+        #expect(scan.record?.pendingCapture == rec.pendingCapture)
+        // a record written before pending captures existed reads, with none
+        let old = #"{"subject":"right-sole","created":"2026-11-20T10:00:00Z","device":"iPhone18,1","systemVersion":"26.1","appVersion":"1.0","modelBuiltOnPhone":true,"units":"m","note":"n"}"#
+        try Data(old.utf8).write(to: scan.recordURL)
+        #expect(scan.record != nil && scan.record?.pendingCapture == nil)
+    }
+}
+
+// MARK: - the phone's network changing
+
+@Suite("Trying waiting scans when the network changes")
+struct NetworkChanges {
+    typealias Sig = NetworkWatch.Signature
+    let cellular = Sig(satisfied: true, wifi: false, cellular: true, wired: false, other: false)
+    let wifi = Sig(satisfied: true, wifi: true, cellular: false, wired: false, other: false)
+    let none = Sig(satisfied: false, wifi: false, cellular: false, wired: false, other: false)
+
+    @Test func joiningWiFiOrTurningTailscaleOnIsWorthATry() {
+        #expect(NetworkWatch.worthTrying(from: cellular, to: wifi))  // home again
+        var tailscale = cellular
+        tailscale.other = true  // a VPN comes up as another kind of path
+        #expect(NetworkWatch.worthTrying(from: cellular, to: tailscale))
+        #expect(NetworkWatch.worthTrying(from: none, to: cellular))
+    }
+
+    @Test func losingTheNetworkTheFirstReadingAndNoChangeAreNot() {
+        #expect(!NetworkWatch.worthTrying(from: wifi, to: none))
+        #expect(!NetworkWatch.worthTrying(from: nil, to: wifi))  // just launched: nothing changed yet
+        #expect(!NetworkWatch.worthTrying(from: wifi, to: wifi))
+    }
+
+    @Test func aStudioThatStaysSilentIsTriedLessOftenUpToEvery16Minutes() {
+        let minutes = (0...6).map { RootView.retryDelay(afterTries: $0) / .seconds(60) }
+        #expect(minutes == [2, 4, 8, 16, 16, 16, 16])
+        #expect(RootView.retryDelay(afterTries: -1) == .seconds(120))  // never shorter than the first wait
+    }
+}
+
+// MARK: - how far a send has got
+
+@Suite("Upload progress")
+struct UploadProgressShown {
+    @Test func eachWholePercentIsToldOnce() {
+        var count = UploadProgress.Count()
+        let first = count.next(sent: 0, total: 1000)
+        let further = count.next(sent: 420, total: 1000)
+        let same = count.next(sent: 425, total: 1000)  // still 42%
+        #expect(first == 0)
+        #expect(further == 42)
+        #expect(same == nil)
+    }
+
+    @Test func oneHundredMeansEveryByteHasGone() {
+        var count = UploadProgress.Count()
+        let nearly = count.next(sent: 999, total: 1000)
+        let all = count.next(sent: 1000, total: 1000)
+        #expect(nearly == 99)
+        #expect(all == 100)
+        var over = UploadProgress.Count()
+        let beyond = over.next(sent: 1200, total: 1000)
+        #expect(beyond == 100)
+    }
+
+    @Test func sendingTheBodyAgainCountsFromTheStartAgain() {
+        var count = UploadProgress.Count()
+        _ = count.next(sent: 1000, total: 1000)
+        let again = count.next(sent: 50, total: 1000)
+        #expect(again == 5)
+        #expect(count.percent == 5)
+    }
+
+    @Test func anUnknownSizeTellsNothing() {
+        var count = UploadProgress.Count()
+        let none = count.next(sent: 500, total: 0)
+        let unknown = count.next(sent: 500, total: NSURLSessionTransferSizeUnknown)
+        #expect(none == nil)
+        #expect(unknown == nil)
+    }
+
+    @Test func theCardSaysHowFarAndThenThatTheStudioIsChecking() {
+        #expect(SendingWords.chip(nil) == "Sending")
+        #expect(SendingWords.chip(29) == "Sending 29%")  // a whole percent, never 28 from 0.29 * 100
+        #expect(SendingWords.chip(57) == "Sending 57%")
+        #expect(SendingWords.chip(100) == "Studio checking")
+        #expect(SendingWords.detail(nil, calibration: false) == "Sending…")
+        #expect(SendingWords.detail(7, calibration: false) == "Sending the model… 7%")
+        #expect(SendingWords.detail(100, calibration: false) == "All sent. The studio is checking it…")
+        #expect(SendingWords.detail(100, calibration: true) == "All sent. The studio is measuring its accuracy…")
+    }
+}
+
 // MARK: - the studio refusing an incomplete scan
 
 @Suite("Incomplete scans")
@@ -335,9 +500,23 @@ struct IncompleteScans {
             Issue.record("a plain refusal was misread"); return
         }
         #expect(other == "bad capture id")
-        guard case .refused("HTTP 500") = StudioClient.Failure.from(status: 500, json: [:]) else {
-            Issue.record("an answer without JSON should name its status"); return
+        guard case .troubled("HTTP 500") = StudioClient.Failure.from(status: 500, json: [:]) else {
+            Issue.record("an answer without JSON should name its status, as the studio's own fault"); return
         }
+        guard case .refused("HTTP 404") = StudioClient.Failure.from(status: 404, json: [:]) else {
+            Issue.record("a 4xx is a no to this scan"); return
+        }
+    }
+
+    @Test func aStudioFaultKeepsTheStudiosWordsAndSaysTheScanIsStillHere() {
+        let fault = StudioClient.Failure.from(status: 503, json: ["error": "disk full"])
+        guard case .troubled("disk full") = fault else {
+            Issue.record("a 5xx with the studio's words should be its own fault, in its words"); return
+        }
+        let words = fault.errorDescription ?? ""
+        #expect(words.contains("disk full"))
+        #expect(words.contains("still on this phone"))  // nothing to scan again, unlike a refusal
+        #expect(!words.hasPrefix("The studio said no"))
     }
 
     @Test func theStudiosStepsForTheNextScanAreRead() throws {
@@ -410,6 +589,12 @@ struct IncompleteScans {
 
 @Suite("Scan list")
 struct ScanList {
+    @Test func aScanWithOnePhotoSaysPhotoNotPhotos() {
+        #expect(Scan.photosWords(1) == "1 photo")  // a scan stopped early is kept with a single photo
+        #expect(Scan.photosWords(0) == "0 photos")
+        #expect(Scan.photosWords(24) == "24 photos")
+    }
+
     private func makeScan(in root: URL, folder: String, subject: Subject, created: Date?) throws {
         let dir = root.appending(path: folder, directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
@@ -479,6 +664,469 @@ struct ScanList {
         dec.dateDecodingStrategy = .iso8601
         let rec = try dec.decode(ScanRecord.self, from: Data(json.utf8))
         #expect(rec.subject == .rightFoot && rec.subject.needsScale)
+        #expect(rec.stoppedEarly == nil)
+    }
+
+    /// A scan folder with `photos` empty files in its Images folder.
+    private func scanWithPhotos(_ photos: Int, in root: URL) throws -> Scan {
+        try makeScan(in: root, folder: "right-sole-p\(photos)", subject: .rightSole, created: Date(timeIntervalSince1970: 1_800_000_000))
+        let scan = Scan(folder: root.appending(path: "right-sole-p\(photos)", directoryHint: .isDirectory))
+        try FileManager.default.createDirectory(at: scan.images, withIntermediateDirectories: true)
+        for i in 0..<photos { try Data().write(to: scan.images.appending(path: "IMG_\(i).HEIC")) }
+        return scan
+    }
+
+    @Test func aCaptureWithPhotosAndNoModelWaitsToBeBuiltUnlessItWasStoppedPartway() throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString, directoryHint: .isDirectory)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let scan = try scanWithPhotos(12, in: root)
+        #expect(scan.waitsToBuild && !scan.keptNothing)
+        var rec = try #require(scan.record)
+        rec.stoppedEarly = Date()
+        scan.save(rec)
+        // kept (its page can still build it), but the home screen no longer asks for it
+        #expect(!scan.waitsToBuild && !scan.keptNothing && scan.photoCount == 12)
+        #expect(scan.record?.stoppedEarly != nil)
+        // built from its page anyway, but its studio copy wasn't saved: home asks again
+        try Data().write(to: scan.usdz)
+        #expect(scan.waitsToBuild)
+    }
+
+    @Test func aStoppedOrFailedCaptureIsNeverTakenForAnEmptyOne() throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString, directoryHint: .isDirectory)
+        defer { try? FileManager.default.removeItem(at: root) }
+        // stopped after shots the session counted, before their photos reached the folder
+        let stopped = try scanWithPhotos(0, in: root)
+        var rec = try #require(stopped.record)
+        rec.stoppedEarly = Date()
+        rec.shotsTaken = 3
+        stopped.save(rec)
+        #expect(!stopped.keptNothing)
+        // failed before the first photo: its error explains what happened
+        rec = try #require(stopped.record)
+        rec.stoppedEarly = nil
+        rec.shotsTaken = nil
+        rec.error = "The capture stopped"
+        stopped.save(rec)
+        #expect(!stopped.keptNothing)
+    }
+
+    @Test func aCaptureCancelledBeforeItsFirstPhotoKeptNothing() throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString, directoryHint: .isDirectory)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let scan = try scanWithPhotos(0, in: root)
+        #expect(scan.keptNothing && !scan.waitsToBuild)
+    }
+
+    @Test func deletingSaysWhatIsLost() throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString, directoryHint: .isDirectory)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let scan = try scanWithPhotos(3, in: root)
+        #expect(scan.deleteWarning.contains("photos and model will be gone"))
+        var rec = try #require(scan.record)
+        rec.studioCaptureID = "LIDAR_nwb_relaxed_R_1"
+        scan.save(rec)
+        #expect(scan.deleteWarning.contains("studio stays"))
+    }
+}
+
+// MARK: - model builds cut off by leaving the app
+
+@Suite("A model build cut off by leaving the app")
+struct InterruptedBuilds {
+    @Test func aBuildCutOffByLeavingTheAppIsStartedAgainAFewTimesAtMost() {
+        #expect(ScanLibrary.shouldResume(awayNow: true, secondsSinceBack: nil, resumesSoFar: 0))
+        #expect(ScanLibrary.shouldResume(awayNow: true, secondsSinceBack: nil, resumesSoFar: ScanLibrary.maxResumes - 1))
+        // one that keeps failing shows its own error instead of trying for ever
+        #expect(!ScanLibrary.shouldResume(awayNow: true, secondsSinceBack: nil, resumesSoFar: ScanLibrary.maxResumes))
+    }
+
+    @Test func aFailureThatArrivesJustAfterComingBackStillCountsAsCutOff() {
+        #expect(ScanLibrary.shouldResume(awayNow: false, secondsSinceBack: 2, resumesSoFar: 0))
+        #expect(ScanLibrary.shouldResume(awayNow: false, secondsSinceBack: ScanLibrary.backGrace, resumesSoFar: 0))
+    }
+
+    @Test func aFailureOnScreenIsARealOneAndShowsItsOwnError() {
+        #expect(!ScanLibrary.shouldResume(awayNow: false, secondsSinceBack: nil, resumesSoFar: 0))  // never left
+        // left for a moment early on, failed on screen minutes later: not because of leaving
+        #expect(!ScanLibrary.shouldResume(awayNow: false, secondsSinceBack: 180, resumesSoFar: 0))
+    }
+
+    @Test func aMomentInControlCenterIsNotLeavingTheScreen() {
+        let away = AwayFromScreen()
+        away.cameBack() // active again after Control Center or a call banner: the app never went to the background
+        #expect(away.backAt == nil && !away.isAway)
+
+        away.left()
+        #expect(away.isAway)
+        let back = Date(timeIntervalSince1970: 1_800_000_000)
+        away.cameBack(at: back)
+        #expect(away.backAt == back && !away.isAway)
+        away.cameBack(at: back + 60) // Control Center later on: the real return stays the one that counts
+        #expect(away.backAt == back)
+    }
+
+    @Test func aCutOffBuildWaitsForACaptureOnScreenToClose() {
+        #expect(!ScanLibrary.mayResume(appActive: true, captureOnScreen: true))  // not beside a live capture
+        #expect(!ScanLibrary.mayResume(appActive: false, captureOnScreen: false)) // not in the background
+        #expect(ScanLibrary.mayResume(appActive: true, captureOnScreen: false))
+    }
+
+    @Test func theMessageSaysItCarriesOnByItself() {
+        #expect(ScanLibrary.interruptedMessage.localizedCaseInsensitiveContains("by itself"))
+    }
+}
+
+// MARK: - the camera
+
+@Suite("The camera before a scan")
+struct CameraBeforeAScan {
+    @Test func theCamerasPermissionIsReadAsAllowedOffBlockedOrNotAsked() {
+        #expect(CameraAccess.from(.authorized) == .allowed)
+        #expect(CameraAccess.from(.notDetermined) == .notAsked)
+        #expect(CameraAccess.from(.denied) == .off)
+        #expect(CameraAccess.from(.restricted) == .blocked)
+    }
+
+    @Test func onlyACameraThatCantBeUsedHasSomethingToSay() {
+        #expect(CameraAccess.allowed.message == nil && CameraAccess.notAsked.message == nil)
+        // turned off for Footscan: where to turn it on
+        #expect(CameraAccess.off.message?.contains("Settings > Footscan > Camera") == true)
+        // blocked for the whole phone: there's no switch for Footscan, so it doesn't send them looking for one
+        #expect(CameraAccess.blocked.message?.contains("Settings > Footscan") == false)
+    }
+}
+
+// MARK: - the battery before a scan
+
+@Suite("Battery before a scan")
+struct BatteryBeforeAScan {
+    @Test func aLowBatteryUnpluggedIsSaidWithItsLevel() {
+        let note = BatteryCheck.note(level: 0.12, state: .unplugged)
+        #expect(note?.hasPrefix("Battery at 12%.") == true)
+        // just under the line reads as under it, never as the line itself
+        #expect(BatteryCheck.note(level: 0.196, state: .unplugged)?.hasPrefix("Battery at 19%.") == true)
+        // as the status bar shows it: 0.13 as a Float is 12.99999, which mustn't read as 12%
+        #expect(BatteryCheck.note(level: 0.13, state: .unplugged)?.hasPrefix("Battery at 13%.") == true)
+        #expect(BatteryCheck.note(level: 0.19, state: .unplugged)?.hasPrefix("Battery at 19%.") == true)
+    }
+
+    @Test func chargingOrEnoughOrUnknownSaysNothing() {
+        #expect(BatteryCheck.note(level: 0.12, state: .charging) == nil)
+        #expect(BatteryCheck.note(level: 0.12, state: .full) == nil)
+        #expect(BatteryCheck.note(level: 0.2, state: .unplugged) == nil)
+        #expect(BatteryCheck.note(level: 0.8, state: .unplugged) == nil)
+        #expect(BatteryCheck.note(level: -1, state: .unknown) == nil)  // the simulator
+        #expect(BatteryCheck.note(level: -1, state: .unplugged) == nil)
+    }
+}
+
+// MARK: - coaching during a capture
+
+@Suite("Coaching during a capture")
+struct CaptureCoachingTests {
+    @Test func aHotPhoneIsWarnedAboutAndACoolOneIsNot() {
+        #expect(CaptureCoaching.thermalWarning(.nominal) == nil)
+        #expect(CaptureCoaching.thermalWarning(.fair) == nil)
+        #expect(CaptureCoaching.thermalWarning(.serious)?.contains("cool") == true)
+        #expect(CaptureCoaching.thermalWarning(.critical)?.contains("cool") == true)
+    }
+
+    @Test func aTipThatFlickersIsReadOutOnceEveryFewSeconds() {
+        var tips = TipRepeats()
+        let t0 = Date(timeIntervalSince1970: 1_800_000_000)
+        let first = tips.shouldSay("Slow down a little.", at: t0)
+        let again = tips.shouldSay("Slow down a little.", at: t0 + 1)
+        let another = tips.shouldSay("Move a little closer.", at: t0 + 1)  // another tip isn't held back
+        let later = tips.shouldSay("Slow down a little.", at: t0 + TipRepeats.quiet)
+        #expect(first && !again && another && later)
+    }
+
+    @Test func losingTheSubjectAndOverCapturingAreSaid() {
+        #expect(CaptureCoaching.tip([.objectNotDetected]) == "Lost track. Point the phone back at it.")
+        #expect(CaptureCoaching.tip([.overCapturing]) == "Plenty from here. Move on round to a new angle.")
+        #expect(CaptureCoaching.tip([]) == nil)
+    }
+
+    @Test func theTipMostWorthActingOnWins() {
+        #expect(CaptureCoaching.tip([.overCapturing, .environmentTooDark]) == "Too dark. Turn on more lights.")
+        #expect(CaptureCoaching.tip([.objectTooClose, .movingTooFast]) == "Slow down a little.")
+        #expect(CaptureCoaching.tip([.objectTooFar, .objectNotDetected]) == "Lost track. Point the phone back at it.")
+        #expect(CaptureCoaching.tip([.overCapturing, .outOfFieldOfView]) == "Keep it in the middle of the screen.")
+    }
+}
+
+// MARK: - the calibration object's score
+
+@Suite("The calibration object's score")
+struct CalibrationScore {
+    @Test func theStudiosAnswerIsReadWithItsWarningsAndWhatItWasComparedWith() throws {
+        // the shape of recon/imported.py summarize(), extra keys and all (SYNTHETIC numbers, not a scan's)
+        let json = #"""
+        {"median_mm": 1.0, "p95_mm": 2.0, "signed_mean_mm": 0.5, "within_1mm": 0.5, "scan_within_2mm": 0.5,
+         "length_mm": 1.0, "width_mm": 1.0, "dome_apex_mm": -1.0, "scale_pct": 1.35, "reference": "model",
+         "floor": "made up below the base", "warnings": ["the phone made up the bottom"]}
+        """#
+        let acc = try JSONDecoder().decode(StudioAccuracy.self, from: Data(json.utf8))
+        #expect(acc.scale_pct == 1.35 && acc.warnings == ["the phone made up the bottom"])
+    }
+
+    @Test func withCaliperReadingsTheNoteSaysEachSizeMayStillBeAgainstTheDesign() {
+        // the studio marks the whole score "calipers" once any reading is typed in; sizes without one use the design
+        #expect(AccuracyCard.referenceNote("calipers").contains("where you typed one in"))
+        #expect(AccuracyCard.referenceNote("model").contains("design"))
+        #expect(AccuracyCard.referenceNote(nil) == AccuracyCard.referenceNote("model"))
+    }
+
+    @Test func anAnswerSavedBeforeTheWarningsStillReads() throws {
+        let acc = try JSONDecoder().decode(StudioAccuracy.self, from: Data(#"{"median_mm": 0.7, "reference": "model"}"#.utf8))
+        #expect(acc.warnings == nil && acc.scale_pct == nil && acc.median_mm == 0.7)
+    }
+
+    @Test func theOverallSizeSaysWhichWay() {
+        #expect(AccuracyCard.percent(0.9) == "+0.9%")
+        #expect(AccuracyCard.percent(-1.24) == "−1.2%")
+        #expect(AccuracyCard.percent(0) == "0.0%")
+        #expect(AccuracyCard.percent(-0.04) == "0.0%")  // no direction where there's none to show
+        #expect(AccuracyCard.signed(-1.0, places: 2) == "−1.00")
+    }
+}
+
+// MARK: - the studio's camera page
+
+@Suite("The studio's camera page")
+struct StudioCameraPage {
+    let studio = URL(string: "https://192.168.11.233:8766/")!
+
+    func decide(_ scheme: String = "https", _ host: String = "192.168.11.233", _ port: Int = 8766,
+                _ type: WKMediaCaptureType = .camera) -> WKPermissionDecision {
+        StudioPage.mediaDecision(scheme: scheme, host: host, port: port, studio: studio, type: type)
+    }
+
+    @Test func onlyTheStudiosPageGetsTheCameraAndNothingGetsTheMicrophone() {
+        #expect(decide() == .grant)
+        #expect(decide("https", "203.0.113.5") == .deny)
+        #expect(decide("https", "192.168.11.233", 8766, .microphone) == .deny)
+        #expect(decide("https", "192.168.11.233", 8766, .cameraAndMicrophone) == .deny)
+    }
+
+    @Test func anotherProgramOnTheStudiosComputerIsAnotherSite() {
+        #expect(decide("https", "192.168.11.233", 8765) == .deny)
+        #expect(decide("http", "192.168.11.233", 8766) == .deny)
+        #expect(decide("HTTPS", "192.168.11.233", 8766) == .grant)
+    }
+
+    @Test func aStudioOnTheDefaultPortMatchesWebKitsZero() {
+        let plain = URL(string: "https://studio.example/")!
+        #expect(StudioPage.mediaDecision(scheme: "https", host: "studio.example", port: 0, studio: plain, type: .camera) == .grant)
+        #expect(StudioPage.mediaDecision(scheme: "https", host: "studio.example", port: 443, studio: plain, type: .camera) == .grant)
+        #expect(StudioPage.mediaDecision(scheme: "https", host: "studio.example", port: 8766, studio: plain, type: .camera) == .deny)
+    }
+}
+
+// MARK: - naming a scan
+
+@Suite("Naming a scan")
+struct ScanNames {
+    func record(_ subject: Subject = .leftSole, name: String? = nil) -> ScanRecord {
+        var r = ScanRecord(subject: subject, created: Date(timeIntervalSince1970: 1_700_000_000), device: "iPhone16,1",
+                           systemVersion: "18.1", appVersion: "1.0")
+        r.name = name
+        return r
+    }
+
+    @Test func aTypedNameIsTidiedAndAnEmptyOneMeansNoName() {
+        #expect(ScanRecord.cleanName("  Sam,   left foot ") == "Sam, left foot")
+        #expect(ScanRecord.cleanName("   ") == nil)
+        #expect(ScanRecord.cleanName("") == nil)
+        #expect(ScanRecord.cleanName(String(repeating: "a", count: 60))?.count == ScanRecord.nameLimit)
+        // cut at 40 just after a space: the space goes too
+        #expect(ScanRecord.cleanName(String(repeating: "a", count: 39) + " b") == String(repeating: "a", count: 39))
+    }
+
+    @Test func theCardShowsTheNameElseWhatWasScanned() {
+        #expect(record().heading == "Left sole")
+        #expect(record(name: "Sam").heading == "Sam")
+    }
+
+    @Test func aNewerScanReplacesAnOlderOneOnlyForTheSameNamedFoot() {
+        #expect(record().sameFoot(as: record()))
+        #expect(record(name: "Sam").sameFoot(as: record(name: "Sam")))
+        #expect(!record(name: "Sam").sameFoot(as: record()))  // someone else's left sole
+        #expect(record(name: "Zoë").sameFoot(as: record(name: "zoe")))  // capitals and accents don't matter
+        #expect(!record(.rightSole).sameFoot(as: record()))
+    }
+
+    @Test func aRecordSavedBeforeNamesStillReads() throws {
+        let json = #"{"subject":"left-sole","created":"2026-11-01T10:00:00Z","device":"iPhone16,1","systemVersion":"18.1","appVersion":"1.0","modelBuiltOnPhone":false,"units":"m","note":"x"}"#
+        let dec = JSONDecoder()
+        dec.dateDecodingStrategy = .iso8601
+        let r = try dec.decode(ScanRecord.self, from: Data(json.utf8))
+        #expect(r.name == nil)
+        #expect(r.heading == "Left sole")
+    }
+}
+
+// MARK: - a capture that stopped by itself
+
+@Suite("A capture that stopped by itself")
+struct CaptureStoppedWords {
+    @Test func photosSavedSoFarAreSaidToBeKeptAndTheErrorComesLast() {
+        let w = CaptureStopped.words(photos: 37, error: "Session interrupted", free: 5_000_000_000, hot: false)
+        #expect(w.body.hasPrefix("The 37 photos taken so far are kept"))
+        #expect(w.cause == nil)
+        #expect(w.detail == "What the phone said: Session interrupted")
+    }
+
+    @Test func withNoPhotosNothingIsSaidToBeKeptAndOnePhotoIsNotEnough() {
+        #expect(CaptureStopped.words(photos: 0, error: "x", free: nil, hot: false).body.hasPrefix("No photos were saved"))
+        #expect(CaptureStopped.words(photos: 1, error: "x", free: nil, hot: false).body.hasPrefix("The 1 photo taken so far is kept"))
+    }
+
+    @Test func aHotPhoneIsNamedBeforeSpace() {
+        let w = CaptureStopped.words(photos: 5, error: "x", free: 100_000_000, hot: true)
+        #expect(w.cause?.hasPrefix("The phone is hot") == true)
+    }
+
+    @Test func spaceIsNamedOnlyWhenThePhoneIsNearlyFull() {
+        // under the 1.5 GB a capture asks for at the start, but not nearly full: not blamed
+        #expect(CaptureStopped.words(photos: 5, error: "x", free: 1_200_000_000, hot: false).cause == nil)
+        #expect(CaptureStopped.words(photos: 5, error: "x", free: 100_000_000, hot: false).cause?.hasPrefix("The phone is nearly full") == true)
+        #expect(CaptureStopped.words(photos: 5, error: "x", free: nil, hot: false).cause == nil)
+    }
+}
+
+// MARK: - the model's files
+
+@Suite("Saving the model's files")
+struct ModelFiles {
+    func folder() throws -> URL {
+        let dir = FileManager.default.temporaryDirectory.appending(path: "model-files-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir
+    }
+
+    /// A single triangle, as a model Model I/O can read (SYNTHETIC: test geometry only).
+    func triangle(in dir: URL) throws -> URL {
+        let url = dir.appending(path: "source.obj")
+        try "v 0 0 0\nv 0.1 0 0\nv 0 0 0.1\nf 1 2 3\n".write(to: url, atomically: true, encoding: .utf8)
+        return url
+    }
+
+    @Test func theExportLandsWholeAndLeavesNoWorkingFolder() throws {
+        let dir = try folder()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let out = dir.appending(path: "model.obj")
+        try ModelBuilder.exportOBJ(from: try triangle(in: dir), to: out)
+        let text = try String(contentsOf: out, encoding: .utf8)
+        #expect(text.contains("v "))
+        #expect(!FileManager.default.fileExists(atPath: dir.appending(path: ".obj-export").path()))
+    }
+
+    @Test func aFailedExportLeavesNoModelObjNotEvenAnEarlierOne() throws {
+        let dir = try folder()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let out = dir.appending(path: "model.obj")
+        try "v 9 9 9\n".write(to: out, atomically: true, encoding: .utf8) // from an earlier model
+        #expect(throws: (any Error).self) { try ModelBuilder.exportOBJ(from: dir.appending(path: "missing.usdz"), to: out) }
+        #expect(!FileManager.default.fileExists(atPath: out.path()))
+        #expect(!FileManager.default.fileExists(atPath: dir.appending(path: ".obj-export").path()))
+    }
+
+    @Test func workingFilesACutOffBuildLeftAreClearedAndTheModelStays() throws {
+        let dir = try folder()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let model = dir.appending(path: "model.usdz")
+        try Data("model".utf8).write(to: model)
+        try Data("half".utf8).write(to: dir.appending(path: ModelBuilder.buildingName))
+        let export = dir.appending(path: ModelBuilder.exportFolderName, directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: export, withIntermediateDirectories: true)
+        try Data("half".utf8).write(to: export.appending(path: "model.obj"))
+        ModelBuilder.clearLeftovers(in: dir)
+        #expect(!FileManager.default.fileExists(atPath: dir.appending(path: ModelBuilder.buildingName).path()))
+        #expect(!FileManager.default.fileExists(atPath: export.path()))
+        #expect(FileManager.default.fileExists(atPath: model.path()))
+    }
+
+    @Test func puttingAFileInPlaceReplacesWhatWasThere() throws {
+        let dir = try folder()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let old = dir.appending(path: "model.usdz"), new = dir.appending(path: "model-building.usdz")
+        try Data("old".utf8).write(to: old)
+        try Data("new".utf8).write(to: new)
+        try ModelBuilder.putInPlace(new, at: old)
+        #expect(try Data(contentsOf: old) == Data("new".utf8))
+        #expect(!FileManager.default.fileExists(atPath: new.path()))
+    }
+}
+
+// MARK: - the Photos + mat page failing
+
+@Suite("The Photos + mat page failing")
+struct PhotoPageFailing {
+    let cancel = NSError(domain: NSURLErrorDomain, code: NSURLErrorCancelled)
+    let interrupted = NSError(domain: "WebKitErrorDomain", code: 102)
+    let timedOut = NSError(domain: NSURLErrorDomain, code: NSURLErrorTimedOut)
+
+    func said(_ e: Error, shown: Bool, pin: Bool = false) -> String? {
+        PhotoPageWords.failure(e, pageShown: shown, pinRefused: pin, studio: "192.168.11.233 (home Wi-Fi)")
+    }
+
+    @Test func aCancelWithTheStudiosPageShowingSaysNothing() {
+        #expect(said(cancel, shown: true) == nil)
+        #expect(said(interrupted, shown: true) == nil)  // a link sent to Safari
+    }
+
+    @Test func aCancelBeforeThePageEverShowedIsSaidAsUnreachable() {
+        // nothing would be on screen: say something and offer Try again
+        #expect(said(cancel, shown: false)?.hasPrefix("Couldn't reach the studio") == true)
+        #expect(said(interrupted, shown: false)?.hasPrefix("Couldn't reach the studio") == true)
+    }
+
+    @Test func aRefusedCertificateIsSaidAsSuchNotSwallowedAsACancel() {
+        #expect(said(cancel, shown: false, pin: true)?.contains("different certificate") == true)
+        #expect(said(cancel, shown: true, pin: true)?.contains("different certificate") == true)
+    }
+
+    @Test func aDropIsUnreachableWhetherOrNotThePageHadShown() {
+        #expect(said(timedOut, shown: false)?.hasPrefix("Couldn't reach the studio") == true)
+        #expect(said(timedOut, shown: true)?.hasPrefix("Couldn't reach the studio") == true)
+    }
+
+    @Test func aStoppedPageSaysWhatIsKeptAndWhatIsGone() {
+        #expect(PhotoPageWords.pageStopped.contains("already saved to the studio are kept"))
+        #expect(PhotoPageWords.pageStopped.contains("not yet saved are gone"))
+    }
+}
+
+// MARK: - a connect code read from a picture
+
+@Suite("A connect code read from a picture")
+struct CodeFromAPicture {
+    /// A QR code of `text`, as the studio draws one, scaled up as a screenshot would show it.
+    func qr(_ text: String) -> CIImage {
+        let filter = CIFilter(name: "CIQRCodeGenerator")!
+        filter.setValue(Data(text.utf8), forKey: "inputMessage")
+        filter.setValue("M", forKey: "inputCorrectionLevel")
+        return filter.outputImage!.transformed(by: CGAffineTransform(scaleX: 12, y: 12))
+    }
+
+    @Test func theStudiosCodeIsReadFromAPictureOfIt() {
+        let code = "footscan-capture://connect?url=https%3A%2F%2F192.168.11.233%3A8766&key=SYNTHETIC-test-key"
+        #expect(CodeInPicture.codes(in: qr(code)) == [code])
+    }
+
+    @Test func theStudiosCodeIsReadFromAPictureFilesBytes() async throws {
+        let code = "footscan-capture://connect?url=https%3A%2F%2F192.168.11.233%3A8766&key=SYNTHETIC-test-key"
+        let png = try #require(CIContext().pngRepresentation(of: qr(code), format: .RGBA8,
+                                                              colorSpace: CGColorSpaceCreateDeviceRGB()))
+        #expect(await CodeInPicture.codes(inPicture: png) == [code])
+        #expect(await CodeInPicture.codes(inPicture: Data("not a picture".utf8)) == nil)
+    }
+
+    @Test func aPictureWithNoCodeReadsNothing() {
+        let blank = CIImage(color: .white).cropped(to: CGRect(x: 0, y: 0, width: 400, height: 400))
+        #expect(CodeInPicture.codes(in: blank).isEmpty)
     }
 }
 
@@ -499,6 +1147,37 @@ struct FreeSpace {
 
     @Test func unknownFreeSpaceDoesNotBlockScanning() {
         #expect(DiskSpace.captureProblem(free: nil) == nil)
+    }
+
+    /// A scan folder with a file in Checkpoint, and (`built`) its model and studio copy.
+    private func scan(_ name: String, in root: URL, built: Bool) throws -> Scan {
+        let scan = Scan(folder: root.appending(path: name, directoryHint: .isDirectory))
+        try FileManager.default.createDirectory(at: scan.checkpoint, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: scan.images, withIntermediateDirectories: true)
+        try Data(count: 1000).write(to: scan.checkpoint.appending(path: "work.bin"))
+        try Data(count: 10).write(to: scan.images.appending(path: "IMG_0.HEIC"))
+        if built {
+            try Data(count: 10).write(to: scan.usdz)
+            try Data(count: 10).write(to: scan.obj)
+        }
+        return scan
+    }
+
+    @Test func onlyBuiltModelsWorkingDataCanGoAndThePhotosAndModelStay() throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString, directoryHint: .isDirectory)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let built = try scan("built", in: root, built: true)
+        let waiting = try scan("waiting", in: root, built: false)
+        // a scan still waiting for its model needs its working data to build it
+        #expect(ScanLibrary.workingDataToRemove([built, waiting]) == [built.checkpoint])
+        #expect(ScanLibrary.bytes(in: ScanLibrary.workingDataToRemove([built, waiting])) == 1000)
+        // once emptied there's nothing more to remove; the folder itself, the photos and the model are still there,
+        // and the other scan's working data wasn't touched
+        ScanLibrary.empty(ScanLibrary.workingDataToRemove([built, waiting]))
+        #expect(ScanLibrary.workingDataToRemove([built, waiting]).isEmpty)
+        #expect(FileManager.default.fileExists(atPath: built.checkpoint.path(percentEncoded: false)))
+        #expect(built.hasModel && built.hasOBJ && built.photoCount == 1)
+        #expect(ScanLibrary.bytes(in: [waiting.checkpoint]) == 1000)
     }
 }
 
@@ -533,5 +1212,316 @@ struct Ring {
         model.drag(to: 0.05)
         model.drag(to: 0.95) // back across the join, not forward round the long way
         #expect(model.lit == [0, 11])
+    }
+}
+
+// MARK: - the scale reading
+
+@Suite("Scale reading in kg or lb")
+struct ScaleReadingTests {
+    @Test func poundsAreSentAsKilograms() {
+        // 150 lb is 68.04 kg: typed with the box on lb, the studio must not get 150 kg
+        #expect(ScaleReading.kilograms("150", unit: .lb) == 68.04)
+        #expect(ScaleReading.kilograms("150", unit: .kg) == 150)
+    }
+
+    @Test func aCommaIsADecimalMark() {
+        #expect(ScaleReading.kilograms("68,5", unit: .kg) == 68.5)
+        #expect(ScaleReading.kilograms(" 68.5 ", unit: .kg) == 68.5)
+        #expect(ScaleReading.kilograms("68.5\n", unit: .kg) == 68.5) // pasted with its line end
+        #expect(ScaleReading.kilograms(".5", unit: .kg) == 0.5)
+    }
+
+    @Test func onlyPlainNumbersAreReadings() {
+        // Double() reads these too: pasted text mustn't become a load
+        #expect(ScaleReading.kilograms("0x40", unit: .kg) == nil)
+        #expect(ScaleReading.kilograms("6.85e1", unit: .kg) == nil)
+        #expect(ScaleReading.kilograms("1.2.3", unit: .kg) == nil)
+        #expect(ScaleReading.kilograms("+68", unit: .kg) == nil)
+    }
+
+    @Test func readingsTheStudioWouldRefuseAreNotTaken() {
+        #expect(ScaleReading.kilograms("", unit: .kg) == nil)
+        #expect(ScaleReading.kilograms("abc", unit: .kg) == nil)
+        #expect(ScaleReading.kilograms("0", unit: .kg) == nil)
+        #expect(ScaleReading.kilograms("-5", unit: .kg) == nil)
+        #expect(ScaleReading.kilograms("400", unit: .kg) == nil)
+        #expect(ScaleReading.kilograms("inf", unit: .kg) == nil)
+        // 880 lb is 399.2 kg, so it's taken in lb; 900 lb (408 kg) is not
+        #expect(ScaleReading.kilograms("880", unit: .lb) != nil)
+        #expect(ScaleReading.kilograms("900", unit: .lb) == nil)
+    }
+
+    @Test func aSavedReadingShowsBackAsTyped() {
+        let kg = ScaleReading.kilograms("150", unit: .lb)!
+        #expect(ScaleReading.text(kilograms: kg, unit: .lb) == "150")
+        #expect(ScaleReading.text(kilograms: 68.5, unit: .kg) == "68.5")
+        #expect(ScaleReading.text(kilograms: 70, unit: .kg) == "70")
+        // sending a reopened scan again sends the same number, not one rounded on the way into the box
+        #expect(ScaleReading.kilograms(ScaleReading.text(kilograms: 68.25, unit: .kg), unit: .kg) == 68.25)
+        #expect(ScaleReading.kilograms(ScaleReading.text(kilograms: kg, unit: .lb), unit: .lb) == kg)
+    }
+
+    @Test func theLineUnderTheBoxShowsWhatIsSent() {
+        #expect(ScaleReading.sentAs(ScaleReading.kilograms("150", unit: .lb)!) == "Sent to the studio as 68.04 kg")
+    }
+
+    @Test func theDetailsRowGivesKilogramsAndPoundsWhenOnPounds() {
+        #expect(ScaleReading.detail(kilograms: 68.04, unit: .kg) == "68.04 kg")
+        #expect(ScaleReading.detail(kilograms: 68.04, unit: .lb) == "68.04 kg (150 lb)")
+    }
+
+    @Test func theUnitStartsFromThePhonesRegion() {
+        #expect(ScaleUnit.usual(for: Locale(identifier: "en_US")) == .lb)
+        #expect(ScaleUnit.usual(for: Locale(identifier: "en_GB")) == .kg)
+        #expect(ScaleUnit.usual(for: Locale(identifier: "de_DE")) == .kg)
+    }
+}
+
+// MARK: - keeping the screen on
+
+@MainActor
+@Suite("Screen kept on", .serialized)
+struct ScreenKeptOn {
+    @Test func theScreenStaysOnUntilEveryClaimIsLetGo() {
+        let photoPage = KeepAlive.screen()
+        let upload = KeepAlive.screen()
+        #expect(UIApplication.shared.isIdleTimerDisabled)
+        photoPage()
+        #expect(UIApplication.shared.isIdleTimerDisabled) // the upload still holds it
+        upload()
+        #expect(!UIApplication.shared.isIdleTimerDisabled)
+    }
+
+    @Test func lettingGoTwiceCountsOnce() {
+        let other = KeepAlive.screen()
+        let page = KeepAlive.screen()
+        page()
+        page() // a second onDisappear mustn't release someone else's claim
+        #expect(UIApplication.shared.isIdleTimerDisabled)
+        other()
+        #expect(!UIApplication.shared.isIdleTimerDisabled)
+    }
+}
+
+// MARK: - Settings
+
+@Suite("Delete all says what is lost")
+struct DeleteAllWarning {
+    @Test func scansOnlyOnThisPhoneAreCounted() {
+        #expect(DeleteAllWords.message(total: 5, unsent: 2)
+                == "2 of them haven't been sent to the studio: their photos and models will be gone for good. Copies already in the studio stay there.")
+        #expect(DeleteAllWords.message(total: 5, unsent: 1).hasPrefix("1 of them hasn't been sent"))
+    }
+
+    @Test func allSentSaysTheStudioKeepsThem() {
+        #expect(DeleteAllWords.message(total: 3, unsent: 0) == "Copies already in the studio stay there.")
+    }
+
+    @Test func noneSentSaysAllAreGone() {
+        #expect(DeleteAllWords.message(total: 3, unsent: 3).hasPrefix("None of them has been sent"))
+        #expect(DeleteAllWords.message(total: 1, unsent: 1) == "It hasn't been sent to the studio: its photos and model will be gone for good.")
+    }
+
+    @Test func theVersionShowsItsBuildNumber() {
+        #expect(AppVersion.shown(version: "1.0", build: "3") == "1.0 (3)")
+        #expect(AppVersion.shown(version: "1.0", build: "1.0") == "1.0")
+        #expect(AppVersion.shown(version: "1.0", build: nil) == "1.0")
+        #expect(AppVersion.shown(version: nil, build: "3") == "?")
+    }
+}
+
+// MARK: - a link to another studio
+
+@Suite("A link to a different studio asks first")
+struct OtherStudioLinks {
+    let pinA = String(repeating: "a", count: 64)
+    let pinB = String(repeating: "b", count: 64)
+
+    func link(_ address: String, fp: String?, alt: [String] = []) -> StudioLink {
+        StudioLink(url: URL(string: address)!, fingerprint: fp, alternates: alt.map { URL(string: $0)! })
+    }
+
+    @Test func theSameCertificateIsTheSameStudioAtAnyAddress() {
+        let home = link("https://192.168.1.20:8766", fp: pinA)
+        #expect(home.isSameStudio(as: link("https://100.113.53.83:8766", fp: pinA.uppercased())))
+        #expect(!home.isSameStudio(as: link("https://192.168.1.20:8766", fp: pinB))) // a new certificate: ask
+    }
+
+    @Test func withoutPinsAnAddressInCommonIsTheSameStudio() {
+        let home = link("https://192.168.1.20:8766", fp: nil, alt: ["https://100.113.53.83:8766"])
+        #expect(home.isSameStudio(as: link("https://100.113.53.83:8766", fp: nil)))
+        #expect(!home.isSameStudio(as: link("https://192.168.1.99:8766", fp: nil)))
+        // written another way, the same address: capitals in the host, the port left out where it's 443
+        let named = link("https://studio.example.dev", fp: nil)
+        #expect(named.isSameStudio(as: link("https://Studio.example.dev:443/", fp: nil)))
+        #expect(!home.isSameStudio(as: link("https://192.168.1.20:8766", fp: pinA))) // one pinned, one not: ask
+    }
+
+    @Test func onlyACodeForAnotherStudioIsAskedAbout() {
+        let code = { (address: String, pin: String) in "footscan-capture://connect?url=\(address)&key=k&fp=\(pin)" }
+        let home = link("https://192.168.1.20:8766", fp: pinA)
+        let other = code("https://192.168.1.99:8766", pinB)
+        #expect(StudioConnection.otherStudio(in: other, connected: nil) == nil)                   // nothing connected yet
+        #expect(StudioConnection.otherStudio(in: code("https://192.168.1.20:8766", pinA), connected: home) == nil) // same one
+        #expect(StudioConnection.otherStudio(in: "not a code", connected: home) == nil)            // connect() says why
+        #expect(StudioConnection.otherStudio(in: other, connected: home) == "192.168.1.99 (home Wi-Fi)")
+    }
+
+    @Test func aQuestionLeftUnseenForMinutesIsDropped() {
+        // opened while a capture covered the screen: it mustn't turn up out of the blue much later
+        let asked = Date(timeIntervalSince1970: 1_800_000_000)
+        #expect(StudioConnection.stillAsking(since: asked, now: asked + 60))
+        #expect(!StudioConnection.stillAsking(since: asked, now: asked + StudioConnection.switchQuestionLasts))
+        #expect(!StudioConnection.stillAsking(since: asked, now: asked - 60)) // the clock went back
+    }
+}
+
+// MARK: - how the overnight changes work together
+
+@Suite("A scan again that was stopped")
+struct StoppedScanAgain {
+    @Test func aStoppedScanAgainWithNoModelDoesNotReplaceTheRefusedScan() throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString, directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let t0 = Date(timeIntervalSince1970: 1_800_000_000)
+        var refused = ScanRecord(subject: .rightSole, created: t0, device: "test", systemVersion: "0", appVersion: "0")
+        refused.retake = ["THE HEEL IS CUT OFF"]
+
+        let again = Scan(folder: root)
+        var rec = ScanRecord(subject: .rightSole, created: t0 + 60, device: "test", systemVersion: "0", appVersion: "0")
+        rec.stoppedEarly = t0 + 90
+        again.save(rec)
+        #expect(!again.replaces(refused)) // the home screen keeps asking for that foot
+
+        try Data().write(to: again.usdz) // built after all: now it stands in for the refused one
+        #expect(again.replaces(refused))
+
+        rec.stoppedEarly = nil
+        again.save(rec)
+        try? FileManager.default.removeItem(at: again.usdz)
+        #expect(again.replaces(refused)) // a scan again that went to the end replaces it, built or not
+        var older = rec
+        older.created = t0 - 60
+        again.save(older)
+        #expect(!again.replaces(refused)) // only a newer scan
+    }
+}
+
+// MARK: - sharing a model
+
+@Suite("Shared models are named after the scan")
+struct SharedFileNames {
+    let utc = TimeZone(identifier: "UTC")!
+    let taken = Date(timeIntervalSince1970: 1_795_000_000) // 2026-11-18 11:06:40 UTC
+
+    @Test func aScanIsNamedForWhatItIsAndWhenItWasTaken() {
+        let rec = ScanRecord(subject: .rightSole, created: taken, device: "test", systemVersion: "0", appVersion: "0")
+        #expect(SharedFile.fileName(for: rec, ext: "obj", timeZone: utc) == "\(rec.subject.label) 2026-11-18 110640.obj")
+    }
+
+    @Test func aNamedScanUsesItsName() {
+        var rec = ScanRecord(subject: .leftSole, created: taken, device: "test", systemVersion: "0", appVersion: "0")
+        rec.name = "Sam, left"
+        #expect(SharedFile.fileName(for: rec, ext: "usdz", timeZone: utc) == "Sam, left 2026-11-18 110640.usdz")
+    }
+
+    @Test func charactersAFileNameCantHoldBecomeSpaces() {
+        var rec = ScanRecord(subject: .leftSole, created: taken, device: "test", systemVersion: "0", appVersion: "0")
+        rec.name = "Sam/Alex: left?"
+        #expect(SharedFile.fileName(for: rec, ext: "obj", timeZone: utc) == "Sam Alex left 2026-11-18 110640.obj")
+    }
+
+    @Test func aNameStartingWithADotDoesNotMakeAHiddenFile() {
+        var rec = ScanRecord(subject: .leftSole, created: taken, device: "test", systemVersion: "0", appVersion: "0")
+        rec.name = "..Sam"
+        #expect(SharedFile.fileName(for: rec, ext: "obj", timeZone: utc) == "Sam 2026-11-18 110640.obj")
+        rec.name = "."
+        #expect(SharedFile.fileName(for: rec, ext: "obj", timeZone: utc) == "Scan 2026-11-18 110640.obj")
+    }
+
+    @Test func aScanWithNoRecordKeepsTheFilesOwnName() {
+        #expect(SharedFile.fileName(for: nil, ext: "obj") == "model.obj")
+    }
+}
+
+// MARK: - Reduce Motion
+
+@Suite("Reduce Motion")
+struct ReduceMotionTests {
+    @Test func cardsScrollingInOnlyFadeWithReduceMotion() {
+        for phase in [-1.0, -0.5, 0.5, 1.0] {
+            let style = RevealStyle.at(phase, reduceMotion: true)
+            #expect(style == RevealStyle(opacity: 0.35, scale: 1, rise: 0, blur: 0))
+        }
+    }
+
+    @Test func cardsScrollingInRiseAndGrowWithoutIt() {
+        let leaving = RevealStyle.at(1, reduceMotion: false)
+        #expect(leaving.scale < 1 && leaving.rise > 0 && leaving.blur > 0)
+        #expect(RevealStyle.at(0, reduceMotion: false) == RevealStyle(opacity: 1, scale: 1, rise: 0, blur: 0))
+        #expect(RevealStyle.at(0, reduceMotion: true) == RevealStyle(opacity: 1, scale: 1, rise: 0, blur: 0))
+    }
+}
+
+// MARK: - VoiceOver on a scan's steps
+
+@Suite("VoiceOver says when a step ends")
+struct StepAnnouncements {
+    @Test func aStepThatFinishesIsAnnouncedWithItsDetail() {
+        #expect(StepAnnouncement.words(step: "Studio", from: .working, to: .done, detail: "Sent to 192.168.1.20", problem: nil)
+                == "Studio done. Sent to 192.168.1.20")
+    }
+
+    @Test func aStepThatStopsSaysWhy() {
+        #expect(StepAnnouncement.words(step: "Studio", from: .working, to: .todo, detail: "Ready to send", problem: "The studio isn't answering.")
+                == "Studio stopped. The studio isn't answering.")
+        #expect(StepAnnouncement.words(step: "3D model", from: .working, to: .failed, detail: "Not built yet", problem: "Ran out of space.")
+                == "3D model needs a look. Ran out of space.")
+        #expect(StepAnnouncement.words(step: "Studio", from: .working, to: .failed, detail: "Not kept: scan this foot again.", problem: nil)
+                == "Studio needs a look. Not kept: scan this foot again.")
+    }
+
+    @Test func theEndOfASendCanBeFelt() {
+        #expect(StepAnnouncement.feedback(from: .working, to: .done, problem: false) == .success)
+        #expect(StepAnnouncement.feedback(from: .working, to: .todo, problem: true) == .error)
+        #expect(StepAnnouncement.feedback(from: .working, to: .failed, problem: false) == .error)
+        #expect(StepAnnouncement.feedback(from: .todo, to: .done, problem: false) == nil) // opened on a sent scan
+    }
+
+    @Test func nothingIsSaidForAStepThatWasNotUnderWay() {
+        #expect(StepAnnouncement.words(step: "Studio", from: .todo, to: .done, detail: "Sent", problem: nil) == nil)
+        #expect(StepAnnouncement.words(step: "Studio", from: .todo, to: .working, detail: "Sending…", problem: nil) == nil)
+        #expect(StepAnnouncement.words(step: "Studio", from: .working, to: .todo, detail: "Ready to send", problem: nil) == nil)
+    }
+}
+
+// MARK: - the studio button
+
+@Suite("The studio button says when the studio isn't answering")
+struct StudioPillTests {
+    @Test func aStudioThatDidntAnswerTheLastSendIsNotShownAsFine() {
+        #expect(StudioPill.State(host: "192.168.1.20", notAnswering: true) == .notAnswering("192.168.1.20"))
+        #expect(StudioPill.State(host: "192.168.1.20", notAnswering: true).words.contains("didn't answer"))
+    }
+
+    @Test func connectedAndAnsweringOrNotConnected() {
+        #expect(StudioPill.State(host: "192.168.1.20", notAnswering: false) == .connected("192.168.1.20"))
+        #expect(StudioPill.State(host: nil, notAnswering: true) == .notConnected) // nothing to answer without a studio
+        #expect(StudioPill.State(host: nil, notAnswering: false).words == "Studio: not connected")
+    }
+}
+
+// MARK: - the sole scan's second lap
+
+@Suite("Sole scan tips")
+struct SoleScanTips {
+    @Test func theSoleUpSecondLapGoesLowAlongTheOuterSide() {
+        // a left sole scan read 8-21 mm narrow on its outer side, most likely because that side wasn't captured
+        for subject in [Subject.rightSole, .leftSole] {
+            let laps = subject.checklist.first { $0.1 == "A helper scans, two laps" }
+            #expect(laps?.2.contains("low along the outer (little-toe) side") == true)
+        }
     }
 }
