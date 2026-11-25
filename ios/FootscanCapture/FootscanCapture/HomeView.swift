@@ -5,6 +5,7 @@
 // goes straight to the camera, and the model is built (and sent, with a
 // studio connected) by itself. A scan the studio refused has Scan again,
 // which shows what to change before the camera opens and while the box is set.
+import AVFoundation
 import RealityKit
 import SwiftUI
 
@@ -63,6 +64,9 @@ struct HomeView: View {
     @State private var findingStudio: Subject?
     /// Scanning again after a refusal: what to change, for the get-ready sheet and the camera.
     @State private var retake: [RetakeAdvice] = []
+    /// The camera is off for this app (the intro's "Not now", or turned off in Settings): say so, with the way to
+    /// turn it on, instead of opening a capture that can't see.
+    @State private var cameraOff = false
 
     struct PrepRequest: Identifiable {
         let subject: Subject
@@ -234,7 +238,22 @@ struct HomeView: View {
                 }
                 Spacer()
             }
+            if cameraOff {
+                VStack(alignment: .leading, spacing: 8) {
+                    Label(CameraAccess.offMessage, systemImage: "camera.badge.ellipsis")
+                        .font(.footnote).foregroundStyle(Color.fsStop)
+                    Button("Open Settings") {
+                        if let url = URL(string: UIApplication.openSettingsURLString) { UIApplication.shared.open(url) }
+                    }
+                    .font(.subheadline.weight(.semibold))
+                }
+                .transition(.opacity)
+            }
             if let error { Text(error).font(.footnote).foregroundStyle(Color.fsStop) }
+        }
+        // back from Settings with the camera turned on: the note goes
+        .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in
+            if cameraOff && CameraAccess.state() == .allowed { withAnimation(.smooth) { cameraOff = false } }
         }
     }
 
@@ -382,6 +401,22 @@ struct HomeView: View {
     }
 
     private func begin(_ s: Subject) {
+        switch CameraAccess.state() {
+        case .allowed:
+            cameraOff = false
+        case .off:
+            withAnimation(.smooth) { cameraOff = true }
+            UINotificationFeedbackGenerator().notificationOccurred(.warning)
+            return
+        case .notAsked:
+            // never asked (the intro's "Not now"): iOS asks now, and the scan starts if it's allowed
+            Task {
+                _ = await AVCaptureDevice.requestAccess(for: .video)
+                if CameraAccess.state() == .notAsked { return }
+                begin(s)
+            }
+            return
+        }
         if method == .photos {
             // photos go straight to the studio: nothing big is kept on the phone
             guard studio.client != nil else { showStudio = true; return }

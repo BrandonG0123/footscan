@@ -1,6 +1,7 @@
 // Tests for the iPhone app's own logic: the parts that don't need a camera.
 // Run: xcodebuild test -project FootscanCapture.xcodeproj -scheme FootscanCapture
 //      -destination 'platform=iOS Simulator,name=iPhone 17 Pro'
+import AVFoundation
 import Foundation
 import Testing
 @testable import FootscanCapture
@@ -479,6 +480,22 @@ struct ScanList {
         dec.dateDecodingStrategy = .iso8601
         let rec = try dec.decode(ScanRecord.self, from: Data(json.utf8))
         #expect(rec.subject == .rightFoot && rec.subject.needsScale)
+    }
+}
+
+// MARK: - the camera
+
+@Suite("The camera before a scan")
+struct CameraBeforeAScan {
+    @Test func onlyAnAllowedCameraOpensTheCaptureAndNeverAskedIsAskedNow() {
+        #expect(CameraAccess.from(.authorized) == .allowed)
+        #expect(CameraAccess.from(.notDetermined) == .notAsked)
+        #expect(CameraAccess.from(.denied) == .off)
+        #expect(CameraAccess.from(.restricted) == .off)
+    }
+
+    @Test func turnedOffSaysWhereToTurnItOn() {
+        #expect(CameraAccess.offMessage.contains("Settings > Footscan > Camera"))
     }
 }
 
