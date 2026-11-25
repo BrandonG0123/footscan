@@ -172,6 +172,8 @@ struct HomeView: View {
                 PhotoCaptureView(subject: s, link: link, key: key) {
                     settings.markPrepared(s)
                     photoCapture = nil
+                    retake = []
+                    againName = nil // a photo scan isn't kept on the phone, so the name has nothing to go on
                 }
             }
         }
@@ -281,7 +283,12 @@ struct HomeView: View {
 
             HStack {
                 if settings.hasPrepared(subject) {
-                    Button { prep = PrepRequest(subject: subject, mustTick: false) } label: {
+                    Button {
+                        // a fresh look at the tips, not a scan again: no refused scan's hints or name carry over
+                        retake = []
+                        againName = nil
+                        prep = PrepRequest(subject: subject, mustTick: false)
+                    } label: {
                         Label("Tips", systemImage: "lightbulb")
                     }
                     .font(.subheadline.weight(.semibold))
@@ -314,7 +321,8 @@ struct HomeView: View {
                         }
                         Button("Not now") {
                             withAnimation(.smooth) { lowBattery = nil }
-                            retake = [] // a scan again that isn't going ahead: its hints go too
+                            retake = [] // a scan again that isn't going ahead: its hints and name go too
+                            againName = nil
                         }
                     }
                     .font(.subheadline.weight(.semibold))
@@ -382,7 +390,10 @@ struct HomeView: View {
             guard let r = s.record else { continue }
             if let p = library.problems[s.folder] { return (s, "\(r.heading) needs a look", p) }
             if r.retake != nil || r.heldByPhoneCheck, !library.scans.contains(where: { newer in
-                newer.record.map { $0.sameFoot(as: r) && $0.created > r.created } ?? false
+                // a newer scan of the same foot replaces it, unless that one was stopped partway with no model:
+                // the foot still needs scanning, and a stopped scan asks for nothing itself
+                newer.record.map { $0.sameFoot(as: r) && $0.created > r.created && ($0.stoppedEarly == nil || newer.hasModel) }
+                    ?? false
             }) {
                 // what went wrong, in short; the steps to fix it are on the scan's page, with Scan again
                 let what = r.nextTime.map(\.title).joined(separator: ". ")

@@ -202,13 +202,13 @@ struct StudioView: View {
                                 .buttonStyle(SecondaryButtonStyle())
                         }
                     }
-                    .disabled(!canScan || connecting)
+                    .disabled(!canScan || connecting || studio.connecting)
                     // the code on this phone's own screen (a remote-desktop app), or sent as a picture
                     PhotosPicker(selection: $picture, matching: .images) {
                         Label("Use a screenshot of the code", systemImage: "photo.on.rectangle")
                             .font(.subheadline.weight(.semibold))
                     }
-                    .disabled(connecting)
+                    .disabled(connecting || studio.connecting)
                 }
                 .padding(.horizontal, 20).padding(.vertical, 10)
                 .background(.bar)
