@@ -24,7 +24,7 @@
 <main class="wrap">
   <div class="toolbar">
     <div>
-      <p class="eyebrow">Phase 0 data</p>
+      <p class="eyebrow">Studio · every scan</p>
       <h1 style="font-size:clamp(1.8rem,4vw,2.6rem);margin:0">Capture library</h1>
     </div>
     <div class="filters">
@@ -41,41 +41,74 @@
     </div>
   </div>
 
-  <div class="callout brand" style="margin-bottom:18px">
-    <p><strong>Repeatability target:</strong> 10 captures per condition, across at least 2 sessions. The counts below
-      track progress toward the Phase 0 study. Captures become measurements once reconstruction and landmarking exist.</p>
-  </div>
-  <div class="counts" id="counts"></div>
+  <details class="card" style="margin-bottom:18px;padding:12px 16px">
+    <summary><strong>Repeatability study</strong> <span class="hint">(photo captures only)</span></summary>
+    <p class="hint" style="margin:8px 0 10px">Target: 10 photo captures per condition, across at least 2 sessions.
+      Imported 3D scans (the iPhone app, LiDAR apps) and object tests are a different method and aren't counted.</p>
+    <div class="counts" id="counts"></div>
+  </details>
+  <div id="attention" aria-live="polite"></div>
   <div class="grid" id="list" aria-live="polite"><p class="muted">Loading…</p></div>
 </main>
 <script type="module" src="/assets/layout.js"></script>
 <script type="module">
+  import { ask, esc } from "/assets/studio.js";
   const $ = (id) => document.getElementById(id);
-  const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
   const KIND_BADGE = { sole_up: `<span class="badge">sole up</span>`, sole_hanging: `<span class="badge">legs flat</span>`,
     impression: `<span class="badge">foam print</span>` };
   let all = [];
 
   async function load() {
-    try {
-      // the captures and the saved shoes (one insole outline per shoe model and size; none is fine), together
-      const [r, shoes] = await Promise.all([
-        fetch("/api/captures"),
-        // not listed (an error): the menu then asks for the default, so the studio applies it or says why
-        fetch("/api/shoes").then((r) => r.ok ? r.json() : UNLISTED).catch(() => UNLISTED),
-      ]);
-      all = await r.json();
-      saved = shoes;
-    } catch {
-      $("list").innerHTML = `<div class="callout stop"><p>Can't reach the footscan server. Start it with <span class="mono">footscan serve</span>.</p></div>`;
+    // the captures and the saved shoes (one insole outline per shoe model and size; none is fine), together
+    const [[ok, captures], [shoesOk, shoes]] = await Promise.all([ask("/api/captures"), ask("/api/shoes")]);
+    if (!ok) {
+      $("list").innerHTML = `<div class="callout stop"><p>Couldn't load the scans: ${esc(captures.error || "the studio refused")}.
+        If the studio isn't running, start it with <span class="mono">footscan serve</span>.</p></div>`;
       return;
     }
+    all = captures;
+    // not listed (an error): the menu then asks for the default, so the studio applies it or says why
+    saved = shoesOk ? shoes : UNLISTED;
     render();
     if (location.hash) document.getElementById(location.hash.slice(1))?.scrollIntoView({ block: "center" });
   }
 
   let saved = { shoes: [], default: null };
   const UNLISTED = { shoes: [], default: null, unlisted: true };
+  const building = new Set();     // captures whose insole is being made now (from this page)
+  let onlyAttention = false;      // show only the scans whose insole needs making again (or failed)
+  let remaking = null;            // {done, of} while "Make them all again" runs
+  let note = "";                  // one line of news for the top of the list (a shoe saved, insoles remade)
+
+  // An insole that can't be downloaded until it's made again: it no longer matches what it was made from
+  // (STALE_MESSAGES on the server says why), or the last attempt failed
+  const needsAttention = (c) => Boolean(c.insole?.stale || c.insole?.error);
+  const STALE_SHORT = {
+    model: "the 3D model was replaced or rebuilt", shoe: "the shoe it was cut to was saved again or removed",
+    prep: "the way sole scans are prepared has changed", outline: "cut to the foot's own outline, from before the generic outline",
+  };
+
+  function renderAttention() {
+    const stale = all.filter((c) => c.insole?.stale), failed = all.filter((c) => c.insole?.error);
+    const why = {};
+    for (const c of stale) why[c.insole.stale_reason] = (why[c.insole.stale_reason] || 0) + 1;
+    const n = stale.length + failed.length;
+    const parts = [];
+    if (note) parts.push(`<div class="callout brand" style="margin-bottom:12px"><p>${esc(note)}</p></div>`);
+    if (n || onlyAttention) {
+      const reasons = Object.entries(why).map(([k, m]) => `${esc(STALE_SHORT[k] || "it no longer matches")} (${m})`).join("; ");
+      parts.push(`<div class="callout warn" style="margin-bottom:16px">
+        <p><strong>${n === 0 ? "Every insole is up to date." : `${n} insole${n === 1 ? "" : "s"} can't be downloaded until made again`}</strong>
+        ${stale.length ? `<br><span class="hint">${stale.length} out of date: ${reasons}.</span>` : ""}
+        ${failed.length ? `<br><span class="hint">${failed.length} failed the last time; the card says why.</span>` : ""}
+        ${remaking ? `<br><span class="hint">Making them again: ${remaking.done} of ${remaking.of} done…</span>` : ""}</p>
+        <p class="btn-row" style="margin:10px 0 0">
+          ${stale.length ? `<button class="btn" type="button" id="remake-all" ${remaking || building.size ? "disabled" : ""}>Make the out-of-date ones again</button>` : ""}
+          <button class="btn secondary" type="button" id="only-attention" aria-pressed="${onlyAttention}">${onlyAttention ? "Show every scan" : "Show only these"}</button></p>
+        <p class="hint" style="margin:8px 0 0">Each is made again with the outline and length it was made with (the card's menu shows which).</p></div>`);
+    }
+    $("attention").innerHTML = parts.join("");
+  }
 
   function render() {
     const cond = $("f-cond").value, foot = $("f-foot").value;
@@ -89,7 +122,9 @@
       return `<span class="badge ${cls}">${k}: ${n}/10 · ${sessions} session${sessions === 1 ? "" : "s"}</span>`;
     }).join("");
 
-    const rows = all.filter((c) => (!cond || c.condition === cond) && (!foot || c.foot === foot));
+    renderAttention();
+    const rows = all.filter((c) => (!cond || c.condition === cond) && (!foot || c.foot === foot)
+      && (!onlyAttention || needsAttention(c)));
     if (!rows.length) {
       $("list").innerHTML = `<div class="card" style="text-align:center;padding:40px">
         <h3>No captures yet</h3><p class="muted">Real captures you save from the capture page appear here.</p>
@@ -130,13 +165,15 @@
           ${c.foot && (c.frame_files?.length || c.mesh)
             ? `<a class="btn secondary" href="/studio/landmarks.html?capture=${encodeURIComponent(c.capture_id)}">Landmarks</a>` : ""}
           ${c.condition === "shoe_insole" && c.mesh
-            ? `<button class="btn secondary" type="button" data-save-shoe="${esc(c.capture_id)}">Save as a shoe</button>` : ""}
+            ? `<button class="btn secondary" type="button" data-save-shoe="${esc(c.capture_id)}" aria-expanded="false">Save as a shoe</button>` : ""}
           ${c.foot && (c.frame_files?.length || c.mesh)
             ? `${shoePicker(c)}<span class="shoe-len"><input type="number" inputmode="decimal" min="150" max="360" step="1"
                  placeholder="shoe insole, mm" aria-label="Shoe insole length in mm (optional)" data-length-for="${esc(c.capture_id)}"
                  value="${c.insole && !c.insole.error ? (c.insole.shoe_length_mm ?? "") : outlineChoice(c) === "generic" ? lastShoeLength() : ""}" style="width:9.5em" ${takesLength(outlineChoice(c)) ? "" : "disabled"}></span>
-               <button class="btn secondary" type="button" data-insole="${esc(c.capture_id)}">${c.insole && !c.insole.error ? "Remake insole" : "Make insole"}</button>
+               <button class="btn secondary" type="button" data-insole="${esc(c.capture_id)}" ${building.has(c.capture_id) ? "disabled" : ""}>${
+                 building.has(c.capture_id) ? "Making the insole…" : c.insole && !c.insole.error ? "Remake insole" : "Make insole"}</button>
                <a class="btn secondary" href="/studio/clog.html?capture=${encodeURIComponent(c.capture_id)}">${c.clog && !c.clog.error ? "Printed shoe" : "Make printed shoe"}</a>` : ""}</p>
+        ${c.condition === "shoe_insole" && c.mesh ? saveShoeForm(c) : ""}
         <div class="insole-out" id="insole-${esc(c.capture_id)}">${c.insole ? insoleHtml(c.capture_id, c.insole) : ""}</div>
         ${clogHtml(c)}
         ${compareHtml(c)}
@@ -207,28 +244,50 @@
     }
   });
 
-  // Save a shoe's-insole scan as a saved shoe: its outline, kept for that shoe model and size
-  document.addEventListener("click", async (e) => {
-    const btn = e.target.closest("[data-save-shoe]");
+  // Save a shoe's-insole scan as a saved shoe: its outline, kept for that shoe model and size. A small form on the
+  // card (not the browser's prompt boxes, which a phone shows one at a time over the page)
+  function saveShoeForm(c) {
+    const id = esc(c.capture_id);
+    return `<form class="card" data-save-shoe-form="${id}" hidden style="margin-top:10px;padding:12px;display:grid;gap:10px">
+      <div class="field"><label for="shoe-name-${id}">Which shoe is this insole from?</label>
+        <input id="shoe-name-${id}" name="name" type="text" maxlength="60" required placeholder="e.g. ASICS Gel Resolution X"></div>
+      <div class="field"><label for="shoe-size-${id}">Which size?</label>
+        <input id="shoe-size-${id}" name="size" type="text" maxlength="24" required placeholder="e.g. US men's 9.5"></div>
+      <label style="display:flex;gap:8px;align-items:center"><input type="checkbox" name="default" style="width:auto">
+        Make it the default: new insoles take this shoe's outline unless another is chosen</label>
+      <p class="btn-row" style="margin:0"><button class="btn" type="submit">Save the shoe</button>
+        <button class="btn secondary" type="button" data-save-shoe-cancel>Cancel</button></p>
+      <p class="hint" role="status" style="margin:0"></p></form>`;
+  }
+
+  document.addEventListener("click", (e) => {
+    const btn = e.target.closest("[data-save-shoe], [data-save-shoe-cancel]");
     if (!btn) return;
-    const name = prompt("Which shoe is this insole from? (e.g. ASICS Gel Resolution X)");
-    if (!name) return;
-    const size = prompt("Which size? (e.g. US men's 9.5)");
-    if (!size) return;
-    const makeDefault = confirm("Make it the default? New insoles then take this shoe's outline unless you choose another.");
-    btn.disabled = true;
-    try {
-      const r = await fetch("/api/shoes", { method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ capture: btn.dataset.saveShoe, name, size, default: makeDefault }) });
-      const out = await r.json();
-      if (!r.ok) throw new Error(out.error || r.status);
-      await load(); // the captures too: insoles cut to an earlier save of this shoe are stale now
-      alert(`Saved: ${out.name}, ${out.size} (${out.length_mm} × ${out.width_mm} mm).`);
-    } catch (err) {
-      alert(`Couldn't save the shoe: ${err.message}`);
-    } finally {
-      btn.disabled = false;
-    }
+    const form = btn.dataset.saveShoe
+      ? document.querySelector(`[data-save-shoe-form="${CSS.escape(btn.dataset.saveShoe)}"]`) : btn.closest("form");
+    if (!form) return;
+    form.hidden = !form.hidden;
+    const opener = document.querySelector(`[data-save-shoe="${CSS.escape(form.dataset.saveShoeForm)}"]`);
+    opener?.setAttribute("aria-expanded", String(!form.hidden));
+    if (!form.hidden) form.elements.name.focus();
+  });
+
+  document.addEventListener("submit", async (e) => {
+    const form = e.target.closest("[data-save-shoe-form]");
+    if (!form) return;
+    e.preventDefault();
+    const msg = form.querySelector("[role=status]");
+    const name = form.elements.name.value.trim(), size = form.elements.size.value.trim();
+    if (!name || !size) { msg.textContent = "Say which shoe and which size."; return; }
+    const submit = form.querySelector("button[type=submit]");
+    submit.disabled = true;
+    msg.textContent = "Reading the insole's outline…";
+    const [ok, out] = await ask("/api/shoes", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ capture: form.dataset.saveShoeForm, name, size, default: form.elements.default.checked }) });
+    submit.disabled = false;
+    if (!ok) { msg.textContent = `Couldn't save the shoe: ${out.error || "the studio refused"}`; return; }
+    note = `Saved: ${out.name}, ${out.size} (${out.length_mm} × ${out.width_mm} mm)${form.elements.default.checked ? ", the default for new insoles" : ""}.`;
+    await load(); // the captures too: insoles cut to an earlier save of this shoe are stale now
   });
 
   // Repeatability: compare this scan with another of the same foot (recon/compare.py)
@@ -252,16 +311,11 @@
     const out = document.getElementById(`compare-${a}`);
     btn.disabled = true;
     out.textContent = "Comparing the two scans…";
-    try {
-      const r = await fetch("/api/compare", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ a, b }) });
-      const res = await r.json();
-      if (!r.ok || res.error) throw new Error(res.error || r.status);
-      out.textContent = `${res.verdict} (95% within ${res.p95_mm} mm; average difference ${res.bias_mm} mm; ${res.points} points)`;
-    } catch (err) {
-      out.textContent = `Couldn't compare: ${err.message}`;
-    } finally {
-      btn.disabled = false;
-    }
+    const [ok, res] = await ask("/api/compare", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ a, b }) });
+    out.textContent = ok && !res.error
+      ? `${res.verdict} (95% within ${res.p95_mm} mm; average difference ${res.bias_mm} mm; ${res.points} points)`
+      : `Couldn't compare: ${res.error || "the studio refused"}`;
+    btn.disabled = false;
   });
 
   // The printed shoe (a clog) made from this capture (its own page makes it and shows it): one line here, so the
@@ -281,7 +335,7 @@
   function insoleHtml(id, r) {
     if (r.error) return `<p class="hint" style="color:var(--warn);margin:8px 0 0">${esc(r.error)}</p>`;
     if (r.stale) return `<p class="hint" style="color:var(--warn);margin:8px 0 0">${esc(r.stale_message || "This insole no longer matches what it was made from.")}
-      Press Make insole to make it again.</p>`;
+      Press Remake insole to make it again.</p>`;
     const base = `/api/captures/${encodeURIComponent(id)}/insole/`;
     const warn = (r.warnings || []).map((w) => `<li>${esc(w)}</li>`).join("");
     return `<div class="card" style="margin-top:10px;padding:12px">
@@ -308,42 +362,77 @@
     </div>`;
   }
 
+  // The request for an insole with this outline choice (the menu's value) and shoe's insole length (mm, or "")
+  function insoleRequest(c, pick, len) {
+    // the outline: a shoe's (saved, or a scanned insole), fitted round the foot; or the generic insole outline
+    // or the foot's own, each with the shoe's insole length if given (the generic one is scaled to it as a
+    // whole; the foot's own is lengthened at the front, the foot-shaped part unchanged)
+    const id = c.capture_id;
+    const length = len ? { length_mm: Number(len) } : {};
+    return pick?.startsWith("saved:") ? { saved_shoe: pick.slice(6) }
+      : pick?.startsWith("scan:") ? { shoe: pick.slice(5) }
+      : pick === "foot" ? { foot_outline: true, ...length }
+      // the generic outline only because nothing else was chosen (no default saved shoe): don't say generic, so
+      // the insole follows a default shoe saved later; chosen on purpose (now or for the last insole): say so
+      : pick === "generic" ? { ...length, ...(picked[id] === "generic" || c.insole?.outline === "generic"
+        ? { generic: true } : {}) } : {};
+  }
+
+  // Make (or remake) one capture's insole; its card shows the result. The button counts the seconds meanwhile.
+  async function makeInsole(c, pick, len) {
+    const id = c.capture_id;
+    building.add(id);
+    const t0 = Date.now();
+    const button = () => document.querySelector(`[data-insole="${CSS.escape(id)}"]`);
+    const tick = () => { const b = button(); if (b) { b.disabled = true; b.textContent = `Making the insole… ${Math.round((Date.now() - t0) / 1000)} s`; } };
+    tick();
+    const timer = setInterval(tick, 1000);
+    const [ok, out] = await ask(`/api/captures/${encodeURIComponent(id)}/insole`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(insoleRequest(c, pick, len)),
+    });
+    clearInterval(timer);
+    building.delete(id);
+    // remembered only once an insole was made with it (a refused length isn't offered again)
+    if (ok && !out.error && len && takesLength(pick ?? "generic")) rememberShoeLength(len);
+    // Keep the result with the capture, then redraw from that, so filtering (even
+    // mid-build) neither loses it nor brings back an older one.
+    c.insole = ok ? out : { error: `Couldn't make it: ${out.error || "the studio refused"}` };
+    render();
+    return !c.insole.error;
+  }
+
   document.addEventListener("click", async (e) => {
     const btn = e.target.closest("[data-insole]");
     if (!btn) return;
     const id = btn.dataset.insole;
     const capture = all.find((c) => c.capture_id === id);
-    btn.disabled = true;
-    btn.textContent = "Making the insole…";
-    let result;
-    try {
-      // the outline: a shoe's (saved, or a scanned insole), fitted round the foot; or the generic insole outline
-      // or the foot's own, each with the shoe's insole length if given (the generic one is scaled to it as a
-      // whole; the foot's own is lengthened at the front, the foot-shaped part unchanged)
-      const len = document.querySelector(`[data-length-for="${CSS.escape(id)}"]`)?.value.trim();
-      const pick = document.querySelector(`[data-shoe-for="${CSS.escape(id)}"]`)?.value;
-      const length = len ? { length_mm: Number(len) } : {};
-      const body = pick?.startsWith("saved:") ? { saved_shoe: pick.slice(6) }
-        : pick?.startsWith("scan:") ? { shoe: pick.slice(5) }
-        : pick === "foot" ? { foot_outline: true, ...length }
-        // the generic outline only because nothing else was chosen (no default saved shoe): don't say generic, so
-        // the insole follows a default shoe saved later; chosen on purpose (now or for the last insole): say so
-        : pick === "generic" ? { ...length, ...(picked[id] === "generic" || capture?.insole?.outline === "generic"
-          ? { generic: true } : {}) } : {};
-      const r = await fetch(`/api/captures/${encodeURIComponent(id)}/insole`, {
-        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
-      });
-      const out = await r.json();
-      if (!r.ok) throw new Error(out.error || r.status);
-      result = out;
-      // remembered only once an insole was made with it (a refused length isn't offered again)
-      if (len && takesLength(pick ?? "generic")) rememberShoeLength(len);
-    } catch (err) {
-      result = { error: `Couldn't make it: ${err.message}` };
+    if (!capture || building.has(id)) return;
+    const len = document.querySelector(`[data-length-for="${CSS.escape(id)}"]`)?.value.trim();
+    const pick = document.querySelector(`[data-shoe-for="${CSS.escape(id)}"]`)?.value;
+    note = "";
+    await makeInsole(capture, pick, len);
+  });
+
+  // Every out-of-date insole made again, one at a time (each takes the studio a few seconds and the whole
+  // computer's attention), each with the outline and length its card shows
+  document.addEventListener("click", async (e) => {
+    if (e.target.closest("#only-attention")) { onlyAttention = !onlyAttention; render(); return; }
+    if (!e.target.closest("#remake-all") || remaking) return;
+    const todo = all.filter((c) => c.insole?.stale && !building.has(c.capture_id));
+    remaking = { done: 0, of: todo.length };
+    note = "";
+    render();
+    let failed = 0;
+    for (const c of todo) {
+      const pick = outlineChoice(c);
+      const len = takesLength(pick) ? String(c.insole?.shoe_length_mm ?? "") : "";
+      if (!(await makeInsole(c, pick, len))) failed += 1;
+      remaking.done += 1;
+      render();
     }
-    // Keep the result with the capture, then redraw from that, so filtering (even
-    // mid-build) neither loses it nor brings back an older one.
-    if (capture) capture.insole = result;
+    remaking = null;
+    note = `Made ${todo.length - failed} insole${todo.length - failed === 1 ? "" : "s"} again`
+      + (failed ? `; ${failed} couldn't be made (the card says why).` : ".");
     render();
   });
 

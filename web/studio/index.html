@@ -46,10 +46,10 @@
     <a class="btn secondary" href="/?demo=1" target="_blank">Preview scan page (demo)</a>
   </div>
 
-  <div class="callout warn" style="margin-bottom:18px">
-    <p><strong>CAD output isn't built yet.</strong> Scans arrive here, but turning them into a printable TPU insole
-      needs reconstruction, landmarks and the generator (Phases 2–4), and the Phase 0 repeatability gate has to pass
-      first. Until then, no submission can produce an insole.</p>
+  <div class="callout brand" style="margin-bottom:18px">
+    <p><strong>Photo scans from the scan page arrive here.</strong> Insoles are made in the
+      <a href="/studio/captures.html">capture library</a>, from 3D scans the iPhone app sends (or Import 3D); a
+      submission's photos can be built into a 3D model on its page, but not into an insole yet.</p>
   </div>
 
   <div class="table-wrap">
@@ -61,20 +61,20 @@
 </main>
 <script type="module" src="/assets/layout.js"></script>
 <script type="module">
-  import { STATUS, esc, fmtDate } from "/assets/studio.js";
+  import { STATUS, ask, esc, fmtDate } from "/assets/studio.js";
   const $ = (id) => document.getElementById(id);
   let all = [], filter = "received";
 
-  fetch("/api/studio").then((r) => r.json()).then((info) => {
-    $("share").innerHTML = info.phones_can_connect
+  ask("/api/studio").then(([ok, info]) => {
+    $("share").innerHTML = !ok ? `Couldn't ask the studio: ${esc(info.error)}` : info.phones_can_connect
       ? `Send people to <strong class="mono">${esc(info.scan_url)}</strong> (same Wi-Fi). They'll see a certificate warning once.`
       : `Phones can't reach this server yet. Stop it and restart with <span class="mono">footscan serve --host 0.0.0.0 --https</span>.`;
   });
 
   async function load() {
-    const r = await fetch("/api/submissions");
-    if (!r.ok) { $("rows").innerHTML = `<tr><td colspan="7">Can't load submissions (${r.status}).</td></tr>`; return; }
-    all = await r.json();
+    const [ok, list] = await ask("/api/submissions");
+    if (!ok) { $("rows").innerHTML = `<tr><td colspan="7">Can't load submissions: ${esc(list.error || "the studio refused")}.</td></tr>`; return; }
+    all = list;
     for (const b of $("tabs").querySelectorAll("button")) {
       const n = b.dataset.status ? all.filter((s) => s.status === b.dataset.status).length : all.length;
       b.textContent = `${b.textContent.replace(/ \(\d+\)$/, "")} (${n})`;

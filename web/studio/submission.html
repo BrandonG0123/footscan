@@ -150,13 +150,14 @@
                 <div><strong>Scans received</strong><p>${received ? fmtDate(s.submitted) : "Waiting for the person to send."}</p></div></li>
               <li class="blocked"><span class="dot"></span>
                 <div><strong>Measurement check</strong><p>Phase 0 repeatability gate. Not yet passed.</p></div></li>
+              <li><span class="dot"></span>
+                <div><strong>Build 3D foot</strong><p>Each scan's <strong>3D model</strong> button builds it from the photos
+                  (photo reconstruction; not yet checked on real scans).</p></div></li>
+              <li><span class="dot"></span>
+                <div><strong>Mark landmarks</strong><p>Each scan's <strong>Landmarks</strong> button, once its 3D model is built.</p></div></li>
               <li class="blocked"><span class="dot"></span>
-                <div><strong>Build 3D foot</strong><p>Reconstruction, Phase 2. Not built yet.</p></div></li>
-              <li class="blocked"><span class="dot"></span>
-                <div><strong>Mark landmarks</strong><p>Phase 3. Not built yet.</p></div></li>
-              <li class="blocked"><span class="dot"></span>
-                <div><strong>Generate insole</strong><p>TPU print file, Phase 4. Not built yet.</p>
-                  <button class="btn secondary" disabled style="margin-top:8px;min-height:36px;padding:6px 14px">Download print file</button></div></li>
+                <div><strong>Generate insole</strong><p>Not from a submission yet. Insoles are made in the
+                  <a href="/studio/captures.html">capture library</a>, from 3D scans sent by the iPhone app or imported.</p></div></li>
               <li class="blocked"><span class="dot"></span>
                 <div><strong>Clinician check</strong><p>Summary sheet for sign-off before sport.</p></div></li>
               <li class="blocked"><span class="dot"></span>
