@@ -189,6 +189,34 @@ the simulator (see *Tests*).
 - **Several people's scans.** *Name this scan* (a card's menu, or the pencil
   on its page) gives a scan a name, kept on the phone only. A scan again of a
   named scan carries its name.
+- **Battery low.** Below 20%, the home screen says so before the camera
+  opens, with *Scan anyway* or *Not now*: a capture and a model build use a
+  lot of power, and a phone that dies partway loses the capture.
+- **A capture that stops by itself.** The screen says why when it can tell
+  (the phone nearly full, or hot), how many photos were kept, and what to do
+  next. With no photos kept, Back leaves nothing behind.
+- **Lost track, or plenty from one angle.** Besides light, speed and distance,
+  the capture says when Object Capture has lost what it was scanning and when
+  it has plenty of photos from where the phone is.
+- **A model build cut off.** The model is written to a working name and only
+  put in place once it is whole, so a build that stops partway never leaves
+  half a model behind.
+- **Photos + mat page problems.** If the studio's page can't be reached, or
+  iOS stops it because the phone is short of memory, the screen says which,
+  with *Try again*. If the studio answers with a different certificate from
+  the one the phone paired with, it says that and how to pair again. The
+  screen stays on while the page is open, since nobody touches it while it
+  takes photos.
+- **Connecting when the code is on this phone's screen.** *Use a screenshot of
+  the code* reads the studio's code from a picture (for example, the tank
+  seen through RustDesk on the iPhone). The app then says to delete the
+  screenshot: the code in it holds the studio's key.
+- **Scale in pounds.** The scale-reading box for a seated foot scan has a
+  kg / lb switch (it starts from the phone's region). Pounds are turned into
+  kilograms before anything is sent, and the box shows the kg figure the
+  studio will get.
+- **Delete all.** Settings' *Delete all scans* says how many scans haven't
+  been sent to the studio, and so will be gone for good.
 
 ## What this decides
 
