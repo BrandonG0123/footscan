@@ -476,6 +476,11 @@ struct StudioClient {
     }
 
     private func send(_ req: URLRequest, timeout: TimeInterval = 20) async throws -> [String: Any] {
+        try await sendForJSON(req, timeout: timeout) as? [String: Any] ?? [:]
+    }
+
+    /// The studio's answer as whatever JSON it is (a list, for api/captures).
+    private func sendForJSON(_ req: URLRequest, timeout: TimeInterval = 20) async throws -> Any {
         let (s, trust) = session(timeout: timeout)
         defer { s.finishTasksAndInvalidate() }
         let data: Data, response: URLResponse
@@ -486,9 +491,9 @@ struct StudioClient {
             throw Failure.unreachable([Missed(address: link.url, miss: Miss(error, pinRefused: trust.refusedCertificate))],
                                       pinned: link.fingerprint != nil)
         }
-        let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
+        let json = (try? JSONSerialization.jsonObject(with: data)) ?? [String: Any]()
         let code = (response as? HTTPURLResponse)?.statusCode ?? 0
-        guard (200..<300).contains(code) else { throw Failure.from(status: code, json: json) }
+        guard (200..<300).contains(code) else { throw Failure.from(status: code, json: json as? [String: Any] ?? [:]) }
         return json
     }
 
@@ -555,8 +560,11 @@ struct StudioClient {
     /// `link`: the studio, with the address the scan went to as the one in use.
     struct Sent { var captureID: String; var accuracy: StudioAccuracy?; var link: StudioLink }
 
-    /// Make a research capture for this scan and upload its model, at whichever address answers.
-    func upload(_ scan: Scan, record: ScanRecord) async throws -> Sent {
+    /// Make a research capture for this scan and upload its model, at whichever address answers. `created` is told
+    /// the new capture's id as soon as the studio makes it, so a try that fails after that can be finished by the next
+    /// (`into`: the capture an earlier try made at this studio; see `existingCapture`).
+    func upload(_ scan: Scan, record: ScanRecord, into existing: String? = nil,
+                created: @escaping @MainActor @Sendable (String) -> Void = { _ in }) async throws -> Sent {
         // A quick hello first: a studio that isn't there fails in seconds, not after a long upload timeout.
         let here: StudioClient
         do {
@@ -566,7 +574,7 @@ struct StudioClient {
             throw Failure.dropped(host: link.host)
         }
         do {
-            return try await here.uploadHere(scan, record: record)
+            return try await here.uploadHere(scan, record: record, into: existing, created: created)
         } catch Failure.unreachable {
             throw Failure.dropped(host: here.link.host) // it answered the hello: not a question of which Wi-Fi
         } catch is CancellationError {
@@ -575,7 +583,48 @@ struct StudioClient {
         }
     }
 
-    private func uploadHere(_ scan: Scan, record: ScanRecord) async throws -> Sent {
+    private func uploadHere(_ scan: Scan, record: ScanRecord, into existing: String?,
+                            created: @escaping @MainActor @Sendable (String) -> Void) async throws -> Sent {
+        if let existing {
+            switch try await existingCapture(existing) {
+            case .waiting: return try await sendModel(scan, into: existing)
+            case .done(let accuracy): return Sent(captureID: existing, accuracy: accuracy, link: link)
+            case .gone: break // removed in the studio meanwhile: a new one, below
+            }
+        }
+        let id = try await createCapture(record)
+        await created(id)
+        return try await sendModel(scan, into: id)
+    }
+
+    /// Where a capture an earlier try made stands in the studio.
+    enum ExistingCapture: Equatable {
+        /// Still waiting for its model: send it.
+        case waiting
+        /// It has a model already (the earlier upload got there and only its answer was lost), or something was made
+        /// from it: it's sent. Never sent into again: a new model would replace an insole or shoe made from it.
+        case done(StudioAccuracy?)
+        /// The studio doesn't have it.
+        case gone
+    }
+
+    /// Read from the studio's list of captures (api/captures, what the studio's own pages read).
+    private func existingCapture(_ id: String) async throws -> ExistingCapture {
+        let list = try await sendForJSON(request("api/captures")) as? [[String: Any]] ?? []
+        return Self.existing(id, in: list)
+    }
+
+    static func existing(_ id: String, in list: [[String: Any]]) -> ExistingCapture {
+        guard let meta = list.first(where: { $0["capture_id"] as? String == id }) else { return .gone }
+        let has = { (key: String) in meta[key] != nil && !(meta[key] is NSNull) }
+        guard (meta["status"] as? String) == "complete" || has("mesh") || has("insole") || has("clog") else { return .waiting }
+        let accuracy = meta["accuracy"].flatMap { $0 is NSNull ? nil : try? JSONSerialization.data(withJSONObject: $0) }
+            .flatMap { try? JSONDecoder().decode(StudioAccuracy.self, from: $0) }
+        return .done(accuracy)
+    }
+
+    /// The studio's research capture for this scan: what was scanned, how, on what phone. -> its id.
+    private func createCapture(_ record: ScanRecord) async throws -> String {
         let (condition, foot) = record.subject.studioCondition
         var setup: [String: Any] = [
             "condition": condition, "session": "LIDAR", "method": "imported_mesh",
@@ -589,6 +638,11 @@ struct StudioClient {
         let created = try await send(request("api/captures", method: "POST",
                                              body: try JSONSerialization.data(withJSONObject: setup)))
         guard let id = created["id"] as? String else { throw Failure.refused("no capture id came back") }
+        return id
+    }
+
+    /// Upload the model into capture `id` (one still waiting for its model: see `existingCapture`).
+    private func sendModel(_ scan: Scan, into id: String) async throws -> Sent {
         let obj = try Data(contentsOf: scan.obj)
         let answer = try await send(request("api/captures/\(id)/mesh", method: "PUT",
                                             query: [URLQueryItem(name: "ext", value: "obj"), URLQueryItem(name: "up", value: "y")],

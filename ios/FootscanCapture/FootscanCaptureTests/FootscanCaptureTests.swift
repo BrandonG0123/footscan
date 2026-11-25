@@ -319,6 +319,106 @@ struct ConnectionTestFailures {
     }
 }
 
+// MARK: - a send that dropped, tried again
+
+@Suite("A send that dropped, tried again")
+struct DroppedSends {
+    let pin = String(repeating: "cd", count: 32)
+    var studio: StudioLink { StudioLink(url: URL(string: "https://192.168.11.233:8766")!, fingerprint: pin,
+                                        alternates: [URL(string: "https://100.113.53.83:8766")!]) }
+
+    private func record(loadKg: Double? = nil) -> ScanRecord {
+        var rec = ScanRecord(subject: .rightSole, created: Date(timeIntervalSince1970: 1_800_000_000), device: "test",
+                             systemVersion: "0", appVersion: "0")
+        rec.loadKg = loadKg
+        return rec
+    }
+
+    @Test func aCaptureStillWaitingForItsModelIsSentInto() {
+        let list: [[String: Any]] = [["capture_id": "LIDAR_nwb_relaxed_R_1", "status": "uploading"],
+                                     ["capture_id": "LIDAR_nwb_relaxed_R_2", "status": "complete", "mesh": ["file": "mesh.ply"]]]
+        #expect(StudioClient.existing("LIDAR_nwb_relaxed_R_1", in: list) == .waiting)
+    }
+
+    @Test func aCaptureThatAlreadyHasAModelIsTakenAsSentAndNeverSentIntoAgain() {
+        // the earlier upload got there and only its answer was lost; or an insole was made from it since:
+        // sending a model again would replace it, and the studio would remove the insole made from the old one
+        let done: [[String: Any]] = [["capture_id": "C1", "status": "complete", "mesh": ["file": "mesh.ply"],
+                                      "accuracy": ["median_mm": 1.0, "reference": "model"]]]
+        guard case .done(let acc) = StudioClient.existing("C1", in: done) else { Issue.record("not taken as sent"); return }
+        #expect(acc?.median_mm == 1.0)
+        #expect(StudioClient.existing("C2", in: [["capture_id": "C2", "status": "uploading", "insole": ["file": "x"]]]) == .done(nil))
+        #expect(StudioClient.existing("C3", in: [["capture_id": "C3", "status": "uploading", "clog": ["file": "x"]]]) == .done(nil))
+    }
+
+    @Test func aCaptureTheStudioNoLongerHasMeansANewOne() {
+        #expect(StudioClient.existing("C1", in: []) == .gone)
+        #expect(StudioClient.existing("C1", in: [["capture_id": "C9", "status": "uploading"]]) == .gone)
+    }
+
+    @Test func theNextTryUsesTheCaptureTheStudioAlreadyMadeAtWhicheverAddressItAnswers() {
+        var rec = record()
+        rec.pendingCapture = PendingCapture(id: "LIDAR_nwb_relaxed_R_1", studio: PendingCapture.identity(of: studio), loadKg: nil)
+        #expect(rec.reusableCapture(at: studio) == "LIDAR_nwb_relaxed_R_1")
+        // the same studio over Tailscale is the same studio
+        #expect(rec.reusableCapture(at: studio.using(studio.alternates[0])) == "LIDAR_nwb_relaxed_R_1")
+    }
+
+    @Test func anotherStudiosCaptureIsNeverUsed() {
+        var rec = record()
+        rec.pendingCapture = PendingCapture(id: "LIDAR_nwb_relaxed_R_1", studio: PendingCapture.identity(of: studio), loadKg: nil)
+        let other = StudioLink(url: studio.url, fingerprint: String(repeating: "ef", count: 32))
+        #expect(rec.reusableCapture(at: other) == nil)
+    }
+
+    @Test func aDifferentScaleReadingNeedsANewCapture() {
+        var rec = record(loadKg: 31.5)
+        rec.pendingCapture = PendingCapture(id: "LIDAR_swb_R_1", studio: PendingCapture.identity(of: studio), loadKg: 30)
+        #expect(rec.reusableCapture(at: studio) == nil)
+        rec.loadKg = 30
+        #expect(rec.reusableCapture(at: studio) == "LIDAR_swb_R_1")
+    }
+
+    @Test func thePendingCaptureIsKeptWithTheScanAndOlderRecordsStillRead() throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString, directoryHint: .isDirectory)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let scan = Scan(folder: root)
+        var rec = record()
+        rec.pendingCapture = PendingCapture(id: "LIDAR_nwb_relaxed_R_1", studio: pin, loadKg: nil)
+        scan.save(rec)
+        #expect(scan.record?.pendingCapture == rec.pendingCapture)
+        // a record written before pending captures existed reads, with none
+        let old = #"{"subject":"right-sole","created":"2026-11-20T10:00:00Z","device":"iPhone18,1","systemVersion":"26.1","appVersion":"1.0","modelBuiltOnPhone":true,"units":"m","note":"n"}"#
+        try Data(old.utf8).write(to: scan.recordURL)
+        #expect(scan.record != nil && scan.record?.pendingCapture == nil)
+    }
+}
+
+// MARK: - the phone's network changing
+
+@Suite("Trying waiting scans when the network changes")
+struct NetworkChanges {
+    typealias Sig = NetworkWatch.Signature
+    let cellular = Sig(satisfied: true, wifi: false, cellular: true, wired: false, other: false)
+    let wifi = Sig(satisfied: true, wifi: true, cellular: false, wired: false, other: false)
+    let none = Sig(satisfied: false, wifi: false, cellular: false, wired: false, other: false)
+
+    @Test func joiningWiFiOrTurningTailscaleOnIsWorthATry() {
+        #expect(NetworkWatch.worthTrying(from: cellular, to: wifi))  // home again
+        var tailscale = cellular
+        tailscale.other = true  // a VPN comes up as another kind of path
+        #expect(NetworkWatch.worthTrying(from: cellular, to: tailscale))
+        #expect(NetworkWatch.worthTrying(from: none, to: cellular))
+    }
+
+    @Test func losingTheNetworkTheFirstReadingAndNoChangeAreNot() {
+        #expect(!NetworkWatch.worthTrying(from: wifi, to: none))
+        #expect(!NetworkWatch.worthTrying(from: nil, to: wifi))  // just launched: nothing changed yet
+        #expect(!NetworkWatch.worthTrying(from: wifi, to: wifi))
+    }
+}
+
 // MARK: - the studio refusing an incomplete scan
 
 @Suite("Incomplete scans")

@@ -265,8 +265,17 @@ final class ScanLibrary {
         work[scan.folder] = .sending
         let release = KeepAlive.work("Sending a scan")
         defer { work[scan.folder] = nil; reload(); release() }
+        let reuse = record.reusableCapture(at: client.link)
+        let studioID = PendingCapture.identity(of: client.link), loadKg = record.loadKg
         do {
-            let sent = try await client.upload(scan, record: record)
+            let sent = try await client.upload(scan, record: record, into: reuse) { id in
+                // kept as soon as the studio makes it: whatever happens next (a drop, a refusal, the app ended), the
+                // next try finishes this capture rather than leaving it empty and making another
+                guard var latest = scan.record else { return }
+                latest.pendingCapture = PendingCapture(id: id, studio: studioID, loadKg: loadKg)
+                scan.save(latest)
+            }
+            record.pendingCapture = nil
             record.studioCaptureID = sent.captureID
             record.studioHost = sent.link.host
             studio.remember(sent.link)
@@ -275,11 +284,19 @@ final class ScanLibrary {
             scan.save(record)
             UINotificationFeedbackGenerator().notificationOccurred(.success)
         } catch StudioClient.Failure.incomplete(let missing, let advice) {
+            record.pendingCapture = nil // the studio removed the capture it made for this upload
             record.retake = missing
             record.retakeAdvice = advice.isEmpty ? nil : advice
             scan.save(record)
             UINotificationFeedbackGenerator().notificationOccurred(.error)
         } catch {
+            // a refusal sending into a capture an earlier try made: don't keep going back to it (the next try makes a
+            // new one). A drop keeps it, as does a refusal of a capture made on this try (it's tried once more).
+            let refused = (error as? StudioClient.Failure)?.isUnreachable != true
+            if refused, let reuse, var latest = scan.record, latest.pendingCapture?.id == reuse {
+                latest.pendingCapture = nil
+                scan.save(latest)
+            }
             problems[scan.folder] = error.localizedDescription
             if (error as? StudioClient.Failure)?.isUnreachable == true { unreachable.insert(scan.folder) }
             if (error as? StudioClient.Failure)?.offersReconnect == true { reconnect.insert(scan.folder) }
