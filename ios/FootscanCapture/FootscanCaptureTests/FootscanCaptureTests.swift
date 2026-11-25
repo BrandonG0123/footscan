@@ -790,6 +790,42 @@ struct CaptureCoachingTests {
     }
 }
 
+// MARK: - the calibration object's score
+
+@Suite("The calibration object's score")
+struct CalibrationScore {
+    @Test func theStudiosAnswerIsReadWithItsWarningsAndWhatItWasComparedWith() throws {
+        // the shape of recon/imported.py summarize(), extra keys and all (SYNTHETIC numbers, not a scan's)
+        let json = #"""
+        {"median_mm": 1.0, "p95_mm": 2.0, "signed_mean_mm": 0.5, "within_1mm": 0.5, "scan_within_2mm": 0.5,
+         "length_mm": 1.0, "width_mm": 1.0, "dome_apex_mm": -1.0, "scale_pct": 1.35, "reference": "model",
+         "floor": "made up below the base", "warnings": ["the phone made up the bottom"]}
+        """#
+        let acc = try JSONDecoder().decode(StudioAccuracy.self, from: Data(json.utf8))
+        #expect(acc.scale_pct == 1.35 && acc.warnings == ["the phone made up the bottom"])
+    }
+
+    @Test func withCaliperReadingsTheNoteSaysEachSizeMayStillBeAgainstTheDesign() {
+        // the studio marks the whole score "calipers" once any reading is typed in; sizes without one use the design
+        #expect(AccuracyCard.referenceNote("calipers").contains("where you typed one in"))
+        #expect(AccuracyCard.referenceNote("model").contains("design"))
+        #expect(AccuracyCard.referenceNote(nil) == AccuracyCard.referenceNote("model"))
+    }
+
+    @Test func anAnswerSavedBeforeTheWarningsStillReads() throws {
+        let acc = try JSONDecoder().decode(StudioAccuracy.self, from: Data(#"{"median_mm": 0.7, "reference": "model"}"#.utf8))
+        #expect(acc.warnings == nil && acc.scale_pct == nil && acc.median_mm == 0.7)
+    }
+
+    @Test func theOverallSizeSaysWhichWay() {
+        #expect(AccuracyCard.percent(0.9) == "+0.9%")
+        #expect(AccuracyCard.percent(-1.24) == "−1.2%")
+        #expect(AccuracyCard.percent(0) == "0.0%")
+        #expect(AccuracyCard.percent(-0.04) == "0.0%")  // no direction where there's none to show
+        #expect(AccuracyCard.signed(-1.0, places: 2) == "−1.00")
+    }
+}
+
 // MARK: - free space
 
 @Suite("Free space before a capture")

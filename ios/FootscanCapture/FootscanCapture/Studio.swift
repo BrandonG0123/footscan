@@ -353,7 +353,8 @@ final class PinnedTrust: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
     }
 }
 
-/// What the studio answers about an imported calibration object.
+/// What the studio answers about an imported calibration object (recon/imported.py `summarize`). The `_mm`
+/// sizes are the scan minus the reference (the design, or the caliper readings when there are some), not the sizes.
 struct StudioAccuracy: Codable, Equatable {
     var median_mm: Double?
     var p95_mm: Double?
@@ -362,7 +363,11 @@ struct StudioAccuracy: Codable, Equatable {
     var length_mm: Double?
     var width_mm: Double?
     var dome_apex_mm: Double?
+    /// How far the scan's size is off as a whole, in percent: the mean of its length and width.
+    var scale_pct: Double?
     var reference: String?
+    /// What the studio noticed about the scan, in its own words (a made-up bottom, a size off, a part it couldn't measure).
+    var warnings: [String]?
     var error: String?
 }
 

@@ -428,12 +428,24 @@ struct AccuracyCard: View {
                     statRow("Worst 5%", mm(acc.p95_mm, signed: false))
                     statRow("Too big (+) / small (−)", mm(acc.signed_mean_mm))
                     statRow("Captured within 1 mm", acc.within_1mm.map { "\(Int(($0 * 100).rounded()))%" } ?? "—")
-                    statRow("Length", mm(acc.length_mm))
-                    statRow("Width", mm(acc.width_mm))
+                    // differences, not sizes: "+1.30 mm" is 1.3 mm longer than the design (or the calipers)
+                    statRow("Length off by", mm(acc.length_mm))
+                    statRow("Width off by", mm(acc.width_mm))
+                    if acc.dome_apex_mm != nil { statRow("Dome height off by", mm(acc.dome_apex_mm)) }
+                    if let pct = acc.scale_pct { statRow("Size overall", Self.percent(pct)) }
                 }
-                Text(acc.reference == "calipers"
-                     ? "Compared with your caliper readings of the print."
-                     : "Compared with the object's design. Add caliper readings in the studio for a fairer comparison.")
+                if let warnings = acc.warnings, !warnings.isEmpty {
+                    DisclosureGroup("What the studio noticed (\(warnings.count))") {
+                        VStack(alignment: .leading, spacing: 6) {
+                            ForEach(Array(warnings.enumerated()), id: \.offset) { _, w in
+                                Text(w).font(.footnote).foregroundStyle(Color.fsMuted)
+                            }
+                        }
+                        .padding(.top, 6)
+                    }
+                    .font(.footnote.weight(.semibold))
+                }
+                Text(Self.referenceNote(acc.reference))
                     .font(.footnote).foregroundStyle(Color.fsMuted)
             }
         }
@@ -447,8 +459,26 @@ struct AccuracyCard: View {
         }
     }
 
+    /// "+0.9%" bigger than it should be, "−1.2%" smaller.
+    static func percent(_ v: Double) -> String { Self.signed(v, places: 1) + "%" }
+
+    /// What the "off by" sizes are the scan minus. The studio says "calipers" once any reading was typed in, and
+    /// each size is then compared with its own reading if there is one, else with the design: so it says both.
+    static func referenceNote(_ reference: String?) -> String {
+        reference == "calipers"
+            ? "Off by: the scan minus your caliper reading of the print where you typed one in, else minus the object's design."
+            : "Off by: the scan minus the object's design. Type caliper readings of the print in the studio for a fairer comparison."
+    }
+
+    /// Rounded first, so a tiny difference shows as 0.0, with no sign; a true minus sign, as in "−1.2".
+    static func signed(_ v: Double, places: Int) -> String {
+        let scale = pow(10.0, Double(places))
+        let r = (v * scale).rounded() / scale
+        return (r > 0 ? "+" : r < 0 ? "−" : "") + String(format: "%.\(places)f", abs(r))
+    }
+
     private func mm(_ v: Double?, signed: Bool = true) -> String {
         guard let v else { return "—" }
-        return (signed && v > 0 ? "+" : "") + String(format: "%.2f mm", v)
+        return (signed ? Self.signed(v, places: 2) : String(format: "%.2f", v)) + " mm"
     }
 }
