@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { appRows, duration, errorsHtml, notes, size, statusHtml } from "../../web/assets/status-page.js";
+import { appRows, duration, errorsHtml, notes, size, statusHtml, titleFor } from "../../web/assets/status-page.js";
 
 const OK = {
   checkout: { commit: "36cc2ef", branch: "main" },
@@ -79,4 +79,12 @@ test("the Status page says which 3-D model is being built, escaped, or that none
   assert.match(statusHtml(st), /href="\/studio\/captures.html#LIDAR_%3Cx%3E">LIDAR_&#60;x&#62;<\/a><br><span class="muted">2026-11-25 09:00:00/);
   st.working = { model_being_built: "captures/<b>" };
   assert.match(statusHtml(st), /3D model being built<\/dt><dd class="mono">captures\/&#60;b&#62;/);
+});
+
+test("the tab's title carries how many notes there are, and drops the count once there are none", () => {
+  assert.equal(titleFor(2, "Status · Studio"), "(2) Status · Studio");
+  assert.equal(titleFor(1, "(2) Status · Studio"), "(1) Status · Studio");
+  assert.equal(titleFor(0, "(1) Status · Studio"), "Status · Studio");
+  assert.equal(titleFor("!", "(1) Status · Studio"), "(!) Status · Studio");  // couldn't ask the studio
+  assert.equal(titleFor(0, "(!) Status · Studio"), "Status · Studio");
 });

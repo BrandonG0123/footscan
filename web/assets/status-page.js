@@ -104,12 +104,21 @@ async function load() {
   $("updated").textContent = `Asked at ${new Date().toLocaleTimeString()}; asked again every ${AGAIN_S} s while this page is open.`;
   if (!ok) {
     show($("notes"), "");  // the last answer's notes aren't current any more
+    document.title = titleFor("!", document.title);
     $("root").innerHTML = `<div class="callout stop"><p>Couldn't ask the studio: ${esc(st.error || "it refused")}.</p></div>`;
     return;
   }
   const n = notes(st);
+  document.title = titleFor(n.length, document.title);
   show($("notes"), n.length ? `<div class="callout warn" style="margin:16px 0"><ul class="checklist" style="margin:0">${n.map((x) => `<li>${esc(x)}</li>`).join("")}</ul></div>` : "");
   $("root").innerHTML = statusHtml(st);
+}
+
+// The tab's title carries how many notes there are (or ! when the studio couldn't be asked), so a Status tab left
+// open in the background shows trouble
+export function titleFor(count, base) {
+  const plain = base.replace(/^\((\d+|!)\) /, "");
+  return count ? `(${count}) ${plain}` : plain;
 }
 
 // The notes are read out as they change (aria-live): rewritten only when they do, not on every ask
