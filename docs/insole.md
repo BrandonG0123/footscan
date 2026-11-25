@@ -250,7 +250,9 @@ Two more, for the sole scans:
 - **THE FOREFOOT WAS ROLLED ONTO ONE EDGE**: once the floor is set, one side
   of the ball of the foot sits more than 5 mm above the other. Standing,
   both rest on the floor, so the insole would fill under the raised side: a
-  wedge. The first real left sole-up scan had 8.6 mm (its right pair 1.2 mm).
+  wedge. The first real left sole-up scan had 8.6 mm (its right pair 1.2 mm)
+  until 25 Nov; that came from where the floor was put, not from the foot
+  (below: rested where the sole stands, it reads 1.0 mm, and 2349 0.0 mm).
   A sole scan this rolled is also refused when it arrives (see below).
 - A legs-flat scan with **both feet** in it keeps only the chosen foot: the
   two are cut apart down the gap between the shins, and the result says so.

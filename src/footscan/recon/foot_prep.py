@@ -1508,7 +1508,9 @@ FOOT_RATIO = (0.28, 0.50)
 # on the right one from the same session (..._R_20261027-151404-2349), 1.2 mm. The tripod floor
 # (_settle_floor) doesn't level a roll that big: it looks for the ball's sides only up to UNLOADED_CONTACT_MM.
 # 5 mm is a judgment between the two: past it, the fill under the raised side is a wedge that changes how
-# the foot stands.
+# the foot stands. Since 2026-11-25 (rest_on_hull(by="contact")) 89df reads 1.0 mm and 2349 0.0 mm: the 8.6 mm
+# came from the floor the old rule chose, not from the foot. So no real scan has shown a roll this check needs yet;
+# it stays for a foot that is held rolled.
 BALL_ROLL_WARN_MM = 5.0
 INVENTED_SOLE_SHARE = 0.9
 
