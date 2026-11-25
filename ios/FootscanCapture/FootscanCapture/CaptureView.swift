@@ -145,6 +145,8 @@ private struct Controls: View {
     var part: Part
     var onCancel: () -> Void
     @State private var announcedTips = TipRepeats()
+    /// Counts each warning said, for its buzz: the helper walking round may be watching the foot, not the screen.
+    @State private var warningsSaid = 0
 
     static let legsFlatPhotos = 40
     private var enoughPhotos: Bool { subject.scanKind == "sole_hanging" && session.numberOfShotsTaken >= Self.legsFlatPhotos }
@@ -243,8 +245,13 @@ private struct Controls: View {
         .onChange(of: instruction, initial: true) { _, said in CaptureCoaching.announce(said) }
         .onChange(of: feedbackText) { _, tip in
             // Object Capture's flags flicker on and off while walking round: the same tip at most every few seconds
-            if let tip, announcedTips.shouldSay(tip, at: Date()) { CaptureCoaching.announce(tip) }
+            if let tip, announcedTips.shouldSay(tip, at: Date()) {
+                CaptureCoaching.announce(tip)
+                warningsSaid += 1
+            }
         }
+        // a light warning buzz with each new tip (same few-seconds rule, so a flickering flag doesn't keep buzzing)
+        .sensoryFeedback(.warning, trigger: warningsSaid)
     }
 
     /// Until capture starts: what went wrong last time (after a refusal), and the checks to make before Start.
