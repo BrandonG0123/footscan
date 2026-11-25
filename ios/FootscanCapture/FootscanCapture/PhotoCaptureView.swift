@@ -88,6 +88,26 @@ struct PhotoCaptureView: View {
     }
 }
 
+enum StudioPage {
+    /// What the studio's capture page may use: the camera, and only the studio's own page (never another site's,
+    /// and never the microphone). Asked by WebKit each time the page wants the camera. "The studio's own page"
+    /// means the same scheme, host and port as the studio link: another program on the same computer (a different
+    /// port) is another site.
+    static func mediaDecision(scheme: String, host: String, port: Int, studio: URL,
+                              type: WKMediaCaptureType) -> WKPermissionDecision {
+        guard type == .camera, let studioScheme = studio.scheme?.lowercased(), studioScheme == "https",
+              scheme.lowercased() == studioScheme, host.lowercased() == studio.host()?.lowercased(),
+              portOrDefault(port, scheme: studioScheme) == portOrDefault(studio.port ?? 0, scheme: studioScheme)
+        else { return .deny }
+        return .grant
+    }
+
+    /// WebKit gives 0 for a page on its scheme's default port; a URL gives no port at all.
+    private static func portOrDefault(_ port: Int, scheme: String) -> Int {
+        port != 0 ? port : (scheme == "https" ? 443 : 80)
+    }
+}
+
 /// Lets the SwiftUI side ask the page about its state.
 @MainActor
 final class WebHandle {
@@ -190,9 +210,13 @@ private struct StudioWebView: UIViewRepresentable {
             }
         }
 
-        func webView(_ webView: WKWebView, requestMediaCapturePermissionFor origin: WKSecurityOrigin,
-                     initiatedByFrame frame: WKFrameInfo, type: WKMediaCaptureType) async -> WKPermissionDecision {
-            isStudio(origin.host) && type == .camera ? .grant : .deny
+        // WebKit's own name for this question (async form). An earlier spelling, requestMediaCapturePermissionFor
+        // ... async, matched nothing, so WebKit never asked it: it fell back to asking the person each time the
+        // page opened, and this rule (the camera for the studio only, never the microphone) wasn't applied.
+        func webView(_ webView: WKWebView, decideMediaCapturePermissionsFor origin: WKSecurityOrigin,
+                     initiatedBy frame: WKFrameInfo, type: WKMediaCaptureType) async -> WKPermissionDecision {
+            StudioPage.mediaDecision(scheme: origin.`protocol`, host: origin.host, port: origin.port,
+                                     studio: parent.link.url, type: type)
         }
 
         // The page's own "Discard N frames?" and messages: shown as native dialogs.

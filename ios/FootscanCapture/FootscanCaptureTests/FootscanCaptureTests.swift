@@ -5,6 +5,7 @@ import AVFoundation
 import Foundation
 import Testing
 import UIKit
+import WebKit
 @testable import FootscanCapture
 
 // MARK: - studio connect codes
@@ -823,6 +824,38 @@ struct CalibrationScore {
         #expect(AccuracyCard.percent(0) == "0.0%")
         #expect(AccuracyCard.percent(-0.04) == "0.0%")  // no direction where there's none to show
         #expect(AccuracyCard.signed(-1.0, places: 2) == "−1.00")
+    }
+}
+
+// MARK: - the studio's camera page
+
+@Suite("The studio's camera page")
+struct StudioCameraPage {
+    let studio = URL(string: "https://192.168.11.233:8766/")!
+
+    func decide(_ scheme: String = "https", _ host: String = "192.168.11.233", _ port: Int = 8766,
+                _ type: WKMediaCaptureType = .camera) -> WKPermissionDecision {
+        StudioPage.mediaDecision(scheme: scheme, host: host, port: port, studio: studio, type: type)
+    }
+
+    @Test func onlyTheStudiosPageGetsTheCameraAndNothingGetsTheMicrophone() {
+        #expect(decide() == .grant)
+        #expect(decide("https", "203.0.113.5") == .deny)
+        #expect(decide("https", "192.168.11.233", 8766, .microphone) == .deny)
+        #expect(decide("https", "192.168.11.233", 8766, .cameraAndMicrophone) == .deny)
+    }
+
+    @Test func anotherProgramOnTheStudiosComputerIsAnotherSite() {
+        #expect(decide("https", "192.168.11.233", 8765) == .deny)
+        #expect(decide("http", "192.168.11.233", 8766) == .deny)
+        #expect(decide("HTTPS", "192.168.11.233", 8766) == .grant)
+    }
+
+    @Test func aStudioOnTheDefaultPortMatchesWebKitsZero() {
+        let plain = URL(string: "https://studio.example/")!
+        #expect(StudioPage.mediaDecision(scheme: "https", host: "studio.example", port: 0, studio: plain, type: .camera) == .grant)
+        #expect(StudioPage.mediaDecision(scheme: "https", host: "studio.example", port: 443, studio: plain, type: .camera) == .grant)
+        #expect(StudioPage.mediaDecision(scheme: "https", host: "studio.example", port: 8766, studio: plain, type: .camera) == .deny)
     }
 }
 

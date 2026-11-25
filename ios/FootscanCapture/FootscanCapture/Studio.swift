@@ -321,11 +321,13 @@ final class PinnedTrust: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
     /// a wrong certificate, said for certain, not guessed from the error it ended with.
     var refusedCertificate: Bool { lock.withLock { refused } }
 
-    func urlSession(_ session: URLSession, didReceive challenge: URLAuthenticationChallenge,
-                    completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
+    // The async form: the completion-handler form's handler type differs between SDKs in how it's isolated, which
+    // the compiler warns about (an error in Swift 6 mode). Same decision either way.
+    func urlSession(_ session: URLSession, didReceive challenge: URLAuthenticationChallenge) async
+        -> (URLSession.AuthChallengeDisposition, URLCredential?) {
         let (disposition, credential) = Self.decide(challenge, fingerprint: fingerprint)
         if disposition == .cancelAuthenticationChallenge { lock.withLock { refused = true } }
-        completionHandler(disposition, credential)
+        return (disposition, credential)
     }
 
     /// Never follow a redirect. The studio never sends one, and following it would carry the key and the scan
