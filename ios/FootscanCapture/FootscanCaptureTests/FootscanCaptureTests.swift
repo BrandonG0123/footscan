@@ -334,10 +334,26 @@ struct DroppedSends {
         return rec
     }
 
-    @Test func aDropAfterTheStudioMadeTheCaptureWaitsAndSaysTheSameAsAnyDrop() {
-        let failure = StudioClient.Failure.droppedAfterCreating(host: "192.168.11.233", captureID: "LIDAR_nwb_relaxed_R_1")
-        #expect(failure.isUnreachable && !failure.offersReconnect)
-        #expect(failure.errorDescription == StudioClient.Failure.dropped(host: "192.168.11.233").errorDescription)
+    @Test func aCaptureStillWaitingForItsModelIsSentInto() {
+        let list: [[String: Any]] = [["capture_id": "LIDAR_nwb_relaxed_R_1", "status": "uploading"],
+                                     ["capture_id": "LIDAR_nwb_relaxed_R_2", "status": "complete", "mesh": ["file": "mesh.ply"]]]
+        #expect(StudioClient.existing("LIDAR_nwb_relaxed_R_1", in: list) == .waiting)
+    }
+
+    @Test func aCaptureThatAlreadyHasAModelIsTakenAsSentAndNeverSentIntoAgain() {
+        // the earlier upload got there and only its answer was lost; or an insole was made from it since:
+        // sending a model again would replace it, and the studio would remove the insole made from the old one
+        let done: [[String: Any]] = [["capture_id": "C1", "status": "complete", "mesh": ["file": "mesh.ply"],
+                                      "accuracy": ["median_mm": 1.0, "reference": "model"]]]
+        guard case .done(let acc) = StudioClient.existing("C1", in: done) else { Issue.record("not taken as sent"); return }
+        #expect(acc?.median_mm == 1.0)
+        #expect(StudioClient.existing("C2", in: [["capture_id": "C2", "status": "uploading", "insole": ["file": "x"]]]) == .done(nil))
+        #expect(StudioClient.existing("C3", in: [["capture_id": "C3", "status": "uploading", "clog": ["file": "x"]]]) == .done(nil))
+    }
+
+    @Test func aCaptureTheStudioNoLongerHasMeansANewOne() {
+        #expect(StudioClient.existing("C1", in: []) == .gone)
+        #expect(StudioClient.existing("C1", in: [["capture_id": "C9", "status": "uploading"]]) == .gone)
     }
 
     @Test func theNextTryUsesTheCaptureTheStudioAlreadyMadeAtWhicheverAddressItAnswers() {
@@ -363,15 +379,6 @@ struct DroppedSends {
         #expect(rec.reusableCapture(at: studio) == "LIDAR_swb_R_1")
     }
 
-    @Test func aCaptureTheStudioNoLongerHasIsToldApartAndReadsLikeAnyRefusal() {
-        guard case .notFound(let why) = StudioClient.Failure.from(status: 404, json: ["error": "not found"]) else {
-            Issue.record("a 404 wasn't read as not found"); return
-        }
-        #expect(why == "not found")
-        #expect(StudioClient.Failure.notFound("not found").errorDescription == "The studio said no: not found")
-        #expect(!StudioClient.Failure.notFound("not found").isUnreachable)
-    }
-
     @Test func thePendingCaptureIsKeptWithTheScanAndOlderRecordsStillRead() throws {
         let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString, directoryHint: .isDirectory)
         defer { try? FileManager.default.removeItem(at: root) }
@@ -381,8 +388,9 @@ struct DroppedSends {
         rec.pendingCapture = PendingCapture(id: "LIDAR_nwb_relaxed_R_1", studio: pin, loadKg: nil)
         scan.save(rec)
         #expect(scan.record?.pendingCapture == rec.pendingCapture)
-        rec.pendingCapture = nil
-        scan.save(rec)
+        // a record written before pending captures existed reads, with none
+        let old = #"{"subject":"right-sole","created":"2026-11-20T10:00:00Z","device":"iPhone18,1","systemVersion":"26.1","appVersion":"1.0","modelBuiltOnPhone":true,"units":"m","note":"n"}"#
+        try Data(old.utf8).write(to: scan.recordURL)
         #expect(scan.record != nil && scan.record?.pendingCapture == nil)
     }
 }

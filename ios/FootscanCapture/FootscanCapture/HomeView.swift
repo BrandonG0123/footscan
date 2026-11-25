@@ -14,7 +14,7 @@ struct RootView: View {
     @Environment(ScanLibrary.self) private var library
     @Environment(\.scenePhase) private var scenePhase
     @State private var showStudio = false
-    @State private var network = NetworkWatch()
+    @Environment(NetworkWatch.self) private var network
 
     /// While the app is in front with a scan waiting because the studio didn't answer, it's tried again this often
     /// (the studio computer may simply have been asleep, with nothing on the phone's side changing).

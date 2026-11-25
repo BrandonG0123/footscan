@@ -61,6 +61,8 @@ final class NetworkWatch {
 
     private func update(_ now: Signature) {
         defer { last = now }
+        // gone again before it settled: nothing to try over
+        if !now.satisfied { pending?.cancel(); pending = nil }
         guard Self.worthTrying(from: last, to: now) else { return }
         pending?.cancel()
         pending = Task {
