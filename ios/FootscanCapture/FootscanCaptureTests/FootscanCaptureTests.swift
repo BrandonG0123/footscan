@@ -535,3 +535,29 @@ struct Ring {
         #expect(model.lit == [0, 11])
     }
 }
+
+// MARK: - keeping the screen on
+
+@MainActor
+@Suite("Screen kept on", .serialized)
+struct ScreenKeptOn {
+    @Test func theScreenStaysOnUntilEveryClaimIsLetGo() {
+        let photoPage = KeepAlive.screen()
+        let upload = KeepAlive.screen()
+        #expect(UIApplication.shared.isIdleTimerDisabled)
+        photoPage()
+        #expect(UIApplication.shared.isIdleTimerDisabled) // the upload still holds it
+        upload()
+        #expect(!UIApplication.shared.isIdleTimerDisabled)
+    }
+
+    @Test func lettingGoTwiceCountsOnce() {
+        let other = KeepAlive.screen()
+        let page = KeepAlive.screen()
+        page()
+        page() // a second onDisappear mustn't release someone else's claim
+        #expect(UIApplication.shared.isIdleTimerDisabled)
+        other()
+        #expect(!UIApplication.shared.isIdleTimerDisabled)
+    }
+}
