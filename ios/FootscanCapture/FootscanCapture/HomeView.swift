@@ -94,6 +94,15 @@ struct HomeView: View {
     @State private var cameraOff: CameraAccess?
     /// iOS is asking whether Footscan may use the camera: the Scan button waits for the answer.
     @State private var askingCamera = false
+    /// The battery is low: asked before the camera opens (Scan anyway, or Not now), on the home screen itself, so no
+    /// dialog is still closing when the camera's full-screen cover opens.
+    @State private var lowBattery: LowBattery?
+
+    struct LowBattery: Identifiable {
+        let subject: Subject
+        let note: String
+        var id: String { subject.rawValue }
+    }
 
     struct PrepRequest: Identifiable {
         let subject: Subject
@@ -287,8 +296,28 @@ struct HomeView: View {
                 }
                 .transition(.opacity)
             }
+            if let low = lowBattery {
+                VStack(alignment: .leading, spacing: 8) {
+                    Label(low.note, systemImage: "battery.25").font(.footnote).foregroundStyle(Color.fsWarn)
+                    HStack(spacing: 18) {
+                        Button("Scan anyway") {
+                            withAnimation(.smooth) { lowBattery = nil }
+                            begin(low.subject, batteryAsked: true)
+                        }
+                        Button("Not now") {
+                            withAnimation(.smooth) { lowBattery = nil }
+                            retake = [] // a scan again that isn't going ahead: its hints go too
+                        }
+                    }
+                    .font(.subheadline.weight(.semibold))
+                }
+                .transition(.opacity)
+            }
             if let error { Text(error).font(.footnote).foregroundStyle(Color.fsStop) }
         }
+        // another kind or way of scanning chosen: the battery question was about the last one
+        .onChange(of: subjectRaw) { lowBattery = nil }
+        .onChange(of: method) { lowBattery = nil }
         // back from Settings with the camera turned on: the note goes
         .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in
             if cameraOff != nil && CameraAccess.state() == .allowed { withAnimation(.smooth) { cameraOff = nil } }
@@ -438,7 +467,8 @@ struct HomeView: View {
         prep = PrepRequest(subject: rec.subject, mustTick: false, retake: retake)
     }
 
-    private func begin(_ s: Subject) {
+    /// `batteryAsked`: the person saw the low-battery question and chose to scan anyway.
+    private func begin(_ s: Subject, batteryAsked: Bool = false) {
         switch CameraAccess.state() {
         case .allowed:
             cameraOff = nil
@@ -460,6 +490,12 @@ struct HomeView: View {
             }
             return
         }
+        if !batteryAsked, let note = BatteryCheck.now() {
+            withAnimation(.smooth) { lowBattery = LowBattery(subject: s, note: note); error = nil }
+            UINotificationFeedbackGenerator().notificationOccurred(.warning)
+            return
+        }
+        lowBattery = nil
         if method == .photos {
             // photos go straight to the studio: nothing big is kept on the phone
             guard studio.client != nil else { showStudio = true; return }

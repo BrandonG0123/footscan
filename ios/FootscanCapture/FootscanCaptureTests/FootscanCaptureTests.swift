@@ -4,6 +4,7 @@
 import AVFoundation
 import Foundation
 import Testing
+import UIKit
 @testable import FootscanCapture
 
 // MARK: - studio connect codes
@@ -743,6 +744,27 @@ struct CameraBeforeAScan {
         #expect(CameraAccess.off.message?.contains("Settings > Footscan > Camera") == true)
         // blocked for the whole phone: there's no switch for Footscan, so it doesn't send them looking for one
         #expect(CameraAccess.blocked.message?.contains("Settings > Footscan") == false)
+    }
+}
+
+// MARK: - the battery before a scan
+
+@Suite("Battery before a scan")
+struct BatteryBeforeAScan {
+    @Test func aLowBatteryUnpluggedIsSaidWithItsLevel() {
+        let note = BatteryCheck.note(level: 0.12, state: .unplugged)
+        #expect(note?.hasPrefix("Battery at 12%.") == true)
+        // just under the line reads as under it, never as the line itself
+        #expect(BatteryCheck.note(level: 0.196, state: .unplugged)?.hasPrefix("Battery at 19%.") == true)
+    }
+
+    @Test func chargingOrEnoughOrUnknownSaysNothing() {
+        #expect(BatteryCheck.note(level: 0.12, state: .charging) == nil)
+        #expect(BatteryCheck.note(level: 0.12, state: .full) == nil)
+        #expect(BatteryCheck.note(level: 0.2, state: .unplugged) == nil)
+        #expect(BatteryCheck.note(level: 0.8, state: .unplugged) == nil)
+        #expect(BatteryCheck.note(level: -1, state: .unknown) == nil)  // the simulator
+        #expect(BatteryCheck.note(level: -1, state: .unplugged) == nil)
     }
 }
 
