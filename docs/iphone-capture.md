@@ -180,7 +180,9 @@ the simulator (see *Tests*).
 - **No studio in reach.** A scan waiting on a studio that didn't answer goes
   again by itself when the phone joins a network (a Wi-Fi, or Tailscale
   coming on), every 2 minutes while the app is open, and when the app comes
-  back to the front. Pulling the home screen down tries straight away.
+  back to the front. Pulling the home screen down tries straight away. Until
+  one gets through, the dot on the studio button (top left) is amber, not
+  green.
 - **How far a send has got.** The card reads *Sending 42%* while the model goes
   up, then *Studio checking* while the studio reads it before it answers.
 - **Short of space.** Settings > Storage can remove Object Capture's working
