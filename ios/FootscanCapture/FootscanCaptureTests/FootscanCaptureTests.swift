@@ -482,6 +482,37 @@ struct ScanList {
     }
 }
 
+// MARK: - the calibration object's score
+
+@Suite("The calibration object's score")
+struct CalibrationScore {
+    @Test func theStudiosAnswerIsReadWithItsWarningsAndWhatItWasComparedWith() throws {
+        // the shape of recon/imported.py summarize(), extra keys and all (SYNTHETIC numbers, not a scan's)
+        let json = #"""
+        {"median_mm": 1.0, "p95_mm": 2.0, "signed_mean_mm": 0.5, "within_1mm": 0.5, "scan_within_2mm": 0.5,
+         "length_mm": 1.0, "width_mm": 1.0, "dome_apex_mm": -1.0, "scale_pct": 1.35, "reference": "model",
+         "floor": "made up below the base", "warnings": ["the phone made up the bottom"]}
+        """#
+        let acc = try JSONDecoder().decode(StudioAccuracy.self, from: Data(json.utf8))
+        #expect(acc.scale_pct == 1.35 && acc.warnings == ["the phone made up the bottom"])
+        #expect(acc.comparedWith == "vs the design")
+        var calipers = acc
+        calipers.reference = "calipers"
+        #expect(calipers.comparedWith == "vs your calipers")
+    }
+
+    @Test func anAnswerSavedBeforeTheWarningsStillReads() throws {
+        let acc = try JSONDecoder().decode(StudioAccuracy.self, from: Data(#"{"median_mm": 0.7, "reference": "model"}"#.utf8))
+        #expect(acc.warnings == nil && acc.scale_pct == nil && acc.median_mm == 0.7)
+    }
+
+    @Test func theOverallSizeSaysWhichWay() {
+        #expect(AccuracyCard.percent(0.9) == "+0.9%")
+        #expect(AccuracyCard.percent(-1.24) == "−1.2%")
+        #expect(AccuracyCard.percent(0) == "0.0%")
+    }
+}
+
 // MARK: - free space
 
 @Suite("Free space before a capture")

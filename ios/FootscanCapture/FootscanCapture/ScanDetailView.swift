@@ -427,8 +427,20 @@ struct AccuracyCard: View {
                     statRow("Worst 5%", mm(acc.p95_mm, signed: false))
                     statRow("Too big (+) / small (−)", mm(acc.signed_mean_mm))
                     statRow("Captured within 1 mm", acc.within_1mm.map { "\(Int(($0 * 100).rounded()))%" } ?? "—")
-                    statRow("Length", mm(acc.length_mm))
-                    statRow("Width", mm(acc.width_mm))
+                    // differences, not sizes: "+1.30 mm" is 1.3 mm longer than the design (or the calipers)
+                    statRow("Length \(acc.comparedWith)", mm(acc.length_mm))
+                    statRow("Width \(acc.comparedWith)", mm(acc.width_mm))
+                    if acc.dome_apex_mm != nil { statRow("Dome height \(acc.comparedWith)", mm(acc.dome_apex_mm)) }
+                    if let pct = acc.scale_pct { statRow("Size overall", Self.percent(pct)) }
+                }
+                if let warnings = acc.warnings, !warnings.isEmpty {
+                    DisclosureGroup("What the studio noticed (\(warnings.count))") {
+                        VStack(alignment: .leading, spacing: 6) {
+                            ForEach(warnings, id: \.self) { Text($0).font(.footnote).foregroundStyle(Color.fsMuted) }
+                        }
+                        .padding(.top, 6)
+                    }
+                    .font(.footnote.weight(.semibold))
                 }
                 Text(acc.reference == "calipers"
                      ? "Compared with your caliper readings of the print."
@@ -445,6 +457,9 @@ struct AccuracyCard: View {
             Text(v).font(.system(.title3, design: .rounded, weight: .semibold).monospacedDigit())
         }
     }
+
+    /// "+0.9%" bigger than it should be, "−1.2%" smaller.
+    static func percent(_ v: Double) -> String { (v > 0 ? "+" : v < 0 ? "−" : "") + String(format: "%.1f%%", abs(v)) }
 
     private func mm(_ v: Double?, signed: Bool = true) -> String {
         guard let v else { return "—" }
