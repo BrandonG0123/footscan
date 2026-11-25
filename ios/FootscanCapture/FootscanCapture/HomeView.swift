@@ -33,8 +33,9 @@ struct RootView: View {
         // The studio's code, read by the iPhone's own Camera app, opens here,
         // whatever is on screen (even the intro, on a brand-new install).
         .onOpenURL { url in
+            // the studio screen shows how it went, or asks first if the code is for a different studio
             showStudio = true
-            Task { await studio.connect(url.absoluteString) }
+            Task { await studio.open(url.absoluteString) }
         }
         .sheet(isPresented: $showStudio) { StudioView() }
         // Scans that couldn't go before go now: when a studio is connected

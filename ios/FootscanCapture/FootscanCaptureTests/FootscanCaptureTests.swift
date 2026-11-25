@@ -1280,3 +1280,41 @@ struct DeleteAllWarning {
         #expect(AppVersion.shown(version: nil, build: "3") == "?")
     }
 }
+
+// MARK: - a link to another studio
+
+@Suite("A link to a different studio asks first")
+struct OtherStudioLinks {
+    let pinA = String(repeating: "a", count: 64)
+    let pinB = String(repeating: "b", count: 64)
+
+    func link(_ address: String, fp: String?, alt: [String] = []) -> StudioLink {
+        StudioLink(url: URL(string: address)!, fingerprint: fp, alternates: alt.map { URL(string: $0)! })
+    }
+
+    @Test func theSameCertificateIsTheSameStudioAtAnyAddress() {
+        let home = link("https://192.168.1.20:8766", fp: pinA)
+        #expect(home.isSameStudio(as: link("https://100.113.53.83:8766", fp: pinA.uppercased())))
+        #expect(!home.isSameStudio(as: link("https://192.168.1.20:8766", fp: pinB))) // a new certificate: ask
+    }
+
+    @Test func withoutPinsAnAddressInCommonIsTheSameStudio() {
+        let home = link("https://192.168.1.20:8766", fp: nil, alt: ["https://100.113.53.83:8766"])
+        #expect(home.isSameStudio(as: link("https://100.113.53.83:8766", fp: nil)))
+        #expect(!home.isSameStudio(as: link("https://192.168.1.99:8766", fp: nil)))
+        // written another way, the same address: capitals in the host, the port left out where it's 443
+        let named = link("https://studio.example.dev", fp: nil)
+        #expect(named.isSameStudio(as: link("https://Studio.example.dev:443/", fp: nil)))
+        #expect(!home.isSameStudio(as: link("https://192.168.1.20:8766", fp: pinA))) // one pinned, one not: ask
+    }
+
+    @Test func onlyACodeForAnotherStudioIsAskedAbout() {
+        let code = { (address: String, pin: String) in "footscan-capture://connect?url=\(address)&key=k&fp=\(pin)" }
+        let home = link("https://192.168.1.20:8766", fp: pinA)
+        let other = code("https://192.168.1.99:8766", pinB)
+        #expect(StudioConnection.otherStudio(in: other, connected: nil) == nil)                   // nothing connected yet
+        #expect(StudioConnection.otherStudio(in: code("https://192.168.1.20:8766", pinA), connected: home) == nil) // same one
+        #expect(StudioConnection.otherStudio(in: "not a code", connected: home) == nil)            // connect() says why
+        #expect(StudioConnection.otherStudio(in: other, connected: home) == "192.168.1.99 (home Wi-Fi)")
+    }
+}
