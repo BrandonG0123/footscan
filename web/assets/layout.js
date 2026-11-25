@@ -20,6 +20,7 @@ const NAV = {
     ["/studio/import.html", "Import 3D"],
     ["/mat.html", "Scan mat"],
     ["/studio/project.html", "Project"],
+    ["/studio/status.html", "Status"],
   ],
 };
 

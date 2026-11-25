@@ -54,6 +54,7 @@ POST /api/shoes/default                                 {id} (null: none): insol
 The server itself needs only the standard library; saving a pick loads
 numpy and trimesh to compute the measurements.
 GET  /api/studio                                        scan address to share
+GET  /api/studio/status                                 the Status page: code version, uptime, disk, counts, options
 
 Phones only allow camera and motion-sensor access on secure origins, so
 ``--https`` generates a self-signed certificate.
@@ -528,6 +529,7 @@ def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check
             return tailnet["ip"]
     captures_dir = data_dir / "captures"
     shoes_dir = shoes_dir_of(captures_dir)
+    started_at, started_clock = now_iso(), __import__("time").monotonic()  # for the Status page
     submissions_dir = data_dir / "submissions"
     limiter = RateLimiter(submissions_per_hour)
 
@@ -885,6 +887,9 @@ def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check
             if parts == ["studio", "pairing"] and method == "GET":
                 self.require_local()
                 return self.send_json(self.pairing())
+            if parts == ["studio", "status"] and method == "GET":
+                self.require_local()
+                return self.send_json(self.status())
             raise FileNotFoundError
 
         def api_shoes(self, method: str, rest: list[str]):
@@ -1165,6 +1170,42 @@ def make_handler(web_dir: Path = WEB_DIR, data_dir: Path = DATA_DIR, local_check
                 except ValueError as e:  # nothing written, or too long
                     raise BadRequest(str(e)) from None
             raise FileNotFoundError
+
+        def status(self) -> dict:
+            """How this studio is doing, for its Status page: which code it runs, since when, its disk, what it
+            holds, and which of its options are on. Never a key or a password: only whether one is set."""
+            import platform
+            import sys
+            import time
+
+            from .recon import foot_prep
+
+            host, port = self.server.server_address[:2]
+            try:
+                disk = shutil.disk_usage(data_dir if data_dir.exists() else data_dir.parent)
+                disk = dict(free_bytes=disk.free, total_bytes=disk.total, low=disk.free < MIN_FREE_BYTES * 2)
+            except OSError as e:
+                disk = dict(error=str(e))
+            captures = list_captures(captures_dir)
+            insoles = [c["insole"] for c in captures if c.get("insole")]
+            return dict(
+                checkout=checkout_version(ROOT), python=sys.version.split()[0],
+                system=f"{platform.system()} {platform.release()}".strip(),
+                started=started_at, up_s=round(time.monotonic() - started_clock),
+                address=dict(host=host, port=port, https=secure_cookie, public=public,
+                             phones_can_connect=self.studio_info()["phones_can_connect"],
+                             tailscale=self.other_addresses(None) if host in ("0.0.0.0", "::") else []),
+                data=dict(folder=str(data_dir), disk=disk,
+                          captures=len(captures), sole_scans=sum(1 for c in captures if _checked(c)),
+                          insoles=len(insoles), insoles_out_of_date=sum(1 for i in insoles if i.get("stale")),
+                          insoles_failed=sum(1 for i in insoles if "error" in i),
+                          shoes_saved=len(shoes_mod.listed(shoes_dir)),
+                          submissions=len(list_submissions(submissions_dir))),
+                claude=dict(check_scans=second_look is not None, describe_shoes=describe_with_claude,
+                            api_key_set=bool(os.environ.get("ANTHROPIC_API_KEY"))),
+                search_engines="allowed" if allow_indexing else "kept out (noindex)",
+                sole_scan_preparation=foot_prep.prep_version("sole_up"),
+            )
 
         def studio_info(self) -> dict:
             host, port = self.server.server_address[:2]
@@ -1674,6 +1715,30 @@ def gzipped(path: Path, st: os.stat_result, data: bytes) -> bytes:
         if len(out) <= GZIP_CACHE_BYTES:
             _gzip_cache[key] = out
     return out
+
+
+def checkout_version(root: Path) -> dict | None:
+    """Which commit of footscan this checkout is on, read from its .git folder (no git program needed, so it
+    works for the Windows service too): {"commit": short hash, "branch": name or None}, or None when this isn't
+    a git checkout or it can't be read."""
+    git = Path(root) / ".git"
+    try:
+        head = (git / "HEAD").read_text(encoding="utf-8").strip()
+        branch, commit = None, head
+        if head.startswith("ref: "):
+            ref = head[5:].strip()
+            branch = ref.removeprefix("refs/heads/")
+            if (git / ref).is_file():
+                commit = (git / ref).read_text(encoding="utf-8").strip()
+            else:  # packed by git gc: "<sha> <ref>" lines in packed-refs
+                packed = (git / "packed-refs").read_text(encoding="utf-8") if (git / "packed-refs").is_file() else ""
+                commit = next((line.split()[0] for line in packed.splitlines()
+                               if line.endswith(" " + ref) and not line.startswith("#")), "")
+    except (OSError, UnicodeDecodeError):
+        return None
+    if not re.fullmatch(r"[0-9a-f]{40}([0-9a-f]{24})?", commit):
+        return None
+    return dict(commit=commit[:7], branch=branch)
 
 
 def query_param(path: str, name: str) -> str | None:
