@@ -103,6 +103,8 @@ final class StudioConnection {
 
 struct StudioView: View {
     @Environment(StudioConnection.self) private var studio
+    /// The numbered dots of the connect steps grow with the text, so a large number still fits inside.
+    @ScaledMetric(relativeTo: .headline) private var stepDot: CGFloat = 28
     @Environment(\.dismiss) private var dismiss
     @State private var scanning = false
     @State private var confirmDisconnect = false
@@ -180,7 +182,7 @@ struct StudioView: View {
     private func step(_ n: Int, _ text: String) -> some View {
         HStack(alignment: .top, spacing: 12) {
             Text("\(n)").font(.headline).foregroundStyle(Color.fsBrandInk)
-                .frame(width: 28, height: 28).background(Color.fsBrand, in: Circle())
+                .frame(width: stepDot, height: stepDot).background(Color.fsBrand, in: Circle())
             Text(text).font(.body).foregroundStyle(Color.fsInk).padding(.top, 3)
         }
     }
