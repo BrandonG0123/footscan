@@ -1135,3 +1135,37 @@ def test_a_shoe_a_few_hundredths_of_a_mm_longer_adds_nothing_so_the_sheet_and_wa
     assert added == 0.0 and same.equals(outline)
     _, added = insole._to_length(outline, 175.0, 251.0)
     assert added == pytest.approx(1.0)
+
+
+# ---- a scan that reads the foot short, scaled to the ruler's length -------------------------------------------
+
+def _small_curved(scale):
+    m = synth.curved_foot("right", leg=False)
+    m.apply_transform(np.diag([scale, scale, 1.0, 1.0]))
+    return m
+
+
+def test_a_scan_reading_short_is_scaled_to_the_rulers_length_and_its_arch_moves_with_it():
+    """SYNTHETIC curved foot read 6% short (as the first real right-foot scan read about 6% short of the ruler):
+    given the ruler's length, the foot is made that long, and the arch's highest point lands where the full-size
+    foot's does, not 6% nearer the heel."""
+    full = insole.build(synth.curved_foot("right", leg=False), "right", insole.InsoleParams(target_length_mm=280.0))
+    foot_len = full.report["shoe_fit"]["foot_length_mm"]
+    short = insole.build(_small_curved(0.94), "right", insole.InsoleParams(target_length_mm=280.0))
+    ruled = insole.build(_small_curved(0.94), "right", insole.InsoleParams(target_length_mm=280.0,
+                                                                          foot_length_mm=foot_len))
+    at = lambda ins: ins.report["foot_max_fill_at_mm"]["x"]  # noqa: E731
+    assert abs(at(short) - at(full)) > 4.0                      # unscaled, the arch sits several mm toward the heel
+    assert at(ruled) == pytest.approx(at(full), abs=2.0)
+    assert ruled.report["shoe_fit"]["foot_length_mm"] == pytest.approx(foot_len, abs=1.0)
+    s = ruled.report["scaled_to_ruler"]
+    assert s["ruler_mm"] == pytest.approx(foot_len, abs=0.1) and s["percent"] == pytest.approx(6.4, abs=0.5)
+    assert any("scaled +6." in w and "heights unchanged" in w for w in ruled.report["warnings"])
+    # heights aren't scaled: the arch is no higher than the short scan says
+    assert ruled.report["foot_max_fill_mm"] == pytest.approx(short.report["foot_max_fill_mm"], abs=0.3)
+    assert short.report["scaled_to_ruler"] is None
+
+
+def test_a_ruler_length_far_from_the_scans_is_refused():
+    with pytest.raises(insole.InsoleError, match="too far apart"):
+        insole.build(synth.curved_foot("right", leg=False), "right", insole.InsoleParams(foot_length_mm=400.0))

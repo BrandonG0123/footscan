@@ -101,6 +101,7 @@ SILHOUETTE_HEIGHT_MM = 30.0
 DOWNWARD_FACING = -0.1   # cos: a hit counts as "sole" if its normal points at least this much down
 SMOOTH_SIGMA_MM = 1.5
 SMOOTH_MAY_RAISE_MM = 0.5
+RULER_REFUSE = 0.15  # the scan and the ruler this far apart: not the same foot in millimetres (footwear's too)
 HOLE_ABOVE_FLOOR_MM = 3.0  # an unseen hit higher than this: the inside of the foot, through its open bottom
 
 # The generic insole outline (generic_outline): a shoe insole's plan shape, the same for every foot, scaled as a whole
@@ -161,6 +162,8 @@ class InsoleParams:
     foot_outline: bool = False          # the foot's own outline (lengthened at the front to target_length_mm, if
                                         # given) instead of the generic insole outline; see build()
     shoe_name: str | None = None        # which shoe that outline is (a saved shoe, footscan/shoes.py), for the sheet
+    foot_length_mm: float | None = None  # the foot's length by ruler, standing (mm): the scan is scaled to it, see
+                                         # build(); None: the scan's own size
     shoe_saved: bool = False            # that outline is a saved shoe's, kept once for both feet: mirroring it for
                                         # the other foot is expected, not a sign the scan was upside down
     bed_mm: float = 256.0           # printer bed (Bambu X1/P1/A1); for the fit check only
@@ -355,6 +358,27 @@ def build(foot_mesh, foot: str, params: InsoleParams | None = None) -> Insole:
     sil = silhouette(m, outline_notes)
     x0, y0, x1, y1 = sil.bounds
     length = x1 - x0
+    ruler = None
+    if p.foot_length_mm:
+        # The ruler's length, when the scan reads the foot short or long (the first real right-foot scan,
+        # LIDAR_nwb_relaxed_R_20261027-151404-2349, read 243.7 mm against 260 by ruler, standing): the whole foot is
+        # made that long by scaling it about the back of the heel, the same along and across, so the arch, the
+        # ball and the heel cup sit where they are on the real foot. Heights are not scaled: a scan's size error is
+        # in its scale, and the fill is never made higher than the scan says. As the printed shoe does
+        # (footwear.size_to), more than RULER_REFUSE apart isn't the same foot in millimetres.
+        k = p.foot_length_mm / length
+        if abs(k - 1) > RULER_REFUSE:
+            raise InsoleError(f"the scan reads the foot {length:.0f} mm long and the ruler {p.foot_length_mm:.0f} mm: too far "
+                              "apart to be the same foot in millimetres. Check the measurement and the scan.")
+        m = m.copy()
+        m.vertices[:, 0] = x0 + (m.vertices[:, 0] - x0) * k
+        m.vertices[:, 1] = m.vertices[:, 1] * k
+        ruler = dict(ruler_mm=round(float(p.foot_length_mm), 1), scan_mm=round(float(length), 1),
+                     percent=round(100 * (k - 1), 1))
+        outline_notes = []
+        sil = silhouette(m, outline_notes)
+        x0, y0, x1, y1 = sil.bounds
+        length = x1 - x0
     try:  # the foot at the heel cup's height: what the cup holds
         cup_sil = silhouette(m, height=p.heel_cup_depth_mm).intersection(sil)
         if cup_sil.geom_type != "Polygon":
@@ -543,6 +567,10 @@ def build(foot_mesh, foot: str, params: InsoleParams | None = None) -> Insole:
     if holes > 0.05:
         warnings.append(f"{holes:.0%} of the area under the foot is a hole in the scan (taken as flat).")
     warnings += outline_notes
+    if ruler and abs(ruler["percent"]) >= 0.1:
+        warnings.append(f"the scan read the foot {ruler['scan_mm']} mm long and the ruler {ruler['ruler_mm']} mm: the foot was "
+                        f"scaled {ruler['percent']:+.1f}% along and across to the ruler's length (heights unchanged), so the "
+                        "arch is placed by the ruler's length")
     if shoe_fit is not None:
         # the generic outline: one outline for both feet, mirrored for a left one (as a saved shoe's). Sized from the
         # foot (no length given), the sheet's and the studio's outline line say so and ask for the shoe's length
@@ -582,6 +610,7 @@ def build(foot_mesh, foot: str, params: InsoleParams | None = None) -> Insole:
         heel_cup_rim_mm=heel_cup_rim(mesh, outline, x0, length, foot, p.base_mm),
         bed_fit=bed_fit_shape(np.asarray(mesh.vertices)[:, :2], p.bed_mm),
         shoe_fit=shoe_fit,
+        scaled_to_ruler=ruler,  # None, or the foot scaled to its ruler length: ruler_mm, scan_mm, percent
         lengthened_mm=round(float(extended), 1),  # added to the front to reach the shoe's length (0: none needed)
         # the foot's own heel and toe (x): the base tapers along these, not along the outline (which a shoe's
         # insole, the generic outline or a lengthened front makes longer); the preview tapers the same way

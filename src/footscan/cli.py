@@ -242,6 +242,12 @@ def cmd_insole(args) -> int:
 
     try:  # the outline first: a problem with the shoe is the shoe's, not the foot scan's
         params, which = insole_outline(args)
+        if args.foot_length is not None:
+            from dataclasses import replace
+
+            from .insole import InsoleParams
+
+            params = replace(params or InsoleParams(), foot_length_mm=args.foot_length)
     except (FileNotFoundError, ValueError) as err:
         print(f"footscan insole: {err}", file=sys.stderr)
         return 1
@@ -536,6 +542,8 @@ def main(argv=None) -> int:
     ins.add_argument("--length", type=float, help="the shoe's insole length, mm: the generic insole outline is made "
                                                    "that long (scaled as a whole; with --foot-outline, the foot's "
                                                    "outline lengthened at the front)")
+    ins.add_argument("--foot-length", type=float, help="the foot's length by ruler, mm, standing: the scan is scaled "
+                                                        "to it (along and across, not in height) when it reads short or long")
     ins.add_argument("--shoe", help="a saved shoe's id (footscan shoe list), or a scan of the shoe's own insole lying "
                                     "flat (as the iPhone app hands it over): the insole takes its outline, fitted "
                                     "round the foot. Without it (or --length), the default saved shoe's")
